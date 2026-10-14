@@ -59,7 +59,7 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     gridOpacity: 1,
     animate: true,
     lineWidthScale: 1,
-    background: [0.025, 0.035, 0.055, 1],
+    background: [0.956, 0.965, 0.973, 1],
   },
 };
 

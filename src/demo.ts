@@ -2,6 +2,7 @@ import { frame, init, surface } from "vgpu";
 import { DebugDraw3D, GpuDebugDraw3D, InfiniteGrid3D, type FrameCommand, type Vec3 } from "./index.js";
 import { GODOT_EXAMPLES, type GodotExample } from "./godot-examples.js";
 import { buildScene } from "./godot-scenes.js";
+import sceneSource from "./godot-scenes.ts?raw";
 import { cloneDemoConfig, DEFAULT_DEMO_CONFIG, loadDemoConfig, saveDemoConfig, SCREENSHOT_DEMO_CONFIG } from "./demo-config.js";
 import "./demo.css";
 
@@ -48,11 +49,88 @@ function renderList(): void {
     return button;
   }));
 }
+function sourceForExample(id: string): string {
+  const header = `import { DebugDraw3D } from "vgpu-render";\n\nconst debug = new DebugDraw3D();\nconst frame = debug.beginFrame();`;
+  const examples: Record<string, string> = {
+    index: `${header}\n\nframe.point([0, 0, 0], { color: [1, 0.3, 0.2, 1], size: 8 });\nframe.line([0, 0, 0], [1, 0, 0], { color: [0.2, 0.8, 1, 1], width: 2 });\nframe.arrow([0, 0, 0], [0, 1, 0]);\nframe.grid([0, 0, 0], [4, 4], [0.5, 0.5]);\n\nconst commands = debug.finishFrame(frame);`,
+    line: `${header}\n\nframe.line([0, 0, 0], [1.1, 0, 0], {\n  color: [0.2, 0.8, 1, 1],\n  width: 2,\n  dash: [0.2, 0.1],\n});\nframe.lineStrip([[0, 0, 0], [0.5, 0, 0.3], [1, 0, 0]], {\n  width: 2,\n  joint: "round",\n});`,
+    arrow: `${header}\n\nframe.arrow([0, 0, 0], [1, 0.8, 0], {\n  color: [0.2, 0.8, 1, 1],\n  width: 2,\n  headLength: 0.25,\n  headAngle: Math.PI / 4,\n});`,
+    axes: `${header}\n\nframe.axes([0, 0, 0], 1, 2);\nframe.axes([1.5, 0, 0], 0.75, 4);`,
+    grid: `${header}\n\nframe.grid([0, 0, 0], [6, 4], [0.35, 0.35], {\n  color: [0.45, 0.55, 0.65, 1],\n  width: 1,\n});`,
+    rect: `${header}\n\nframe.lineLoop([\n  [-0.5, 0, -0.35], [0.5, 0, -0.35],\n  [0.5, 0, 0.35], [-0.5, 0, 0.35],\n], { width: 2, joint: "round" });`,
+    box: `${header}\n\nframe.mesh(box([1, 0.7, 0.7]), {\n  solid: true,\n  color: [0.2, 0.6, 1, 0.8],\n});`,
+    circle: `${header}\n\nframe.lineLoop(circlePoints(0.5, 64), {\n  color: [0.2, 0.8, 1, 1],\n  width: 2,\n});`,
+    arc: `${header}\n\nframe.lineStrip(arcPoints(0.5, Math.PI * 1.5, 32), {\n  color: [0.2, 0.8, 1, 1],\n  width: 2,\n});`,
+    curve: `${header}\n\nframe.curve({\n  points: [\n    { position: [-1, 0, 0], out: [-0.5, 0, 1] },\n    { position: [1, 0, 0], in: [0.5, 0, -1] },\n  ],\n}, { width: 2, tolerance: 0.08 });`,
+    sphere: `${header}\n\nframe.mesh(sphere(0.5), {\n  solid: true,\n  color: [0.2, 0.6, 1, 0.8],\n});`,
+    cone: `${header}\n\nframe.mesh(cone(0.5, 1, 32), {\n  solid: true,\n  color: [0.2, 0.6, 1, 0.8],\n});`,
+    cylinder: `${header}\n\nframe.mesh(cylinder(0.5, 1, 32), {\n  solid: true,\n  color: [0.2, 0.6, 1, 0.8],\n});`,
+    capsule: `${header}\n\nframe.mesh(capsule(0.35, 1, 24), {\n  solid: true,\n  color: [0.2, 0.6, 1, 0.8],\n});`,
+    world_space_width: `${header}\n\nframe.line([0, 0, 0], [1, 0, 0], {\n  width: 0.08,\n  widthMode: "world",\n  color: [0.2, 0.8, 1, 1],\n});`,
+  };
+  return examples[id] ?? examples.index!;
+}
+function sourceFunction(name: string): string {
+  const start = sceneSource.search(new RegExp(`(?:export )?function ${name}\\(`));
+  if (start < 0) return "";
+  const next = sceneSource.slice(start + 1).search(/\n(?:export )?function /);
+  return sceneSource.slice(start, next < 0 ? undefined : start + 1 + next).trim();
+}
+function actualSourceForExample(id: string): string {
+  const sceneNames: Record<string, string> = {
+    index: "overviewMatrix",
+    line: "lineMatrix",
+    arrow: "arrowMatrix",
+    axes: "axesMatrix",
+    grid: "gridMatrix",
+    rect: "rectMatrix",
+    box: "boxMatrix",
+    circle: "circleMatrix",
+    arc: "arcMatrix",
+    curve: "curveMatrix",
+    sphere: "shapeScene",
+    cone: "shapeScene",
+    cylinder: "shapeScene",
+    capsule: "shapeScene",
+    world_space_width: "worldWidthMatrix",
+  };
+  return `${sourceFunction("buildScene")}\n\n${sourceFunction(sceneNames[id] ?? "overviewMatrix")}`;
+}
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
+}
+function highlightSource(source: string): string {
+  const tokenPattern = /\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:import|from|const|new|true|false|undefined|solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\()/g;
+  let output = "";
+  let cursor = 0;
+  for (const match of source.matchAll(tokenPattern)) {
+    const token = match[0];
+    const index = match.index ?? 0;
+    output += escapeHtml(source.slice(cursor, index));
+    const escaped = escapeHtml(token);
+    const className = token.startsWith("//")
+      ? "token-comment"
+      : token.startsWith('"') || token.startsWith("'") || token.startsWith("`")
+        ? "token-string"
+        : /^\d/.test(token)
+          ? "token-number"
+          : /^(?:true|false|undefined)$/.test(token)
+            ? "token-boolean"
+            : /^(?:import|from|const|new)$/.test(token)
+              ? "token-keyword"
+              : /^(?:solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode)$/.test(token)
+                ? "token-property"
+                : "token-function";
+    output += `<span class="${className}">${escaped}</span>`;
+    cursor = index + token.length;
+  }
+  return output + escapeHtml(source.slice(cursor));
+}
 function updateDetails(): void {
-  family.textContent = "visual parity under review";
+  family.textContent = "source preview";
   title.textContent = selected.title;
   description.textContent = selected.notes ? `${selected.description} — ${selected.notes}` : selected.description;
-  code.textContent = selected.columns.map((column) => `${column.implemented ? "✓" : "·"} ${column.label}\n  ${column.samples.join(" · ")}`).join("\n");
+  code.innerHTML = highlightSource(actualSourceForExample(selected.id));
 }
 function syncControls(): void {
   animateToggle.checked = config.view.animate;
