@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vgpu-render examples</title>
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="canvas"></canvas>
+      <aside class="sidebar">
+        <header class="sidebar-header">
+          <div class="brand">vgpu-render <span>examples</span></div>
+          <div class="eyebrow">3D debug draw pipeline</div>
+        </header>
+        <nav id="example-list" class="example-list" aria-label="Examples"></nav>
+        <footer class="sidebar-footer">WebGPU · vgpu · WGSL</footer>
+      </aside>
+      <section class="details" aria-live="polite">
+        <div class="details-top">
+          <div>
+            <div id="example-family" class="eyebrow">example</div>
+            <h1 id="example-title">Loading</h1>
+          </div>
+          <div id="status" class="status">requesting WebGPU</div>
+        </div>
+        <p id="example-description" class="description"></p>
+        <pre id="example-code" class="code"></pre>
+        <div class="details-bottom">
+          <span id="counts"></span>
+          <label><input id="animate" type="checkbox" checked /> animate</label>
+          <label><input id="show-grid" type="checkbox" checked /> grid</label>
+          <label>width <input id="line-width-scale" type="range" min="0.25" max="3" step="0.05" value="1" /></label>
+          <label>grid opacity <input id="grid-opacity" type="range" min="0" max="1" step="0.05" value="1" /></label>
+          <label>projection <select id="projection"><option value="perspective">perspective</option><option value="orthographic">orthographic</option></select></label>
+          <label>background <input id="background" type="color" value="#06090e" /></label>
+          <button id="reset-config" type="button">reset</button>
+          <span>drag orbit · scroll zoom</span>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/demo.ts"></script>
+  </body>
+</html>

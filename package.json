@@ -1,0 +1,21 @@
+{
+  "name": "vgpu-render",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vitest": "latest",
+    "vite": "latest"
+  },
+  "dependencies": {
+    "vgpu": "latest"
+  }
+}
