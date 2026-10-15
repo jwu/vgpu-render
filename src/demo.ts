@@ -265,9 +265,11 @@ canvas.addEventListener("pointermove", (event) => {
   } else if (pointer.mode === "pan") {
     const { right, up } = cameraBasis();
     const pan = c.distance * PAN_SENSITIVITY;
-    c.target[0] += (right[0] * dx + up[0] * dy) * pan;
-    c.target[1] += (right[1] * dx + up[1] * dy) * pan;
-    c.target[2] += (right[2] * dx + up[2] * dy) * pan;
+    const panX = -dx;
+    const panY = -dy;
+    c.target[0] += (right[0] * panX + up[0] * panY) * pan;
+    c.target[1] += (right[1] * panX + up[1] * panY) * pan;
+    c.target[2] += (right[2] * panX + up[2] * panY) * pan;
   }
   pointer = { x: event.clientX, y: event.clientY, mode: pointer.mode };
 });
