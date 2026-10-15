@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import type { DemoConfig, LineJoint, ProjectionMode } from "./demo-config.js";
+import type { DemoConfig, DemoGridConfig, LineJoint, ProjectionMode } from "./demo-config.js";
 import { backgroundToHex, type DemoEngine } from "./demo-engine.js";
 import type { GodotExample } from "./godot-examples.js";
 import { GODOT_EXAMPLES } from "./godot-examples.js";
@@ -34,6 +34,8 @@ export type ControlHandlers = {
   readonly onProjectionChange: (value: ProjectionMode) => void;
   readonly onLineJointChange: (value: LineJoint) => void;
   readonly onBackgroundChange: (value: string) => void;
+  readonly onGridOptionsChange: (patch: Partial<DemoGridConfig>) => void;
+  readonly onGridLineColorChange: (target: "thin" | "thick", hex: string) => void;
   readonly onReset: () => void;
 };
 
@@ -48,6 +50,8 @@ export function useControlHandlers(engine: DemoEngine): ControlHandlers {
       onProjectionChange: (value: ProjectionMode) => engine.setProjection(value),
       onLineJointChange: (value: LineJoint) => engine.setLineJoint(value),
       onBackgroundChange: (value: string) => engine.setBackgroundHex(value),
+      onGridOptionsChange: (patch: Partial<DemoGridConfig>) => engine.setGridOptions(patch),
+      onGridLineColorChange: (target: "thin" | "thick", hex: string) => engine.setGridLineColor(target, hex),
       onReset: () => engine.resetConfig(),
     }),
     [engine],
@@ -56,4 +60,9 @@ export function useControlHandlers(engine: DemoEngine): ControlHandlers {
 
 export function backgroundHex(config: DemoConfig): string {
   return backgroundToHex(config.view.background);
+}
+
+/** Renders an RGBA 0-1 line color as a `#rrggbb` input value. */
+export function gridColorToHex(color: readonly number[]): string {
+  return backgroundToHex(color);
 }

@@ -7,16 +7,18 @@
  */
 
 import { frame, init, surface } from "vgpu";
-import { DebugDraw3D, GpuDebugDraw3D, InfiniteGrid3D, type FrameCommand, type Vec3 } from "./index.js";
+import { DebugDraw3D, GpuDebugDraw3D, InfiniteGrid3D, type FrameCommand, type InfiniteGridOptions, type Vec3 } from "./index.js";
 import { GODOT_EXAMPLES, type GodotExample } from "./godot-examples.js";
 import { buildScene } from "./godot-scenes.js";
 import {
   cloneDemoConfig,
   DEFAULT_DEMO_CONFIG,
   loadDemoConfig,
+  parseDemoConfig,
   saveDemoConfig,
   SCREENSHOT_DEMO_CONFIG,
   type DemoConfig,
+  type DemoGridConfig,
   type LineJoint,
   type ProjectionMode,
 } from "./demo-config.js";
@@ -136,6 +138,28 @@ export class DemoEngine {
     });
   }
 
+  /**
+   * Merges a partial grid patch into the config. Invalid entries are rejected by
+   * a parse round-trip, matching how the rest of the gallery validates input.
+   */
+  setGridOptions(patch: Partial<DemoGridConfig>): void {
+    this.update(() => {
+      this.config = parseDemoConfig({ ...this.config, grid: { ...this.config.grid, ...patch } });
+    });
+  }
+
+  /**
+   * Sets one line color from a `#rrggbb` input. Alpha keeps the current value so
+   * changing a hue never silently changes line opacity.
+   */
+  setGridLineColor(target: "thin" | "thick", hex: string): void {
+    const rgb = hexToRgb(hex);
+    if (rgb === undefined) return;
+    const alpha = target === "thin" ? this.config.grid.thinLineColor[3] : this.config.grid.thickLineColor[3];
+    const color: [number, number, number, number] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, alpha];
+    this.setGridOptions(target === "thin" ? { thinLineColor: color } : { thickLineColor: color });
+  }
+
   setProjection(projection: ProjectionMode): void {
     this.update(() => {
       this.config.camera.projection = projection;
@@ -190,7 +214,7 @@ export class DemoEngine {
 
     const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536 });
     const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
-    const grid = new InfiniteGrid3D(gpu);
+    const grid = new InfiniteGrid3D(gpu, this.gridOptions());
 
     this.status = "ready";
     this.statusDetail = "WebGPU ready · partial parity";
@@ -232,11 +256,20 @@ export class DemoEngine {
 
       renderer.prepare(commands, { viewProjection: this.viewProjection });
       grid.setOpacity(this.config.view.gridOpacity);
+      grid.setOptions(this.gridOptions());
+      const forward: Vec3 = [
+        target[0] - eye[0],
+        target[1] - eye[1],
+        target[2] - eye[2],
+      ];
+      const forwardLength = Math.hypot(forward[0], forward[1], forward[2]) || 1;
       grid.prepare({
         viewProjection: this.viewProjection,
         cameraPosition: eye,
-        gridCenter: this.fpsCamera ? [eye[0], eye[2]] : [c.target[0], c.target[2]],
-        viewportSize: [width, height],
+        cameraForward: [forward[0] / forwardLength, forward[1] / forwardLength, forward[2] / forwardLength],
+        projection: c.projection,
+        orthographicSize: c.orthographicHeight,
+        farClip: c.far,
       });
 
       frame(gpu, (f) => {
@@ -312,6 +345,29 @@ export class DemoEngine {
     } catch {
       /* Storage can be unavailable. */
     }
+  }
+
+  /** Maps the gallery grid config onto the library option names. */
+  private gridOptions(): InfiniteGridOptions {
+    const grid = this.config.grid;
+    return {
+      size: grid.gridSize,
+      cellSize: grid.cellSize,
+      lineWidthPixels: grid.lineWidthPixels,
+      lodFinerLevels: grid.lodFinerLevels,
+      lodTotalLevels: grid.lodTotalLevels,
+      edgeFadeStartRatio: grid.edgeFadeStartRatio,
+      edgeFadeEndRatio: grid.edgeFadeEndRatio,
+      enableGrazingOpacity: grid.enableGrazingOpacity,
+      grazingFadeStart: grid.grazingFadeStart,
+      grazingFadeEnd: grid.grazingFadeEnd,
+      enableStippleDiscard: grid.enableStippleDiscard,
+      enableLodCenterFade: grid.enableLodCenterFade,
+      lodCenterFadeLineCount: grid.lodCenterFadeLineCount,
+      thinLineColor: grid.thinLineColor,
+      thickLineColor: grid.thickLineColor,
+      debugLodColors: grid.debugLodColors,
+    };
   }
 
   private orbitCameraPosition(): Vec3 {

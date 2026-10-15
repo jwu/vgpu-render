@@ -179,6 +179,48 @@ describe("demo config", () => {
     expect(config.camera.yaw).toBe(DEFAULT_DEMO_CONFIG.camera.yaw);
     expect(config.view.showGrid).toBe(false);
     expect(config.view.lineWidthScale).toBe(DEFAULT_DEMO_CONFIG.view.lineWidthScale);
+    expect(config.grid).toEqual(DEFAULT_DEMO_CONFIG.grid);
+  });
+
+  test("grid defaults match the reference addon export values", () => {
+    const grid = parseDemoConfig({}).grid;
+    expect(grid.gridSize).toBe(2000);
+    expect(grid.cellSize).toBe(1);
+    expect(grid.lineWidthPixels).toBe(1);
+    expect(grid.lodFinerLevels).toBe(3);
+    expect(grid.lodTotalLevels).toBe(8);
+    expect(grid.edgeFadeStartRatio).toBe(0);
+    expect(grid.edgeFadeEndRatio).toBe(1);
+    expect(grid.enableGrazingOpacity).toBe(true);
+    expect(grid.grazingFadeStart).toBe(3);
+    expect(grid.grazingFadeEnd).toBe(20);
+    expect(grid.enableStippleDiscard).toBe(false);
+    expect(grid.enableLodCenterFade).toBe(true);
+    expect(grid.lodCenterFadeLineCount).toBe(151);
+    expect(grid.thinLineColor).toEqual([0.42, 0.42, 0.42, 0.45]);
+    expect(grid.thickLineColor).toEqual([0.62, 0.62, 0.62, 0.65]);
+    expect(grid.debugLodColors).toBe(false);
+  });
+
+  test("merges partial grid patches over the defaults", () => {
+    const config = parseDemoConfig({ grid: { cellSize: 0.5, debugLodColors: true } });
+    expect(config.grid.cellSize).toBe(0.5);
+    expect(config.grid.debugLodColors).toBe(true);
+    expect(config.grid.lodFinerLevels).toBe(DEFAULT_DEMO_CONFIG.grid.lodFinerLevels);
+  });
+
+  test("rejects grid values the reference setters would clamp away", () => {
+    expect(() => parseDemoConfig({ grid: { gridSize: 0 } })).toThrow(/grid.gridSize/);
+    expect(() => parseDemoConfig({ grid: { cellSize: 0 } })).toThrow(/grid.cellSize/);
+    expect(() => parseDemoConfig({ grid: { lineWidthPixels: 0.1 } })).toThrow(/grid.lineWidthPixels/);
+    expect(() => parseDemoConfig({ grid: { lodFinerLevels: -1 } })).toThrow(/grid.lodFinerLevels/);
+    expect(() => parseDemoConfig({ grid: { lodFinerLevels: 1.5 } })).toThrow(/integer/);
+    expect(() => parseDemoConfig({ grid: { lodTotalLevels: 2 } })).toThrow(/grid.lodTotalLevels/);
+    expect(() => parseDemoConfig({ grid: { edgeFadeStartRatio: 2 } })).toThrow(/grid.edgeFadeStartRatio/);
+    expect(() => parseDemoConfig({ grid: { grazingFadeEnd: 91 } })).toThrow(/grid.grazingFadeEnd/);
+    expect(() => parseDemoConfig({ grid: { thinLineColor: [1, 1, 1] } })).toThrow(/thinLineColor/);
+    expect(() => parseDemoConfig({ grid: { debugLodColors: "yes" } })).toThrow(/debugLodColors/);
+    expect(() => parseDemoConfig({ grid: { enableLodCenterFade: 1 } })).toThrow(/enableLodCenterFade/);
   });
 
   test("rejects structurally invalid and out-of-range values", () => {
@@ -249,7 +291,16 @@ describe("demo config", () => {
     expect(copy).not.toBe(DEFAULT_DEMO_CONFIG);
     copy.camera.target[0] = 9;
     copy.view.background[3] = 0;
+    copy.grid.thinLineColor[0] = 0.9;
+    copy.grid.thickLineColor[3] = 0;
     expect(DEFAULT_DEMO_CONFIG.camera.target[0]).toBe(0);
     expect(DEFAULT_DEMO_CONFIG.view.background[3]).toBe(1);
+    expect(DEFAULT_DEMO_CONFIG.grid.thinLineColor[0]).toBeCloseTo(0.42, 12);
+    expect(DEFAULT_DEMO_CONFIG.grid.thickLineColor[3]).toBeCloseTo(0.65, 12);
+  });
+
+  test("serialize round-trips grid overrides through parse", () => {
+    const config = parseDemoConfig({ grid: { gridSize: 500, debugLodColors: true } });
+    expect(parseDemoConfig(JSON.parse(serializeDemoConfig(config)))).toEqual(config);
   });
 });

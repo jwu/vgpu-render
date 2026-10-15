@@ -30,9 +30,34 @@ export type DemoViewConfig = {
   background: [number, number, number, number];
 };
 
+/**
+ * Infinite grid overrides exposed in the gallery. Field names mirror the
+ * reference addon properties so the panel maps one to one onto the shader
+ * uniforms; `gridSize` is the reference `grid_size`.
+ */
+export type DemoGridConfig = {
+  gridSize: number;
+  cellSize: number;
+  lineWidthPixels: number;
+  lodFinerLevels: number;
+  lodTotalLevels: number;
+  edgeFadeStartRatio: number;
+  edgeFadeEndRatio: number;
+  enableGrazingOpacity: boolean;
+  grazingFadeStart: number;
+  grazingFadeEnd: number;
+  enableStippleDiscard: boolean;
+  enableLodCenterFade: boolean;
+  lodCenterFadeLineCount: number;
+  thinLineColor: [number, number, number, number];
+  thickLineColor: [number, number, number, number];
+  debugLodColors: boolean;
+};
+
 export type DemoConfig = {
   camera: DemoCameraConfig;
   view: DemoViewConfig;
+  grid: DemoGridConfig;
 };
 
 export type ConfigStorage = {
@@ -49,6 +74,35 @@ const HALF_PI = Math.PI / 2;
  * (`project.godot`), which every reference screenshot is captured against.
  */
 export const GODOT_CLEAR_COLOR: readonly [number, number, number, number] = [0.11764706, 0.11764706, 0.11764706, 1];
+
+/**
+ * Reference addon defaults (`addons/infinite_grid/infinite_grid_3d.gd` export
+ * values), kept in one place so gallery and library defaults cannot drift.
+ */
+export const REFERENCE_THIN_LINE_COLOR: readonly [number, number, number, number] = [0.42, 0.42, 0.42, 0.45];
+export const REFERENCE_THICK_LINE_COLOR: readonly [number, number, number, number] = [0.62, 0.62, 0.62, 0.65];
+
+/** Deep-copies the reference grid defaults for each preset. */
+export function defaultGridConfig(): DemoGridConfig {
+  return {
+    gridSize: 2000,
+    cellSize: 1,
+    lineWidthPixels: 1,
+    lodFinerLevels: 3,
+    lodTotalLevels: 8,
+    edgeFadeStartRatio: 0,
+    edgeFadeEndRatio: 1,
+    enableGrazingOpacity: true,
+    grazingFadeStart: 3,
+    grazingFadeEnd: 20,
+    enableStippleDiscard: false,
+    enableLodCenterFade: true,
+    lodCenterFadeLineCount: 151,
+    thinLineColor: [...REFERENCE_THIN_LINE_COLOR],
+    thickLineColor: [...REFERENCE_THICK_LINE_COLOR],
+    debugLodColors: false,
+  };
+}
 
 export const DEFAULT_DEMO_CONFIG: DemoConfig = {
   camera: {
@@ -70,6 +124,7 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     lineJoint: "round",
     background: [...GODOT_CLEAR_COLOR],
   },
+  grid: defaultGridConfig(),
 };
 
 /**
@@ -98,6 +153,7 @@ export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
     lineJoint: "round",
     background: [...GODOT_CLEAR_COLOR],
   },
+  grid: defaultGridConfig(),
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -156,6 +212,63 @@ function readLineJoint(value: unknown): LineJoint {
   return value;
 }
 
+type NumberRule = { readonly min: number; readonly max?: number; readonly integer?: boolean };
+
+/** Reads a bounded number with the same clamps the reference setters apply. */
+function readGridNumber(value: unknown, path: string, rule: NumberRule): number {
+  const result = readNumber(value, path);
+  if (result < rule.min) throw new RangeError(`${path} must be at least ${rule.min}`);
+  if (rule.max !== undefined && result > rule.max) throw new RangeError(`${path} must be at most ${rule.max}`);
+  if (rule.integer === true && !Number.isInteger(result)) throw new RangeError(`${path} must be an integer`);
+  return result;
+}
+
+/**
+ * Reference-derived bounds for the grid overrides. `lodTotalLevels` uses the
+ * reference minimum of 3, matching `infinite_grid_3d.gd` setters.
+ */
+export const GRID_NUMBER_RULES = {
+  gridSize: { min: 1 },
+  cellSize: { min: 0.0001 },
+  lineWidthPixels: { min: 0.25 },
+  lodFinerLevels: { min: 0, max: 12, integer: true },
+  lodTotalLevels: { min: 3, max: 24, integer: true },
+  edgeFadeStartRatio: { min: 0, max: 1 },
+  edgeFadeEndRatio: { min: 0, max: 1 },
+  grazingFadeStart: { min: 0, max: 90 },
+  grazingFadeEnd: { min: 0, max: 90 },
+  lodCenterFadeLineCount: { min: 1, max: 4096 },
+} as const satisfies Record<string, NumberRule>;
+
+function readGridColor(value: unknown, path: string): [number, number, number, number] {
+  const tuple = readNumberTuple(value, path, 4);
+  return [tuple[0]!, tuple[1]!, tuple[2]!, tuple[3]!];
+}
+
+function parseGridConfig(value: unknown, base: DemoGridConfig): DemoGridConfig {
+  const grid = value === undefined ? {} : readRecord(value, "config.grid");
+  const number = (key: keyof typeof GRID_NUMBER_RULES, fallback: number): number =>
+    grid[key] === undefined ? fallback : readGridNumber(grid[key], `config.grid.${key}`, GRID_NUMBER_RULES[key]);
+  return {
+    gridSize: number("gridSize", base.gridSize),
+    cellSize: number("cellSize", base.cellSize),
+    lineWidthPixels: number("lineWidthPixels", base.lineWidthPixels),
+    lodFinerLevels: number("lodFinerLevels", base.lodFinerLevels),
+    lodTotalLevels: number("lodTotalLevels", base.lodTotalLevels),
+    edgeFadeStartRatio: number("edgeFadeStartRatio", base.edgeFadeStartRatio),
+    edgeFadeEndRatio: number("edgeFadeEndRatio", base.edgeFadeEndRatio),
+    enableGrazingOpacity: grid.enableGrazingOpacity === undefined ? base.enableGrazingOpacity : readBoolean(grid.enableGrazingOpacity, "config.grid.enableGrazingOpacity"),
+    grazingFadeStart: number("grazingFadeStart", base.grazingFadeStart),
+    grazingFadeEnd: number("grazingFadeEnd", base.grazingFadeEnd),
+    enableStippleDiscard: grid.enableStippleDiscard === undefined ? base.enableStippleDiscard : readBoolean(grid.enableStippleDiscard, "config.grid.enableStippleDiscard"),
+    enableLodCenterFade: grid.enableLodCenterFade === undefined ? base.enableLodCenterFade : readBoolean(grid.enableLodCenterFade, "config.grid.enableLodCenterFade"),
+    lodCenterFadeLineCount: number("lodCenterFadeLineCount", base.lodCenterFadeLineCount),
+    thinLineColor: grid.thinLineColor === undefined ? base.thinLineColor : readGridColor(grid.thinLineColor, "config.grid.thinLineColor"),
+    thickLineColor: grid.thickLineColor === undefined ? base.thickLineColor : readGridColor(grid.thickLineColor, "config.grid.thickLineColor"),
+    debugLodColors: grid.debugLodColors === undefined ? base.debugLodColors : readBoolean(grid.debugLodColors, "config.grid.debugLodColors"),
+  };
+}
+
 /** Deep-copies a config so callers cannot mutate shared constants. */
 export function cloneDemoConfig(config: DemoConfig): DemoConfig {
   return {
@@ -171,6 +284,11 @@ export function cloneDemoConfig(config: DemoConfig): DemoConfig {
         config.view.background[2],
         config.view.background[3],
       ],
+    },
+    grid: {
+      ...config.grid,
+      thinLineColor: [config.grid.thinLineColor[0], config.grid.thinLineColor[1], config.grid.thinLineColor[2], config.grid.thinLineColor[3]],
+      thickLineColor: [config.grid.thickLineColor[0], config.grid.thickLineColor[1], config.grid.thickLineColor[2], config.grid.thickLineColor[3]],
     },
   };
 }
@@ -214,6 +332,7 @@ export function parseDemoConfig(value: unknown = {}): DemoConfig {
       lineJoint: view.lineJoint === undefined ? base.view.lineJoint : readLineJoint(view.lineJoint),
       background: [background[0]!, background[1]!, background[2]!, background[3]!],
     },
+    grid: parseGridConfig(root.grid, base.grid),
   };
 }
 
