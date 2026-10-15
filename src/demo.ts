@@ -30,7 +30,9 @@ const resetConfig = document.querySelector<HTMLButtonElement>("#reset-config")!;
 let selected: GodotExample = GODOT_EXAMPLES[0]!;
 type PointerMode = "rotate" | "pan" | "fps";
 type PointerState = { x: number; y: number; mode: PointerMode };
+type FpsCamera = { position: [number, number, number]; yaw: number; pitch: number };
 let pointer: PointerState | undefined;
+let fpsCamera: FpsCamera | undefined;
 const keys = new Set<string>();
 const FPS_SPEED = 8;
 const LOOK_SENSITIVITY = 0.008;
@@ -171,26 +173,73 @@ function multiply(a: Float32Array, b: Float32Array): Float32Array {
   for (let col = 0; col < 4; col++) for (let row = 0; row < 4; row++) out[col * 4 + row] = a[row]! * b[col * 4]! + a[4 + row]! * b[col * 4 + 1]! + a[8 + row]! * b[col * 4 + 2]! + a[12 + row]! * b[col * 4 + 3]!;
   return out;
 }
-function applyFpsMovement(delta: number): void {
-  if (compareMode || pointer?.mode !== "fps" || keys.size === 0) return;
-  const c = config.camera;
-  const forward: Vec3 = [-Math.cos(c.yaw), 0, -Math.sin(c.yaw)];
-  const right: Vec3 = [-forward[2], 0, forward[0]];
-  const forwardAmount = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
-  const strafeAmount = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
-  const verticalAmount = (keys.has("e") ? 1 : 0) - (keys.has("q") ? 1 : 0);
-  const horizontalLength = Math.hypot(forwardAmount, strafeAmount);
-  const horizontalScale = horizontalLength > 1 ? 1 / horizontalLength : 1;
-  const step = FPS_SPEED * delta;
-  c.target[0] += (forward[0] * forwardAmount + right[0] * strafeAmount) * horizontalScale * step;
-  c.target[1] += verticalAmount * step;
-  c.target[2] += (forward[2] * forwardAmount + right[2] * strafeAmount) * horizontalScale * step;
-}
 function cameraBasis(): { right: Vec3; up: Vec3 } {
   const c = config.camera;
   const right: Vec3 = [Math.sin(c.yaw), 0, -Math.cos(c.yaw)];
   const up: Vec3 = [-Math.sin(c.pitch) * Math.cos(c.yaw), Math.cos(c.pitch), -Math.sin(c.pitch) * Math.sin(c.yaw)];
   return { right, up };
+}
+function orbitCameraPosition(): Vec3 {
+  const c = config.camera;
+  return [c.target[0] + Math.cos(c.yaw) * Math.cos(c.pitch) * c.distance, c.target[1] + Math.sin(c.pitch) * c.distance, c.target[2] + Math.sin(c.yaw) * Math.cos(c.pitch) * c.distance];
+}
+function enterFpsCamera(): void {
+  const position = orbitCameraPosition();
+  const c = config.camera;
+  const forward: Vec3 = [
+    (c.target[0] - position[0]) / c.distance,
+    (c.target[1] - position[1]) / c.distance,
+    (c.target[2] - position[2]) / c.distance,
+  ];
+  fpsCamera = {
+    position: [position[0], position[1], position[2]],
+    yaw: Math.atan2(forward[0], -forward[2]),
+    pitch: Math.asin(forward[1]),
+  };
+}
+function exitFpsCamera(): void {
+  if (!fpsCamera) return;
+  const c = config.camera;
+  c.target = [
+    fpsCamera.position[0] + Math.sin(fpsCamera.yaw) * Math.cos(fpsCamera.pitch) * c.distance,
+    fpsCamera.position[1] + Math.sin(fpsCamera.pitch) * c.distance,
+    fpsCamera.position[2] - Math.cos(fpsCamera.yaw) * Math.cos(fpsCamera.pitch) * c.distance,
+  ];
+  c.yaw = fpsCamera.yaw + Math.PI / 2;
+  c.pitch = -fpsCamera.pitch;
+  fpsCamera = undefined;
+}
+function fpsBasis(camera: FpsCamera): { forward: Vec3; right: Vec3; up: Vec3 } {
+  const forward: Vec3 = [
+    Math.sin(camera.yaw) * Math.cos(camera.pitch),
+    Math.sin(camera.pitch),
+    -Math.cos(camera.yaw) * Math.cos(camera.pitch),
+  ];
+  const right: Vec3 = [Math.cos(camera.yaw), 0, Math.sin(camera.yaw)];
+  const up: Vec3 = [
+    -Math.sin(camera.yaw) * Math.sin(camera.pitch),
+    Math.cos(camera.pitch),
+    Math.cos(camera.yaw) * Math.sin(camera.pitch),
+  ];
+  return { forward, right, up };
+}
+function applyFpsMovement(delta: number): void {
+  if (compareMode || !fpsCamera || keys.size === 0) return;
+  const { forward, right, up } = fpsBasis(fpsCamera);
+  const forwardAmount = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
+  const rightAmount = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
+  const upAmount = (keys.has("e") ? 1 : 0) - (keys.has("q") ? 1 : 0);
+  const move: Vec3 = [
+    forward[0] * forwardAmount + right[0] * rightAmount + up[0] * upAmount,
+    forward[1] * forwardAmount + right[1] * rightAmount + up[1] * upAmount,
+    forward[2] * forwardAmount + right[2] * rightAmount + up[2] * upAmount,
+  ];
+  const length = Math.hypot(move[0], move[1], move[2]);
+  if (length < 1e-6) return;
+  const step = FPS_SPEED * delta / length;
+  fpsCamera.position[0] += move[0] * step;
+  fpsCamera.position[1] += move[1] * step;
+  fpsCamera.position[2] += move[2] * step;
 }
 window.addEventListener("error", (event) => { status.textContent = `error: ${event.message}`; });
 window.addEventListener("unhandledrejection", (event) => { status.textContent = `error: ${String(event.reason)}`; });
@@ -214,15 +263,18 @@ function render(timestamp: number): void {
   const width = Math.max(canvas.clientWidth, 1);
   const height = Math.max(canvas.clientHeight, 1);
   const c = config.camera;
-  const eye: Vec3 = [c.target[0] + Math.cos(c.yaw) * Math.cos(c.pitch) * c.distance, c.target[1] + Math.sin(c.pitch) * c.distance, c.target[2] + Math.sin(c.yaw) * Math.cos(c.pitch) * c.distance];
-  viewProjection = multiply(c.projection === "orthographic" ? orthographic(c.orthographicHeight, width / height, c.near, c.far) : perspective(c.fov, width / height, c.near, c.far), lookAt(eye, c.target));
+  const eye = fpsCamera?.position ?? orbitCameraPosition();
+  const target: Vec3 = fpsCamera
+    ? [eye[0] + Math.sin(fpsCamera.yaw) * Math.cos(fpsCamera.pitch), eye[1] + Math.sin(fpsCamera.pitch), eye[2] - Math.cos(fpsCamera.yaw) * Math.cos(fpsCamera.pitch)]
+    : c.target;
+  viewProjection = multiply(c.projection === "orthographic" ? orthographic(c.orthographicHeight, width / height, c.near, c.far) : perspective(c.fov, width / height, c.near, c.far), lookAt(eye, target));
   const recorder = debug.beginFrame();
   buildScene(selected.id, recorder, time);
   const raw = debug.finishFrame(recorder);
   const commands: readonly FrameCommand[] = raw.map((command) => command.kind === "line" ? { ...command, width: command.width * config.view.lineWidthScale } : command);
   renderer.prepare(commands, { viewProjection });
   grid.setOpacity(config.view.gridOpacity);
-  grid.prepare({ viewProjection, cameraPosition: eye, gridCenter: [c.target[0], c.target[2]], viewportSize: [width, height] });
+  grid.prepare({ viewProjection, cameraPosition: eye, gridCenter: fpsCamera ? [eye[0], eye[2]] : [c.target[0], c.target[2]], viewportSize: [width, height] });
   frame(gpu, (f) => {
     renderer.updateIndirect(f);
     f.pass({ target: output, clear: config.view.background, clearDepth: 1 }, (pass) => {
@@ -249,19 +301,27 @@ canvas.addEventListener("pointerdown", (event) => {
   const mode: PointerMode = event.button === 0 ? "rotate" : event.button === 1 ? "pan" : event.button === 2 ? "fps" : "rotate";
   if (event.button > 2) return;
   pointer = { x: event.clientX, y: event.clientY, mode };
-  canvas.setPointerCapture(event.pointerId);
-  if (mode === "fps") void canvas.requestPointerLock();
+  if (mode === "fps") {
+    enterFpsCamera();
+    void canvas.requestPointerLock();
+  } else {
+    canvas.setPointerCapture(event.pointerId);
+  }
 });
 canvas.addEventListener("pointermove", (event) => {
   if (!pointer || compareMode) return;
   const dx = event.clientX - pointer.x;
   const dy = event.clientY - pointer.y;
   const c = config.camera;
-  if (pointer.mode === "rotate" || pointer.mode === "fps") {
-    const lookX = pointer.mode === "fps" && document.pointerLockElement === canvas ? event.movementX : dx;
-    const lookY = pointer.mode === "fps" && document.pointerLockElement === canvas ? event.movementY : dy;
-    c.yaw += lookX * LOOK_SENSITIVITY;
-    c.pitch = Math.max(-1.35, Math.min(1.35, c.pitch + lookY * LOOK_SENSITIVITY));
+  if (pointer.mode === "fps") {
+    if (!fpsCamera) return;
+    const lookX = document.pointerLockElement === canvas ? event.movementX : dx;
+    const lookY = document.pointerLockElement === canvas ? event.movementY : dy;
+    fpsCamera.yaw += lookX * LOOK_SENSITIVITY;
+    fpsCamera.pitch = Math.max(-1.35, Math.min(1.35, fpsCamera.pitch - lookY * LOOK_SENSITIVITY));
+  } else if (pointer.mode === "rotate") {
+    c.yaw += dx * LOOK_SENSITIVITY;
+    c.pitch = Math.max(-1.35, Math.min(1.35, c.pitch + dy * LOOK_SENSITIVITY));
   } else if (pointer.mode === "pan") {
     const { right, up } = cameraBasis();
     const pan = c.distance * PAN_SENSITIVITY;
@@ -277,7 +337,9 @@ const releasePointer = (event: PointerEvent) => {
   if (pointer === undefined) return;
   pointer = undefined;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
-  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (event.pointerId >= 0 && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  if (event.button === 2 || fpsCamera) exitFpsCamera();
+  keys.clear();
   persist();
 };
 canvas.addEventListener("pointerup", releasePointer);
@@ -294,6 +356,7 @@ window.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement !== canvas && pointer?.mode === "fps") {
     pointer = undefined;
     keys.clear();
+    exitFpsCamera();
     persist();
   }
 });
