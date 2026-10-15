@@ -6,55 +6,7 @@
     <title>vgpu-render examples</title>
   </head>
   <body>
-    <main id="app">
-      <aside class="sidebar sidebar-examples">
-        <header class="sidebar-header">
-          <div class="brand">vgpu-render <span>examples</span></div>
-          <div class="eyebrow">3D debug draw pipeline</div>
-        </header>
-        <nav id="example-list" class="example-list" aria-label="Examples"></nav>
-        <footer class="sidebar-footer">WebGPU · vgpu · WGSL</footer>
-      </aside>
-      <section class="workspace" aria-label="Example preview">
-        <header class="workspace-header">
-          <div>
-            <div class="eyebrow">interactive example</div>
-            <h1 id="example-title">Loading</h1>
-          </div>
-          <div id="status" class="status">requesting WebGPU</div>
-        </header>
-        <p id="example-description" class="description"></p>
-        <div class="preview-frame">
-          <canvas id="canvas"></canvas>
-        </div>
-        <section class="details" aria-live="polite">
-          <div class="details-heading">
-            <div>
-              <div id="example-family" class="eyebrow">example</div>
-              <span id="counts" class="counts"></span>
-            </div>
-            <span class="hint">drag orbit · scroll zoom</span>
-          </div>
-          <pre id="example-code" class="code"></pre>
-        </section>
-      </section>
-      <aside class="sidebar sidebar-controls" aria-label="Render controls">
-        <header class="sidebar-header">
-          <div class="eyebrow">render controls</div>
-          <h2>Display</h2>
-        </header>
-        <div class="control-list">
-          <label><span>animate</span><input id="animate" type="checkbox" checked /></label>
-          <label><span>grid</span><input id="show-grid" type="checkbox" checked /></label>
-          <label><span>line width</span><input id="line-width-scale" type="range" min="0.25" max="3" step="0.05" value="1" /></label>
-          <label><span>grid opacity</span><input id="grid-opacity" type="range" min="0" max="1" step="0.05" value="1" /></label>
-          <label><span>projection</span><select id="projection"><option value="perspective">perspective</option><option value="orthographic">orthographic</option></select></label>
-          <label><span>joint</span><select id="line-joint"><option value="none">none</option><option value="round">round</option><option value="bevel">bevel</option><option value="miter">miter</option></select></label>
-          <label><span>background</span><input id="background" type="color" value="#f4f6f8" /></label>
-          <button id="reset-config" type="button">reset</button>
-        </div>
-      </aside>
-    </main>
-    <script type="module" src="/src/demo.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/demo.tsx"></script>
   </body>
 </html>

@@ -44,6 +44,12 @@ export const DEMO_CONFIG_KEY = "vgpu-render:demo-config";
 
 const HALF_PI = Math.PI / 2;
 
+/**
+ * Godot's `renderer/defaults/default_clear_color` from the reference project
+ * (`project.godot`), which every reference screenshot is captured against.
+ */
+export const GODOT_CLEAR_COLOR: readonly [number, number, number, number] = [0.11764706, 0.11764706, 0.11764706, 1];
+
 export const DEFAULT_DEMO_CONFIG: DemoConfig = {
   camera: {
     yaw: 0.62,
@@ -62,7 +68,7 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     animate: true,
     lineWidthScale: 1,
     lineJoint: "round",
-    background: [0.956, 0.965, 0.973, 1],
+    background: [...GODOT_CLEAR_COLOR],
   },
 };
 
@@ -90,7 +96,7 @@ export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
     animate: false,
     lineWidthScale: 1,
     lineJoint: "round",
-    background: [0.11764706, 0.11764706, 0.11764706, 1],
+    background: [...GODOT_CLEAR_COLOR],
   },
 };
 

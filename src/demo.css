@@ -1,58 +1,346 @@
-.compare-mode .sidebar, .compare-mode .workspace { display: none; }
-.compare-mode canvas { width: 100vw; height: 100vh; }
+/*
+ * Layout shell for the examples gallery.
+ *
+ * Colors, radii, and typography come from the base-lyra theme tokens declared in
+ * `index.css`; this file only holds structural rules that Tailwind utilities do
+ * not express well (CSS grid shell, compare mode, code highlighting).
+ */
 
-:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #18212b; background: #f6f7f9; }
-html, body, #app { width: 100%; min-height: 100%; margin: 0; }
-body { overflow-x: hidden; }
-#app { display: grid; grid-template-columns: 224px minmax(0, 1fr) 224px; min-height: 100vh; background: #f6f7f9; }
-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
-.sidebar { display: flex; min-height: 100vh; flex-direction: column; border-right: 1px solid #e2e6eb; background: #fff; }
-.sidebar-controls { border-right: 0; border-left: 1px solid #e2e6eb; }
-.sidebar-header h2 { margin: 8px 0 0; font-size: 15px; font-weight: 650; }
-.control-list { display: grid; gap: 16px; padding: 18px 16px; }
-.control-list label { display: grid; gap: 7px; color: #536171; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.control-list label > span { display: flex; justify-content: space-between; }
-.control-list input[type="range"] { width: 100%; }
-.control-list input[type="checkbox"] { justify-self: start; }
-.control-list button { padding: 6px 9px; border: 1px solid #d5dde4; border-radius: 4px; color: #536171; background: #fff; cursor: pointer; }
-.control-list button:hover { color: #0e5f8c; border-color: #8ec3dc; }
-.sidebar-header { padding: 28px 22px 20px; border-bottom: 1px solid #e8ebef; }
-.brand { color: #18212b; font-size: 16px; font-weight: 750; letter-spacing: 0.02em; }
-.brand span { color: #64748b; font-weight: 500; }
-.eyebrow { color: #748092; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
-.sidebar-header .eyebrow { margin-top: 9px; }
-.example-list { display: grid; gap: 2px; padding: 14px 10px; overflow: auto; }
-.example-button { display: grid; gap: 4px; width: 100%; padding: 10px 12px; border: 1px solid transparent; border-radius: 5px; color: #6b7685; background: transparent; text-align: left; cursor: pointer; }
-.example-button:hover { color: #1d2935; background: #f1f4f7; }
-.example-button.active { color: #0e5f8c; border-color: #b8d9ea; background: #eaf5fa; }
-.example-button strong { font-size: 13px; font-weight: 600; }
-.example-button small { color: #9aa5b2; font-size: 11px; }
-.example-button.active small { color: #4380a1; }
-.sidebar-footer { margin-top: auto; padding: 17px 22px; color: #9aa5b2; border-top: 1px solid #e8ebef; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.workspace { width: min(100% - 64px, 1060px); margin: 0 auto; padding: 58px 32px 72px; }
-.workspace-header { display: flex; align-items: start; justify-content: space-between; gap: 20px; }
-h1 { margin: 7px 0 0; color: #17212b; font-size: clamp(28px, 4vw, 42px); font-weight: 650; letter-spacing: 0; line-height: 1.1; }
-.status { padding-top: 4px; color: #35805f; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.description { max-width: 680px; margin: 18px 0 26px; color: #536171; font-size: 15px; line-height: 1.6; }
-.preview-frame { height: min(58vw, 580px); min-height: 320px; overflow: hidden; border: 1px solid #dce2e8; border-radius: 6px; background: #f4f6f8; box-shadow: 0 10px 28px rgba(35, 48, 62, 0.07); }
-.details { display: grid; gap: 14px; padding-top: 34px; }
-.details-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
-.counts, .hint { color: #8a96a3; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.code { max-height: 520px; margin: 0; padding: 17px 18px; overflow: auto; border: 1px solid #e1e6eb; border-left: 3px solid #5ea3c4; border-radius: 5px; color: #445363; background: #fff; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-.token-comment { color: #8b98a5; }
-.token-string { color: #a34f27; }
-.token-number { color: #8b5a9b; }
-.token-boolean { color: #176b85; }
-.token-keyword { color: #7b3f92; font-weight: 650; }
-.token-property { color: #146c70; }
-.token-function { color: #1d5f98; }
-.details-bottom { display: flex; flex-wrap: wrap; gap: 11px 16px; align-items: center; color: #7a8794; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.details-bottom label { display: inline-flex; align-items: center; gap: 5px; color: #536171; cursor: pointer; }
-.details-bottom input[type="range"] { width: 72px; vertical-align: middle; }
-.details-bottom button { padding: 5px 9px; border: 1px solid #d5dde4; border-radius: 4px; color: #536171; background: #fff; cursor: pointer; }
-.details-bottom button:hover { color: #0e5f8c; border-color: #8ec3dc; }
-input { accent-color: #2e8ab4; }
-select { border: 1px solid #d5dde4; border-radius: 4px; padding: 3px 5px; color: #536171; background: #fff; font: inherit; }
-@media (max-width: 900px) { #app { grid-template-columns: 184px minmax(0, 1fr) 184px; } .workspace { width: auto; padding: 38px 20px 52px; } }
-@media (max-width: 760px) { #app { grid-template-columns: 160px minmax(0, 1fr) 160px; } .workspace { width: auto; padding: 38px 16px 52px; } .preview-frame { height: min(60vw, 480px); min-height: 260px; } h1 { font-size: 28px; } }
-@media (max-width: 560px) { #app { display: block; } .sidebar { min-height: auto; border-right: 0; border-left: 0; border-bottom: 1px solid #e2e6eb; } .sidebar-controls { border-top: 1px solid #e2e6eb; border-bottom: 0; } .sidebar-header { padding: 14px 16px 8px; } .sidebar-header .eyebrow, .sidebar-footer { display: none; } .example-list { display: flex; padding: 7px 10px; overflow-x: auto; } .example-button { min-width: max-content; padding: 7px 10px; } .example-button small { display: none; } .control-list { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px 16px 16px; } .workspace { width: auto; padding: 30px 16px 42px; } .workspace-header { display: block; } .status { margin-top: 12px; } .description { margin: 14px 0 20px; font-size: 14px; } .preview-frame { height: 68vw; min-height: 220px; } .details { padding-top: 26px; } .hint { display: none; } }
+:root {
+  color-scheme: light;
+}
+
+/* `#root` is a transparent host; the grid shell lives in `.app-shell` so the
+ * compare-mode rules can target the layout without unwrapping the root. */
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr) 224px;
+  min-height: 100vh;
+  background: var(--sidebar);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+/* Compare mode keeps the canvas fullscreen and hides every other chrome element.
+ * `display: contents` lifts the canvas out of the sidebar/workspace wrappers so it
+ * can fill the viewport without the wrappers themselves being laid out. */
+.compare-mode .app-shell {
+  display: block;
+}
+.compare-mode .sidebar {
+  display: none;
+}
+.compare-mode .workspace {
+  display: contents;
+}
+.compare-mode .workspace > *:not(.preview-frame) {
+  display: none;
+}
+.compare-mode .preview-frame {
+  display: contents;
+}
+.compare-mode canvas {
+  width: 100vw;
+  height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--background);
+}
+.sidebar-controls {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+.sidebar-header {
+  padding: 28px 22px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-header h2 {
+  margin: 8px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.sidebar-footer {
+  margin-top: auto;
+  padding: 17px 22px;
+  color: var(--muted-foreground);
+  border-top: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+.brand {
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.brand span {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.eyebrow {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.sidebar-header .eyebrow {
+  margin-top: 9px;
+}
+
+.control-list {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  padding: 18px 16px;
+}
+
+.example-list {
+  display: grid;
+  gap: 2px;
+  padding: 14px 10px;
+  overflow: auto;
+}
+.example-button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.example-button:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+.example-button[data-active="true"] {
+  color: var(--foreground);
+  border-color: var(--border);
+  background: var(--accent);
+}
+.example-button strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.example-button small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.workspace {
+  width: min(100% - 64px, 1060px);
+  margin: 0 auto;
+  padding: 58px 32px 72px;
+}
+.workspace-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+h1 {
+  margin: 7px 0 0;
+  color: var(--foreground);
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+.status-group {
+  padding-top: 4px;
+}
+.description {
+  max-width: 680px;
+  margin: 18px 0 26px;
+  color: var(--muted-foreground);
+  font-size: 15px;
+  line-height: 1.6;
+}
+.preview-frame {
+  height: min(58vw, 580px);
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--muted);
+}
+
+.details {
+  display: grid;
+  gap: 14px;
+  padding-top: 34px;
+}
+.details-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.counts,
+.hint {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+/* Syntax highlighting palette. These are intentionally not theme tokens: a code
+ * preview needs distinguishable hues, while the neutral base-lyra palette only
+ * provides greyscale accents. Each hue is defined for both schemes. */
+:root {
+  --code-comment: var(--muted-foreground);
+  --code-string: #a34f27;
+  --code-number: #8b5a9b;
+  --code-boolean: #176b85;
+  --code-keyword: #7b3f92;
+  --code-property: #146c70;
+  --code-function: #1d5f98;
+}
+.dark {
+  --code-string: #e0a075;
+  --code-number: #c9a0dc;
+  --code-boolean: #7fc7dd;
+  --code-keyword: #c79ae0;
+  --code-property: #7fd1cf;
+  --code-function: #8ab8e8;
+}
+
+.code {
+  max-height: 520px;
+  margin: 0;
+  padding: 17px 18px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  background: var(--background);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+.token-comment {
+  color: var(--code-comment);
+}
+.token-string {
+  color: var(--code-string);
+}
+.token-number {
+  color: var(--code-number);
+}
+.token-boolean {
+  color: var(--code-boolean);
+}
+.token-keyword {
+  color: var(--code-keyword);
+  font-weight: 650;
+}
+.token-property {
+  color: var(--code-property);
+}
+.token-function {
+  color: var(--code-function);
+}
+
+@media (max-width: 900px) {
+  .app-shell {
+    grid-template-columns: 184px minmax(0, 1fr) 184px;
+  }
+  .workspace {
+    width: auto;
+    padding: 38px 20px 52px;
+  }
+}
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 160px minmax(0, 1fr) 160px;
+  }
+  .workspace {
+    width: auto;
+    padding: 38px 16px 52px;
+  }
+  .preview-frame {
+    height: min(60vw, 480px);
+    min-height: 260px;
+  }
+  h1 {
+    font-size: 28px;
+  }
+}
+@media (max-width: 560px) {
+  .app-shell {
+    display: block;
+  }
+  .sidebar {
+    min-height: auto;
+    border-right: 0;
+    border-left: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-controls {
+    border-top: 1px solid var(--border);
+    border-bottom: 0;
+  }
+  .sidebar-header {
+    padding: 14px 16px 8px;
+  }
+  .sidebar-header .eyebrow,
+  .sidebar-footer {
+    display: none;
+  }
+  .example-list {
+    display: flex;
+    padding: 7px 10px;
+    overflow-x: auto;
+  }
+  .example-button {
+    min-width: max-content;
+    padding: 7px 10px;
+  }
+  .example-button small {
+    display: none;
+  }
+  .control-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 12px 16px 16px;
+  }
+  .workspace {
+    width: auto;
+    padding: 30px 16px 42px;
+  }
+  .workspace-header {
+    display: block;
+  }
+  .status-group {
+    margin-top: 12px;
+    padding-top: 0;
+  }
+  .description {
+    margin: 14px 0 20px;
+    font-size: 14px;
+  }
+  .preview-frame {
+    height: 68vw;
+    min-height: 220px;
+  }
+  .details {
+    padding-top: 26px;
+  }
+  .hint {
+    display: none;
+  }
+}

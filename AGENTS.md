@@ -9,6 +9,7 @@
 - **构建与开发服务器：** Vite。
 - **测试：** Vitest，包括纯逻辑测试和真实 GPU 渲染测试。
 - **渲染：** WebGPU，通过 `vgpu` 和 WGSL 实现 3D debug-draw/gizmo 层。
+- **Gallery UI：** React 19 + Base UI + shadcn（`base-lyra` preset）+ Tailwind v4；主题 token 在 `src/index.css`，`components.json` 记录 preset 配置。
 - **类型检查：** TypeScript `strict` 模式，启用 `exactOptionalPropertyTypes` 和 `verbatimModuleSyntax`。
 - **参考实现：** `godot-debug-draw` 与 `godot-infinite-grid`；参考源码位于 `~/src/` 的对应上游仓库，视觉对比基线记录在 `docs/`。
 
@@ -22,8 +23,14 @@ src/frame-recorder.ts        ← 帧命令与录制 API
 src/debug-draw-3d.ts         ← 高层 DebugDraw3D 生命周期与图层过滤
 src/gpu-debug-draw-3d.ts     ← WebGPU 实例化渲染与 WGSL 管线
 src/godot-scenes.ts          ← Godot 示例场景的 TypeScript 移植
-src/demo.ts                  ← 浏览器 gallery/demo 入口
+src/demo.tsx                ← 浏览器 gallery 入口（React 挂载点）
+src/demo-engine.ts           ← 命令式 WebGPU 引擎（渲染循环、相机、持久化）
+src/demo-hooks.ts            ← React 与引擎之间的订阅桥接
+src/demo-source.ts           ← 代码预览取函数与高亮分词（纯逻辑）
+src/components/              ← Base UI + shadcn 壳层与控件
 src/demo-config.ts           ← gallery 与截图对比配置
+src/index.css                ← base-lyra 主题 token
+src/demo.css                 ← 三段式布局、compare 模式、代码高亮
 src/infinite-grid-3d.ts      ← 无限网格渲染
 ```
 

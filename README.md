@@ -80,6 +80,14 @@ width multiplier, projection, background and reset; camera interaction is
 persisted. Screenshot mode uses a deterministic preset without localStorage:
 `/?compare=1&scene=circle`. Orthographic zoom changes the orthographic extent.
 
+The gallery UI is built with **Base UI + shadcn (base-lyra preset) + Tailwind v4**
+in `src/components/`, and the imperative WebGPU side lives in `src/demo-engine.ts`.
+React only renders chrome; the render loop, camera, and persistence stay outside
+React and are read through `useSyncExternalStore`
+(`src/demo-hooks.ts`). `src/demo.tsx` mounts the shell, `src/index.css` holds the base-lyra
+theme tokens, and `src/demo.css` keeps the three-column layout, compare mode
+and code highlighting.
+
 Runtime comparison viewer:
 `http://127.0.0.1:5174/artifacts/visual-baseline/index.html`.
 
