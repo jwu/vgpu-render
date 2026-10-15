@@ -25,6 +25,7 @@ const gridToggle = document.querySelector<HTMLInputElement>("#show-grid")!;
 const widthScale = document.querySelector<HTMLInputElement>("#line-width-scale")!;
 const gridOpacity = document.querySelector<HTMLInputElement>("#grid-opacity")!;
 const projection = document.querySelector<HTMLSelectElement>("#projection")!;
+const lineJoint = document.querySelector<HTMLSelectElement>("#line-joint")!;
 const background = document.querySelector<HTMLInputElement>("#background")!;
 const resetConfig = document.querySelector<HTMLButtonElement>("#reset-config")!;
 let selected: GodotExample = GODOT_EXAMPLES[0]!;
@@ -125,6 +126,7 @@ function syncControls(): void {
   widthScale.value = String(config.view.lineWidthScale);
   gridOpacity.value = String(config.view.gridOpacity);
   projection.value = config.camera.projection;
+  lineJoint.value = config.view.lineJoint;
   background.value = "#" + config.view.background.slice(0, 3).map((v) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, "0")).join("");
 }
 function persist(): void {
@@ -248,7 +250,7 @@ function render(timestamp: number): void {
     : c.target;
   viewProjection = multiply(c.projection === "orthographic" ? orthographic(c.orthographicHeight, width / height, c.near, c.far) : perspective(c.fov, width / height, c.near, c.far), lookAt(eye, target));
   const recorder = debug.beginFrame();
-  buildScene(selected.id, recorder, time);
+  buildScene(selected.id, recorder, time, config.view.lineJoint);
   const raw = debug.finishFrame(recorder);
   const commands: readonly FrameCommand[] = raw.map((command) => command.kind === "line" ? { ...command, width: command.width * config.view.lineWidthScale } : command);
   renderer.prepare(commands, { viewProjection });
@@ -272,6 +274,7 @@ gridToggle.onchange = () => { config.view.showGrid = gridToggle.checked; persist
 widthScale.oninput = () => { config.view.lineWidthScale = Number(widthScale.value); persist(); };
 gridOpacity.oninput = () => { config.view.gridOpacity = Number(gridOpacity.value); persist(); };
 projection.onchange = () => { config.camera.projection = projection.value === "orthographic" ? "orthographic" : "perspective"; persist(); };
+lineJoint.onchange = () => { config.view.lineJoint = lineJoint.value === "bevel" || lineJoint.value === "miter" || lineJoint.value === "none" ? lineJoint.value : "round"; persist(); };
 background.oninput = () => { const hex = background.value; config.view.background = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1]; persist(); };
 resetConfig.onclick = () => { config = cloneDemoConfig(DEFAULT_DEMO_CONFIG); time = 0; syncControls(); persist(); };
 canvas.addEventListener("contextmenu", (event) => event.preventDefault());

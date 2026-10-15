@@ -2,7 +2,7 @@ import type { FrameRecorder, Vec3, Color } from "./frame-recorder.js";
 import { rotatePoint, type Curve3D } from "./curve.js";
 import { box, capsule, cone, cylinder, disc, rect, sphere, type MeshData } from "./geometry-generators.js";
 
-export type SceneContext = { readonly time: number };
+export type SceneContext = { readonly time: number; readonly lineJoint?: "none" | "round" | "bevel" | "miter" };
 
 const WIDTH_VALUES = [1, 2, 5.5, 10];
 const ALPHA_VALUES = [1, 0.65, 0.35, 0.1];
@@ -255,7 +255,7 @@ function lineMatrix(recorder: FrameRecorder, context: SceneContext): void {
   NORMAL_LINE_VALUES.forEach((normal, row) => recorder.line(lineStart(6, row), lineEnd(6, row), { color: TEAL, width: LINE_BASE_WIDTH, normal }));
 }
 
-function arrowMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+function arrowMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const columnCount = 7;
   const rowCount = 4;
   const dirs = [-Math.PI * 0.35, -Math.PI * 0.12, Math.PI * 0.12, Math.PI * 0.35];
@@ -291,7 +291,7 @@ function arrowMatrix(recorder: FrameRecorder, _context: SceneContext): void {
   });
 }
 
-function axesMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+function axesMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const columnCount = 6;
   const rowCount = 8;
   const lengths = [0.35, 0.55, 0.75, 1];
@@ -322,7 +322,7 @@ function axesMatrix(recorder: FrameRecorder, _context: SceneContext): void {
   });
 }
 
-function gridMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+function gridMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const columnCount = 8;
   const rowCount = 4;
   const cells: readonly (readonly [number, number])[] = [[4, 4], [6, 4], [10, 3], [3, 8]];
@@ -397,7 +397,7 @@ function curveMatrix(recorder: FrameRecorder, context: SceneContext): void {
   [0, 1, 2, 3].forEach((index, row) => {
     const p = slot(4, row, columnCount, rowCount);
     if (index === 0) recorder.curve(BASE_CURVE, { color: TEAL, width: 2, tolerance: 0.08, transform: { center: p } });
-    else recorder.curve(scaleClosed(0.75 + (index - 1) * 0.25), { color: TEAL, width: 2, tolerance: 0.08, joint: "round", transform: { center: p } });
+    else recorder.curve(scaleClosed(0.75 + (index - 1) * 0.25), { color: TEAL, width: 2, tolerance: 0.08, joint: context.lineJoint ?? "round", transform: { center: p } });
   });
   JOINT_VALUES.forEach((joint, row) => {
     const p = slot(5, row, columnCount, rowCount);
@@ -499,7 +499,7 @@ function arcMatrix(recorder: FrameRecorder, context: SceneContext): void {
   });
   SEGMENTS.forEach((segments, row) => {
     const p = slot(3, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, segments), p), { color: ORANGE, width: 2, joint: "round" }, false);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, segments), p), { color: ORANGE, width: 2, joint: context.lineJoint ?? "round" }, false);
   });
   ROTATIONS.forEach((angle, row) => {
     const p = slot(4, row, columnCount, rowCount);
@@ -578,7 +578,7 @@ function rectMatrix(recorder: FrameRecorder, context: SceneContext): void {
   });
 }
 
-function boxMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+function boxMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const columnCount = 7;
   const rowCount = 8;
   const sizes: readonly Vec3[] = [[0.5, 0.4, 0.4], [0.8, 0.4, 0.4], [0.5, 0.6, 0.4], [0.5, 0.4, 0.6]];
@@ -639,9 +639,9 @@ function overviewMatrix(recorder: FrameRecorder, context: SceneContext): void {
         case "ray": recorder.ray([p[0] - 0.4, 0, p[2]], [0.8, 0, 0], { color, width, ...(normal === undefined ? {} : { normal }) }); break;
         case "arrow": recorder.arrow([p[0] - 0.4, 0, p[2]], [0.8, 0, 0], { color, width, ...(normal === undefined ? {} : { normal }) }); break;
         case "axes": recorder.axes([p[0], 0, p[2]], 0.4, width); break;
-        case "strip": recorder.lineStrip(offset([[-0.4, 0, 0.18], [-0.1, 0, -0.18], [0.15, 0, 0.18], [0.4, 0, -0.18]], p), { color, width: 5, joint: "round" }, false); break;
+        case "strip": recorder.lineStrip(offset([[-0.4, 0, 0.18], [-0.1, 0, -0.18], [0.15, 0, 0.18], [0.4, 0, -0.18]], p), { color, width: 5, joint: context.lineJoint ?? "round" }, false); break;
         case "list": recorder.line([p[0] - 0.35, 0, p[2] + 0.12], [p[0] + 0.35, 0, p[2] + 0.12], { color, ...extras }); recorder.line([p[0] - 0.35, 0, p[2] - 0.12], [p[0] + 0.35, 0, p[2] - 0.12], { color, ...extras }); break;
-        case "loop": recorder.lineStrip(offset(circlePoints(0.25, 5), p), { color, width: 5, joint: "round" }, true); break;
+        case "loop": recorder.lineStrip(offset(circlePoints(0.25, 5), p), { color, width: 5, joint: context.lineJoint ?? "round" }, true); break;
         case "curve": recorder.curve(BASE_CURVE, { color, width, tolerance: 0.12, transform: { center: p } }); break;
         case "grid": recorder.grid([p[0], 0, p[2]], [2, 2], [0.22, 0.22], { color, width }); break;
         case "rect": recorder.lineStrip(offset(rectPoints(0.45, 0.35), p), { color, width }, true); break;
@@ -654,7 +654,7 @@ function overviewMatrix(recorder: FrameRecorder, context: SceneContext): void {
   }
 }
 
-function shapeScene(recorder: FrameRecorder, id: string, _context: SceneContext): void {
+function shapeScene(recorder: FrameRecorder, id: string, context: SceneContext): void {
   const columnCount = 7;
   const rowCount = 8;
   const base: Record<string, MeshData> = {
@@ -705,8 +705,8 @@ function scaleMesh(mesh: MeshData, scale: number): MeshData {
   return { triangles: mesh.triangles.map(([a, b, c]) => [a.map((v) => v * scale) as unknown as Vec3, b.map((v) => v * scale) as unknown as Vec3, c.map((v) => v * scale) as unknown as Vec3]), segments: mesh.segments.map(([a, b]) => [a.map((v) => v * scale) as unknown as Vec3, b.map((v) => v * scale) as unknown as Vec3]) };
 }
 
-export function buildScene(id: string, recorder: FrameRecorder, time: number): void {
-  const context: SceneContext = { time };
+export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
+  const context: SceneContext = lineJoint === undefined ? { time } : { time, lineJoint };
   // The reference capture harness translates the whole Godot scene root, so the
   // origin axes move with it for circle/line; other scenes keep the gallery layout.
   const referenceScene = id === "circle" || id === "line";
@@ -745,14 +745,14 @@ function worldWidthMatrix(recorder: FrameRecorder, context: SceneContext): void 
         case "line": recorder.line([p[0] - 0.35, 0, p[2]], [p[0] + 0.35, 0, p[2]], options); break;
         case "arrow": recorder.arrow([p[0] - 0.3, 0, p[2]], [0.6, 0, 0], options); break;
         case "axes": recorder.axes([p[0], 0, p[2]], 0.35, width); break;
-        case "strip": recorder.lineStrip(offset([[-0.35, 0, 0.15], [0, 0, -0.15], [0.35, 0, 0.15]], p), { ...options, joint: "round" }, false); break;
-        case "loop": recorder.lineStrip(offset(circlePoints(0.2, 6), p), { ...options, joint: "round" }, true); break;
+        case "strip": recorder.lineStrip(offset([[-0.35, 0, 0.15], [0, 0, -0.15], [0.35, 0, 0.15]], p), { ...options, joint: context.lineJoint ?? "round" }, false); break;
+        case "loop": recorder.lineStrip(offset(circlePoints(0.2, 6), p), { ...options, joint: context.lineJoint ?? "round" }, true); break;
         case "curve": recorder.curve(BASE_CURVE, { ...options, tolerance: 0.12, transform: { center: p } }); break;
         case "grid": recorder.grid([p[0], 0, p[2]], [2, 2], [0.2, 0.2], options); break;
-        case "rect": recorder.lineStrip(offset(rectPoints(0.4, 0.3), p), { ...options, joint: "round" }, true); break;
+        case "rect": recorder.lineStrip(offset(rectPoints(0.4, 0.3), p), { ...options, joint: context.lineJoint ?? "round" }, true); break;
         case "box": recorder.mesh(translateMesh(box([0.3, 0.26, 0.26]), p), { color: options.color }); break;
-        case "circle": recorder.lineStrip(offset(circlePoints(0.2, 24), p), { ...options, joint: "round" }, true); break;
-        case "arc": recorder.lineStrip(offset(arcPoints(0.22, Math.PI * 1.5, 20), p), { ...options, joint: "round" }, false); break;
+        case "circle": recorder.lineStrip(offset(circlePoints(0.2, 24), p), { ...options, joint: context.lineJoint ?? "round" }, true); break;
+        case "arc": recorder.lineStrip(offset(arcPoints(0.22, Math.PI * 1.5, 20), p), { ...options, joint: context.lineJoint ?? "round" }, false); break;
         default: {
           const shape = { sphere: sphere(0.2, 20, 10), cone: cone(0.2, 0.4, 20), cylinder: cylinder(0.18, 0.18, 20), capsule: capsule(0.15, 0.16, 16, 6) }[label]!;
           recorder.mesh(translateMesh(shape, p), { color: options.color });

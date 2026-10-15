@@ -7,6 +7,7 @@
  */
 
 export type ProjectionMode = "perspective" | "orthographic";
+export type LineJoint = "none" | "round" | "bevel" | "miter";
 
 export type DemoCameraConfig = {
   yaw: number;
@@ -25,6 +26,7 @@ export type DemoViewConfig = {
   gridOpacity: number;
   animate: boolean;
   lineWidthScale: number;
+  lineJoint: LineJoint;
   background: [number, number, number, number];
 };
 
@@ -59,6 +61,7 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     gridOpacity: 1,
     animate: true,
     lineWidthScale: 1,
+    lineJoint: "round",
     background: [0.956, 0.965, 0.973, 1],
   },
 };
@@ -86,6 +89,7 @@ export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
     gridOpacity: 1,
     animate: false,
     lineWidthScale: 1,
+    lineJoint: "round",
     background: [0.11764706, 0.11764706, 0.11764706, 1],
   },
 };
@@ -135,6 +139,13 @@ function readNumberTuple(value: unknown, path: string, length: number): number[]
 function readProjection(value: unknown): ProjectionMode {
   if (value !== "perspective" && value !== "orthographic") {
     throw new RangeError('config.camera.projection must be "perspective" or "orthographic"');
+  }
+  return value;
+}
+
+function readLineJoint(value: unknown): LineJoint {
+  if (value !== "none" && value !== "round" && value !== "bevel" && value !== "miter") {
+    throw new RangeError('config.view.lineJoint must be "none", "round", "bevel", or "miter"');
   }
   return value;
 }
@@ -194,6 +205,7 @@ export function parseDemoConfig(value: unknown = {}): DemoConfig {
       gridOpacity: view.gridOpacity === undefined ? base.view.gridOpacity : readBounded(view.gridOpacity, "config.view.gridOpacity", 0, 1),
       animate: view.animate === undefined ? base.view.animate : readBoolean(view.animate, "config.view.animate"),
       lineWidthScale: view.lineWidthScale === undefined ? base.view.lineWidthScale : readPositive(view.lineWidthScale, "config.view.lineWidthScale"),
+      lineJoint: view.lineJoint === undefined ? base.view.lineJoint : readLineJoint(view.lineJoint),
       background: [background[0]!, background[1]!, background[2]!, background[3]!],
     },
   };
