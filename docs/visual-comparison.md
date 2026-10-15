@@ -2,7 +2,12 @@
 
 ## 结论
 
-当前实现是 **partial parity**，不是完整 Godot 移植。真实 GPU 烟雾测试通过只能证明能够渲染，不能证明图元、参数矩阵、布局或像素一致。
+当前实现是 **partial parity**，不是完整 Godot 移植。真实 GPU 烟雾测试通过只能证明能够渲染，
+不能证明图元、参数矩阵、布局或像素一致。已经做忠实移植并逐像素验收的部分：Circle/Line、
+全场景布局、infinite grid、色彩空间、round/bevel/miter 接头、曲线控制点标记、
+sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶点法向（第九轮），以及
+平面图元的逐顶点法向与 `index`/`world_space_width` 的列基向量（第十轮）。
+仍然不对齐：AA（Godot MSAA vs 无 AA）、3D 列/行标签、world-space 宽度的 3D 侧向、`demo.gd`。
 
 ## 产物
 
@@ -10,8 +15,11 @@
 - [Circle 局部放大](../artifacts/visual-baseline/compare-circle-detail.png)
 - [Line 全图](../artifacts/visual-baseline/compare-line-full.png)
 - [Line 局部放大](../artifacts/visual-baseline/compare-line-detail.png)
-- 原图：`artifacts/visual-baseline/{godot,vgpu}-{circle,line}.png`
-- 浏览器对比页：`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`
+- 形状场景原图：`artifacts/visual-baseline/{godot,vgpu}-{sphere,capsule,cone,cylinder,index,world_space_width}.png`
+- 其余场景原图：`artifacts/visual-baseline/{godot,vgpu}-{circle,line}.png` 与 `vgpu-*.png`
+- 浏览器对比页：`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`（含六个形状场景的并排对比）
+
+局部放大使用两边相同的像素裁剪区域 `(650,400)-(1350,680)`，然后统一放大；没有独立移动、缩放或变形来隐藏布局差异。
 
 局部放大使用两边相同的像素裁剪区域 `(650,400)-(1350,680)`，然后统一放大；没有独立移动、缩放或变形来隐藏布局差异。
 
@@ -33,6 +41,177 @@
 | 抗锯齿 | Godot 沿用原项目 MSAA；vgpu 沿用当前管线。尚未统一 |
 
 两边相机/投影/分辨率相同，但场景数据、网格和 AA 不完全一致。因此本轮仍是**结构与视觉诊断**，不报告严格像素误差分数。
+
+## 第十轮：平面图元的逐顶点法向 + index/world_space_width 的列基向量
+
+第九轮收尾时判断“平面图元的 `_n` 列淡出恒为 1.0、不影响像素”是**错的**：参考的
+`draw_circle_n` / `draw_arc_n` / `draw_rect_n` / `draw_box_n` 传的是逐顶点（或逐边）法向，
+圆环背面的径向法向与视线夹角可达 180°，淡出确实生效。本轮补齐，并顺带查出一个真正的几何 bug。
+
+改动：
+
+- `geometry-generators.ts` 新增三个参考法向 helper：`arcNormals`（每段中点径向）、`rectNormals`
+  （按 `_get_rect_points` 顺序的四个角法向 `-basis.y / basis.x / basis.y / -basis.x`）、
+  `boxEdgeNormals`（从边本身推导：一条边沿一个基轴，其法向是另外两个面法向之和，与参考的
+  `_get_box_line_normals` 列表等价，但不依赖 `_get_box_line_points` 的顶点顺序）。
+- `circle` / `arc` / `rect` / `box` 四个场景的 `*_n` 列改用逐顶点法向；`sphere`/`cone`/
+  `cylinder`/`capsule` 与 index 矩阵的同名列一并覆盖。
+- **`index` / `world_space_width` 的 rect/circle/arc 列基向量修正**：`index.gd` 这三列传的是
+  `Quaternion.IDENTITY`，即圆/弧/矩形在 **XY 平面**（竖直）；vgpu 一直用平放的 XZ 基（那是
+  `circle.gd`/`arc.gd`/`rect.gd` 自己的 `_get_flat_rotation`）。实测证据：同一列青色圆的
+  饱和 bbox，Godot 98×112（近正圆）vs 旧 vgpu 88×57（压扁），弧 97×141 vs 82×90。
+  现在按参考改用 `IDENTITY_BASIS`（实心扇面也随之转到该平面），bbox 与 Godot 一致。
+
+### 验收（与 Godot 逐像素，MAE / ≤3 像素 / 饱和像素比）
+
+| 场景 | MAE（第九轮 → 本轮） | ≤3 像素 | 饱和像素 / Godot |
+| --- | --- | --- | --- |
+| index | 0.23 → **0.05** | 99.9% | 111.1% → **103.0%** |
+| rect | 0.08 → **0.03** | 100.0% | 102.6% → **99.9%** |
+| circle | 0.08 → **0.03** | 99.9% | 102.5% → **99.7%** |
+| arc | 0.08 → **0.03** | 100.0% | 104.0% → **99.4%** |
+| box | 0.08 → **0.06** | 99.9% | 102.4% → **100.1%** |
+| world_space_width | 0.21 → **0.16** | 99.6% | 105.6% → 86.4%（见下） |
+| arrow | 0.13 → **0.07** | 99.9% | 100.6% → **98.8%** |
+
+箭头头部也一并修了与参考的差异（同一轮）：
+
+- 参考 `_emit_arrow_with_normal` 只用调用者传的 `normal` 选**切平面**
+  （`_get_projected_perpendicular_unit`），头部每条线段的法向来自
+  `_get_arrow_surface_normal(direction, ±radial, head_length, head_radius)`；vgpu 之前把调用者的
+  法向直接当线段法向，于是 `arrow_n` / `arrow_n(joint)` 的淡出方向与参考不同。
+- `draw_arrow_line` / `draw_arrow_line_n` 的箭杆都是 `_emit_line`（**不带法向**、不参与淡出），
+  vgpu 之前把调用者法向一并传给了箭杆。
+- 现在 arrow 场景 96 条头部线段各自带锥面法向、筒杆无法向（`tests/reference-scenes.test.ts`
+  锁定这个形状），MAE 0.13 → **0.07**。
+
+其余场景不变（line 0.02、axes 0.02、grid 0.03、curve 0.04、arrow 0.13、sphere 0.07、
+cone 0.04、cylinder 0.05、capsule 0.02）。`index` 的 >40 差异像素从 3351 降到 **655**，
+主要残差此后是 AA 与 3D 标签。`world_space_width` 仍是 world 宽度细线场景，饱和比对覆盖/AA
+敏感，不宜按该比值下结论。
+
+### 基线
+
+本轮渲染变化的场景共 **10** 个，已连同对应 Godot 参考图一起重拍：`line`、`arrow`、`axes`、
+`rect`、`box`、`circle`、`arc`、`curve`、`index`、`world_space_width`（前七个是第九轮
+normal-aware 淡出后就已过期、当时只回写了六个场景，本轮一并补上）。`grid`/`sphere`/`cone`/
+`cylinder`/`capsule` 与提交基线逐像素一致，未动。全部 15 张基线已校对与当前渲染完全一致。
+
+## 第九轮：normal-aware 线与接头的逐顶点法向
+
+`*_n` 族不是「同一条线换个参数」：参考的 `debug_normal_line_3d.gdshader` 与
+`debug_normal_line_joint_3d_common.gdshaderinc` 用**逐顶点 surface normal** 做背面淡出。
+`normal_fade` 在法向偏离视线超过 `back_fade_start = 100°` 后把颜色乘子从 1.0 降到 0.2
+（过渡 `back_fade_transition = 20°`）；线与接头都不改几何，只乘 `line_color.rgb`。
+
+此前 vgpu 的 `LineCommand.normal` 虽然在 instance 里占了一个属性，但 WGSL 从未读取它；
+`JointCommand` 根本没有法向。所以第八轮之后六个形状/矩阵场景的残差几乎全部落在
+`sphere_n`、`sphere_n(joint)`、`sphere_n_d`、`sphere_n_d(joint)` 与 index/world_space_width
+的同名列上。
+
+本轮改动：
+
+- `FrameRecorder`：`LineOptions.normals`（逐顶点法向；`lineStrip` 按**段起点**法向发射，与
+  `_emit_normal_line_strip` / `_emit_normal_line_loop` 一致，闭合环要每顶点一个、开放 strip
+  每段一个）；`JointCommand.previousNormal` / `nextNormal`（对应
+  `_emit_normal_joint(previous, center, next, previous_normal, next_normal, ...)`）。
+- `GpuDebugDraw3D.prepare()` 新增 `view`（world→view 矩阵）。线与接头管线在顶点阶段按
+  `normal_fade` 乘算颜色；接头按 `round_normal_t` / `bevel_normal_t` / `miter_normal_t` 在
+  楔形内插值两个法向（`normalize(mix(previous, next, t))`），与参考逐行对齐。
+- 四个形状场景的 `*_n` 四列改用参考法向 helper：`sphereRingNormals`（球心到段中点）、
+  `capsuleOutlineNormals`（段中点在胶囊轴上的投影）、`circleNormals`（环基向量的半段中点）、
+  `coneSideLineNormals` / `cylinderSideLineNormals`。
+- 零法向按 Godot 的 `_resolve_normal` 回退到 `+Z`，`safe_normalize3` 在法向为零时返回零向量
+  而不是 NaN（Godot `Vector3.normalized()` 同语义），避免镜头位于几何原点时出现 NaN 颜色。
+
+### 验收（同样的 1920×1080 截图流程，Godot 参考重新生成、vgpu 用全新 Vite 实例）
+
+| 场景 | MAE（第八轮 → 本轮） | ≤3 像素 | 饱和像素 / Godot |
+| --- | --- | --- | --- |
+| capsule | 0.03 → **0.02** | 100.0% | 100.6% → **100.0%** |
+| sphere | 0.10 → **0.07** | 99.8% | 101.1% → **99.9%** |
+| cone | 0.04 → 0.04 | 99.9% | 100.1% → **99.9%** |
+| cylinder | 0.10 → **0.05** | 99.9% | 101.0% → **99.9%** |
+| index | 0.27 → **0.23** | 99.8% | 111.1% → **102.5%** |
+| world_space_width | 0.23 → **0.21** | 99.6% | 105.6% → 87.9%（见下） |
+
+未受影响的场景本轮一并重测，确认无回归：line 0.02、axes 0.02、grid 0.03、curve 0.04、
+rect 0.08、box 0.08、circle 0.08、arc 0.08、arrow 0.13（≤3 像素均 ≥99.8%）。
+
+`world_space_width` 的饱和像素比不能按第八轮的口径直接比较：该场景全部是 world 宽度下的
+**细线**，是否达到「饱和」阈值取决于单像素覆盖与 AA（Godot MSAA vs vgpu 无 AA），
+线条覆盖变化时该比值会灵敏地越过阈值。本轮 MAE 与 ≤3 像素都优于第八轮，仍不声称饱和
+像素等价。
+
+### 仍未对齐
+
+- 平面图元（`line`/`ray`/`arrow`/`axes`/`curve`/`grid`）的 `_n` 列仍传单一法向。这些列的
+  参考调用本身只传一个法向（`draw_line_n` / `NORMAL_VALUES[row]` 等），所以已经一致；
+  `circle`/`arc`/`rect`/`box` 的逐顶点法向已在第十轮补齐。
+- world-space 宽度的侧向近似（第五轮 P0）与 AA、3D 标签仍与之前记录相同。
+
+## 第八轮：sphere / capsule / cone / cylinder 线框拓扑移植
+
+上一轮遗留的 `sphere(y axis)` / `sphere(z axis)`、`cone`/`cylinder` 的 base/side 分段不是
+「近似」而是**错误**：参考的 `draw_sphere` 根本不由球面网格生成线框，而是
+`_emit_sphere_axis_rings` 发射的 `y_axis_segment_count` 条纬线环（`radius * (-1 + 2i/n)`、
+环半径 `sqrt(r^2 - offset^2)`）加 `z_axis_segment_count` 条经线大圆（半径恒为 `radius`、
+绕轴步长 `PI/z`、按 ring key 去重）；`draw_capsule` 由 `_emit_capsule` 发射上下两个圆环
+加 `side_segment_count` 条侧面闭合轮廓；`cone`/`cylinder` 由 base 圆环加 `side_segment_count`
+条侧线（`draw_line_list`）。此前 vgpu 把 `y`/`z` 硬套成 UV 球的 `rings`/`segments`，
+capsule 直接拼 `cylinder + 2 个完整球`，会画出参考里不存在的大量球面纬线。
+
+本轮改动：
+
+- `src/geometry-generators.ts` 新增 `sphereWire`、`capsuleWire`、`coneWire`、`cylinderWire`、
+  `circlePoints`、`coneBaseBasis`。返回 `ShapeWire`（`loops` = 参考的 `draw_line_loop`，
+  `lines` = 参考的 `draw_line_list`），并逐行移植 ring key 去重、`_get_cone_base_rotation`、
+  `_get_capsule_side_outline_points`（`arc = ceil(segments / 2)`）、segment/axis 下限与
+  `radius <= 0` / `height <= 0` / `half_height <= 0` 的早退规则。
+- 场景层改为 `recorder.lineStrip(loop, options, true)` + `recorder.line(a, b, options)`，
+  所以每个环是真正的闭合路径：接头（joint）与跨环累计的 dash 相位与参考一致，不再逐边重启 dash。
+- `side_segment_count` 真正独立：`cone(side segments)` / `cylinder(side segments)` 保持 base 分段
+  16 并只变化侧线数量；`capsule(side segments)` 只变化轮廓数量。
+- `*_s` 实心列改用参考的网格分辨率（`SphereMesh` 64×32、`CylinderMesh` 64 radial segments），
+  此前是 32×2 的退化球。
+
+### 验收（1920×1080、`SCREENSHOT_DEMO_CONFIG` 相机、与 Godot 截图逐像素比对）
+
+```bash
+# Godot 参考（独立副本，未修改上游）
+godot --path /tmp/vgpu-parity-godot --display-driver x11 --audio-driver Dummy \
+  --resolution 1920x1080 --script capture.gd -- sphere /tmp/vgpu-shape-ref/godot-sphere.png
+# vgpu（全新 Vite 实例 + CDP 截图，输出到 /tmp，不覆盖 artifacts 基线）
+VGPU_URL=http://127.0.0.1:5177 bun /tmp/capture-vgpu-shapes.ts sphere capsule cone cylinder index world_space_width
+```
+
+| 场景 | 全图 MAE（第五轮 → 本轮） | ≤3 像素（第五轮 → 本轮） | 饱和像素 / Godot（第五轮 → 本轮） |
+| --- | --- | --- | --- |
+| capsule | 0.26 → **0.03** | 99.7% → **99.9%** | 103.0% → **100.6%** |
+| cone | 0.10 → **0.04** | 99.8% → **99.9%** | 101.2% → **100.1%** |
+| cylinder | 0.19 → **0.10** | 99.7% → **99.8%** | 103.3% → **101.0%** |
+| sphere | 0.49 → **0.10** | 99.4% → **99.8%** | 96.8% → **101.1%** |
+| index | 0.65 → **0.27** | 99.5% → **99.7%** | 124.4% → **111.1%** |
+| world_space_width | 0.48 → **0.23** | 99.4% → **99.6%** | 172.2% → **105.6%** |
+
+六个场景的饱和像素 bbox 与参考逐列吻合（`x` 起止完全一致），人工并排比对（Godot 上 / vgpu 下）
+确认 `sphere(y axis)`、`sphere(z axis)`、`capsule(side segments)`、`cone(side segments)`、
+`cylinder(side segments)` 与 `*_s` 列的形状逐列对应。
+
+### 单测
+
+- `tests/geometry-generators.test.ts`：环/侧线数量、半径与高度公式、ring key 去重、
+  `segments < 3` / `y < 2` / `z < 1` / `radius <= 0` / `height <= 0` / `half_height <= 0` 的早退。
+- `tests/reference-scenes.test.ts`：按参考参数表锁定 `sphere` / `capsule` / `cone` / `cylinder`
+  场景逐列的命令条数（例如 `sphere(y axis)` = 672 + 旋转首行 144 = 816 条，
+  `capsule(side segments)` = 766 条，`capsule` 场景三角形 0 条）。
+
+### 仍未对齐
+
+- `*_n` / `*_n(joint)` / `*_n_d` / `*_n_d(joint)` 列仍是单一代表法向（见上表 P1）。
+  逐顶点法向需要 `LineCommand` / `JointCommand` 携带法向，并且 normal-aware 接头
+  （`debug_normal_line_joint_*`）尚未移植，本轮未改动该契约。
+- AA（Godot MSAA vs 无 AA）、3D 标签、world-space 侧向近似仍与第五轮记录相同。
 
 ## 第三轮：infinite grid 忠实移植（已完成）
 
@@ -170,9 +349,9 @@ bun scripts/capture-vgpu.ts circle line
 | --- | --- | --- |
 | P0 | world-space 线宽侧向近似 | 参考用 3D 视角侧向 `cross(view_b - view_a, -view_position)`；vgpu 用屏幕空间近似，导致 `world_space_width` 饱和像素偏多（172%）。接头宽度的数值换算已与参考一致，侧向方向仍是同一近似 |
 | P1 | `curve` 采样与 tolerance | 参考用 `tessellate_even_length`，vgpu 用固定 `ceil(0.5/tol)` 细分，顶点数不同（形状一致），饱和像素少 14% |
-| P1 | `sphere(y axis)` / `sphere(z axis)` 列 | 参考分别控制纬线环与经线大圆；vgpu 只有 `segments`/`rings` 两个参数，映射为近似 |
-| P1 | `cone`/`cylinder` 的 base/side 分段 | 参考是两个独立参数，vgpu 只有一个 `segments` |
-| P1 | `_n` 列法向 | 参考用逐顶点 surface normal，vgpu 传单一代表法向 |
+| ~~P1~~ | ~~`sphere(y axis)` / `sphere(z axis)` 列~~ | **已修复（第八轮）**：改为参考的纬线环 + 经线大圆拓扑 |
+| ~~P1~~ | ~~`cone`/`cylinder` 的 base/side 分段~~ | **已修复（第八轮）**：两个参数已独立，side 线数量由 `side_segment_count` 控制 |
+| ~~P1~~ | ~~`_n` 列法向~~ | **已修复（第九、十轮）**：逐顶点法向 + 接头法向插值；平面图元的逐顶点法向与 `index`/`world_space_width` 的取景基向量均在第十轮补齐 |
 | P1 | 缺少 3D 列/行标签 | 参考含 Label3D，vgpu 只有 HTML 参数面板 |
 | P1 | AA 不同 | 未统一 MSAA/边缘模式 |
 | P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
@@ -264,8 +443,8 @@ http://127.0.0.1:5174/?compare=1&scene=line
 
 ## 后续修复次序
 
-1. ~~实现 round/bevel/miter 的真实接头几何~~ 已完成（第六轮）；下一步统一 alpha 叠加与 AA 条件，并移植 normal-aware 接头。
-2. 统一 dash 周期与屏幕空间 dash shader，消除剩余 11% 覆盖差。
+1. ~~实现 round/bevel/miter 的真实接头几何~~ 已完成（第六轮）；~~sphere/capsule/cone/cylinder 线框拓扑~~ 已完成（第八轮）；~~normal-aware 线与接头的逐顶点法向~~ 已完成（第九轮）；~~平面图元逐顶点法向与 index/wsw 列基向量~~ 已完成（第十轮）。下一步是 AA 与 3D 标签，以及 world-space 宽度的 3D 侧向。
+2. 统一 dash 周期与屏幕空间 dash shader，消除剩余覆盖差。
 3. ~~单独对齐 infinite grid shader（颜色、距离层级、淡出）。~~ 已完成，含色彩空间（线性 target + sRGB present）。
 4. 把 box/实体图元的 width/dash/normal 参数真正传递到 `FrameRecorder`。
 5. 增加 3D 列/行标签，补齐 `demo.gd`，再扩展到其他场景。

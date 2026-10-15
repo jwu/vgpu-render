@@ -22,12 +22,16 @@ recorder.point([0, 0, 0], { color: [1, 0, 0, 1], size: 8 });
 recorder.line([0, 0, 0], [1, 0, 0], { color: [0, 1, 0, 1], width: 2 });
 recorder.arrow([0, 0, 0], [1, 1, 0], { color: [0, 0.5, 1, 1] });
 recorder.lineStrip([[0, 0, 0], [1, 0, 1], [2, 0, 0]], { width: 4, joint: "round" }, false);
+// Per-vertex normals select the reference `*_n` shading: each segment uses its start
+// vertex's normal and the joints between them blend the two normals.
+recorder.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { width: 4, joint: "round", normals: [[0, 1, 0], [0, 1, 0], [0, 1, 0]] }, false);
 recorder.grid([0, 0, 0], [4, 4], [0.5, 0.5], { color: [0.4, 0.4, 0.5, 1] });
 recorder.curve(cubicBezier, { color: [1, 1, 1, 1], tolerance: 0.08 });
 recorder.mesh(sphere(0.5), { solid: true, color: [0.2, 0.6, 1, 0.8] });
 const commands = debug.finishFrame(recorder);
 
-renderer.prepare(commands, { viewProjection });
+// `view` is the world-to-view matrix; normal-aware strokes read it like Godot's VIEW_MATRIX.
+renderer.prepare(commands, { viewProjection, view });
 grid.prepare({ viewProjection, cameraPosition, cameraForward, projection, farClip });
 frame(gpu, (f) => f.pass({ target, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => {
   grid.draw(pass);
@@ -101,17 +105,36 @@ LOD grid lines.
 ## Capabilities
 
 - Points (screen/world size), lines (screen/world width, dash, normal), triangles.
+- Normal-aware strokes: `LineOptions.normal` for a single normal, `LineOptions.normals` for
+  per-vertex normals (one per segment on an open path, one per vertex on a closed one). Lines
+  and joints apply the reference back-face fade (`back_fade_start = 100°`,
+  `back_fade_transition = 20°`, `0.2` floor) from the `view` matrix `prepare()` receives.
 - Procedural helpers: `ray`, `arrow`, `axes`, `grid`, `curve`, `lineStrip`,
   `lineLoop`, `mesh`, `triangle`.
 - Geometry generators: `rect`, `box`, `disc`, `arc`, `cylinder`, `cone`,
   `sphere`, `capsule`, `gridLines`, and cubic `sampleCurve`.
+- Reference wireframe generators: `sphereWire`, `capsuleWire`, `coneWire`,
+  `cylinderWire` and `circlePoints` return `draw_line_loop` rings plus
+  `draw_line_list` segments, so `shape.y`/`z`/`side` parameters select ring counts
+  exactly like `draw_sphere`/`draw_capsule`/`draw_cone`/`draw_cylinder` rather than
+  mesh subdivisions.
 - `InfiniteGrid3D` shader-driven ground grid ported from `godot-infinite-grid`
   (decimal LOD layers, screen-space width, edge/grazing/center/far fades).
-- Orbit/pan/zoom camera controls in the gallery.
+- Orbit/pan/zoom camera controls in the gallery, tuned to the reference
+  `entities/free_camera.gd` and layered on a velocity model (`src/demo-camera.ts`): a drag is
+  an angular velocity (0.25°/px) or a linear velocity (`distance`/FOV in perspective,
+  `orthographicHeight` in orthographic), a wheel notch is a scalar velocity in log₂ space
+  (1.08× per notch), and a released drag keeps its velocity and glides — the exact integral of
+  an exponentially decaying velocity (halflife 0.14 s), capped at 60°, half a screen of pan and
+  0.75 doublings of zoom. Releasing more than 90 ms after the last sample is treated as a stop.
+- Example switching frames the selected scene (`frameBounds`): the orbit pivot moves to the
+  scene's bounding-box centre and the distance/height fit its projected corners, so rotating
+  turns around the geometry instead of the origin. `?camera=reference` disables that framing so
+  the reference pose stays put for comparisons.
 
 See `docs/godot-debug-draw-parity.md` for the scene-by-scene parity status and the
-known approximations, and `docs/visual-comparison.md` for the live Circle/Line
-Godot-vs-vgpu screenshot comparison and measured alignment.
+known approximations, and `docs/visual-comparison.md` for the Godot-vs-vgpu
+screenshot comparisons and measured alignment.
 
 ## Global configuration
 
