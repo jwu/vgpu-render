@@ -35,7 +35,6 @@ export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleL
               onClick={() => onSelect(example)}
             >
               <strong>{example.title}</strong>
-              <small>partial parity</small>
             </button>
           );
         })}

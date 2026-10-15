@@ -139,10 +139,6 @@ canvas {
   font-size: 13px;
   font-weight: 600;
 }
-.example-button small {
-  color: var(--muted-foreground);
-  font-size: 11px;
-}
 
 .workspace {
   width: min(100% - 64px, 1060px);
@@ -310,9 +306,6 @@ h1 {
   .example-button {
     min-width: max-content;
     padding: 7px 10px;
-  }
-  .example-button small {
-    display: none;
   }
   .control-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
