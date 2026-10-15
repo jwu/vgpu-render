@@ -70,21 +70,38 @@ export function capsule(radius: number, halfHeight: number, segments = 24, rings
   const body = cylinder(radius, halfHeight, segments, center, rotation); const top = sphere(radius, segments, rings, add(center, [0, halfHeight, 0]), rotation); const bottom = sphere(radius, segments, rings, add(center, [0, -halfHeight, 0]), rotation); return { triangles: [...body.triangles, ...top.triangles, ...bottom.triangles], segments: [...body.segments, ...top.segments, ...bottom.segments] };
 }
 
+/**
+ * Grid line segments, ported from `_emit_grid_lines` in `debug_draw_3d.gd`.
+ *
+ * Alignment contract, which the previous implementation got backwards:
+ * - `outer` selects which boundary lines are **kept**: without `x`, the outermost line
+ *   along X is dropped (`start = 1`, `end = cellCount`); with `x` the full range
+ *   (`0 .. cellCount + 1`) is emitted. So `"none"` keeps only interior lines, and `"xz"`
+ *   keeps every line including both boundaries.
+ * - `skew` slants the lines themselves (`dx.z = sx * tan(skew.y)`,
+ *   `dz.x = sz * tan(skew.x)`), not just an offset.
+ */
 export function gridLines(cells: readonly [number, number], spacing: readonly [number, number], center: Vec3 = [0, 0, 0], rotation: readonly [number, number, number] = [0, 0, 0], skew: readonly [number, number] = [0, 0], outer: "none" | "x" | "z" | "xz" = "none"): Segment[] {
-  const [cx, cz] = cells; const [sx, sz] = spacing;
-  const halfX = cx * sx / 2; const halfZ = cz * sz / 2;
-  const segments: Segment[] = [];
+  const [cellX, cellZ] = cells;
+  const [spacingX, spacingZ] = spacing;
+  if (cellX <= 0 || cellZ <= 0 || spacingX <= 0 || spacingZ <= 0) return [];
+  const skewTan: readonly [number, number] = [Math.tan(skew[0]), Math.tan(skew[1])];
+  const dx: Vec3 = [spacingX, 0, spacingX * skewTan[1]];
+  const dz: Vec3 = [spacingZ * skewTan[0], 0, spacingZ];
+  const start: Vec3 = [-dx[0] * cellX * 0.5 - dz[0] * cellZ * 0.5, 0, -dx[2] * cellX * 0.5 - dz[2] * cellZ * 0.5];
   const place = (p: Vec3): Vec3 => add(rotate(p, rotation), center);
-  const shift = (t: number, amount: number): number => t * amount;
-  if (outer !== "z") for (let i = 0; i <= cx; i++) {
-    const x = -halfX + i * sx; const zs = halfX === 0 ? 0 : shift(x / halfX, skew[0]);
-    if ((outer === "x" || outer === "xz") && i !== 0 && i !== cx) continue;
-    segments.push([place([x, 0, -halfZ + zs]), place([x, 0, halfZ + zs])]);
+  const scale = (v: Vec3, n: number): Vec3 => [v[0] * n, v[1] * n, v[2] * n];
+  const plus = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+  const keepX = outer === "x" || outer === "xz";
+  const keepZ = outer === "z" || outer === "xz";
+  const segments: Segment[] = [];
+  for (let zIndex = keepX ? 0 : 1; zIndex < (keepX ? cellZ + 1 : cellZ); zIndex++) {
+    const from = plus(start, scale(dz, zIndex));
+    segments.push([place(from), place(plus(from, scale(dx, cellX)))]);
   }
-  if (outer !== "x") for (let j = 0; j <= cz; j++) {
-    const z = -halfZ + j * sz; const xs = halfZ === 0 ? 0 : shift(z / halfZ, skew[1]);
-    if ((outer === "z" || outer === "xz") && j !== 0 && j !== cz) continue;
-    segments.push([place([-halfX + xs, 0, z]), place([halfX + xs, 0, z])]);
+  for (let xIndex = keepZ ? 0 : 1; xIndex < (keepZ ? cellX + 1 : cellX); xIndex++) {
+    const from = plus(start, scale(dx, xIndex));
+    segments.push([place(from), place(plus(from, scale(dz, cellZ)))]);
   }
   return segments;
 }

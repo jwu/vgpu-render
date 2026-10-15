@@ -286,9 +286,10 @@ export class FrameRecorder {
 
 
   axes(origin: Vec3, length = 1, width = 2): this {
-    this.arrow(origin, [length, 0, 0], { color: [1, 0.2, 0.2, 1], width });
-    this.arrow(origin, [0, length, 0], { color: [0.2, 1, 0.3, 1], width });
-    this.arrow(origin, [0, 0, length], { color: [0.3, 0.5, 1, 1], width });
+    // Reference `draw_axes` emits three unadorned axis lines (no arrowheads).
+    this.line(origin, [origin[0] + length, origin[1], origin[2]], { color: [1, 0, 0, 1], width });
+    this.line(origin, [origin[0], origin[1] + length, origin[2]], { color: [0, 1, 0, 1], width });
+    this.line(origin, [origin[0], origin[1], origin[2] + length], { color: [0, 0, 1, 1], width });
     return this;
   }
 

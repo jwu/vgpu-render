@@ -55,15 +55,40 @@ LOD 距离规则（透视用视地面距离并向相机高度混合，正交用 
 | 单测 | `tests/grid.test.ts` 锁定参考参数默认值、clamp、LOD 范围、相机距离公式与正交分支 |
 | GPU 测试 | `tests/grid.gpu.test.ts` 验证中性灰、debug 三层分色、线性宽覆盖、center fade 覆盖、edge fade 半径 |
 
-### 已知差异：线性空间混合 vs sRGB 输出
+### 色彩空间：已修复（第四轮）
 
-线条**位置**、LOD 分层与覆盖结构一致，但 vgpu 线像素偏暗（Godot 峰值 67 vs vgpu 55 的同一像素，`max` 130 vs 112）。
+原先记录为「无法修正」的色彩空间差异**已解决**，且原判断有两处错误：
 
-- Godot 在**线性工作空间**做 `blend_mix`，输出时编码到 sRGB；`thin_line_color = 0.42 a=0.45` 经线性混合再编码得约 122/255，与实测 121 吻合。
-- vgpu 画布是 `bgra8unorm`（未编码写入），混合直接在编码空间发生，精确匹配 Godot 需要 `bgra8unorm-srgb`。
-- Chromium 拒绝该格式：`Unsupported canvas context format 'bgra8unorm-srgb'`。因此无法在画布层修正，已记录为已知差异，未用 `ALBEDO` 手写 gamma 绕过（那会改变参考颜色语义）。
+1. 不是只能在画布层修正。Chromium 拒绝的是 **canvas swapchain** 的 `-srgb` 格式；离屏 `target` 不受限制。
+2. 不只是 grid 受影响。所有图元的颜色都偏，只是因为之前没有可对照的期望值而未被发现。
 
-这是渲染目标的色彩空间差异，不是 grid 算法差异；不声称像素级等价。
+现在的管线与 Godot 的 `blend_mix` + sRGB 输出、以及 bevy 的 `Rgba16Float` 中间目标 + `add_srgb_suffix` 一致：
+
+```
+图元颜色按作者值直通  ->  rgba16float 线性 target（线性混合）  ->  present pass 编码 sRGB  ->  canvas
+```
+
+关键点是**哪些颜色需要 sRGB 解码**，两者语义不同：
+
+| 颜色来源 | 参考声明 | 是否解码 | 理由 |
+| --- | --- | --- | --- |
+| 图元颜色（line/circle/rect/solid） | Godot `COLOR`，**无** `source_color` | 否 | `ALBEDO = COLOR.rgb` 数值直通，作者值就是线性值 |
+| grid 颜色 | `uniform vec4 thin_line_color : source_color` | 是 | `source_color` 让 Godot 先做 sRGB→linear |
+| 清屏色 | `default_clear_color` 项目设置 | 是 | 引擎在 clear 前转换 |
+
+早期实现曾把图元颜色也解码，导致 solid 圆盘偏暗（`(48,117,180)` vs Godot `(97,149,180)`）；去掉后精确命中。另外 grid 的参考场景 `.tscn` 会覆盖两个颜色（`thin=(0.33847,0.50196)`、`thick=(0.46035,0.70196)`），与 addon 默认值不同，对比预设已改用场景覆盖值。
+
+**验收**（`artifacts/visual-baseline/`，与 Godot 截图逐像素比对）：
+
+| 场景 | 全图 MAE | 近像素级(≤3) | 显著差异(>40) |
+| --- | --- | --- | --- |
+| circle | 1.52 → **0.10** | 82.4% → **99.9%** | 0.64% → **0.09%** |
+| line | 1.41 → **0.04** | 82.6% → **100.0%** | 0.49% → **0.03%** |
+
+grid 峰值亮度 143 → **100**，与 Godot 的 100 一致；不透明图元颜色（LIME/VIOLET/PINK/GOLD 等）从「命中 0 像素」变为与 Godot 命中数相当。
+
+回归测试：`tests/color-space.gpu.test.ts` 锁定 line alpha 列四个 alpha 的实测像素与 solid 半透明颜色，容差 ±2。
+
 
 ## 第二轮：忠实移植 Circle / Line 后
 
@@ -104,18 +129,55 @@ bun scripts/capture-vgpu.ts circle line
 
 ## 仍未达到 parity
 
+### 已修复（第五轮：全场景布局对齐）
+
+全部 15 个场景已从压缩的 `slot()` 布局**重写回参考布局**：
+
+- 列距 `2.0`（`axes` 为 `2.2`）、列偏移 `+0.5`、行起点 `-0.45`、行方向 `sampleStartZ - row * spacing`（**-Z**），与参考逐场景的 `SAMPLE_SPACING`（及 radius/size/angle/height 列的覆盖值）一致。
+- 列结构逐项对齐参考的 `_get_column_count`。修正的清单：`box` 6→**7** 列（补 `box_n_d(dash)`）、`arrow` 7→**17** 列（补齐 `arrow_line_*` 系列）、`sphere` 7→**14** 列、`capsule` 7→**9** 列（**移除参考中不存在的 `capsule_s`**）。
+- `draw_axes` 语义修正为参考的**三条无箭头轴线**（红/绿/蓝纯色），此前被错误实现为带箭头 `arrow`。
+- solid 列颜色由固定色改为参考的 `Color.from_hsv(hue, 0.7, 1.0, alpha)` 按行渐变。
+- `gridLines` 的 `outer` 与 `skew` 语义修正为与 `_emit_grid_lines` 一致：`outer` 表示**保留**哪些边界线（`none` = 仅内部线，`xz` = 含全部边界），`skew` 使线本身倾斜而不只是偏移。此前两处都是反的。
+
+### 验收（15 个场景，与 Godot 截图逐像素比对）
+
+参考截图由 `capture-godot.gd` 在独立副本中生成（`/tmp/vgpu-parity-godot`，未修改上游），vgpu 侧由 `scripts/capture-vgpu.ts` 生成。
+
+| 场景 | 全图 MAE | ≤3 像素占比 | 饱和像素比 |
+| --- | --- | --- | --- |
+| line | 0.03 | 100.0% | 97.2% |
+| axes | 0.02 | 100.0% | 99.5% |
+| grid | 0.03 | 100.0% | 99.5% |
+| rect | 0.09 | 99.9% | 100.9% |
+| curve | 0.08 | 99.9% | 86.1% |
+| circle | 0.10 | 99.9% | 100.9% |
+| box | 0.08 | 99.9% | 102.4% |
+| arc | 0.11 | 99.9% | 105.8% |
+| arrow | 0.14 | 99.8% | 98.9% |
+| cone | 0.10 | 99.8% | 101.2% |
+| cylinder | 0.19 | 99.7% | 103.3% |
+| capsule | 0.26 | 99.7% | 103.0% |
+| sphere | 0.49 | 99.4% | 96.8% |
+| index | 0.65 | 99.5% | 124.4% |
+| world_space_width | 0.48 | 99.4% | 172.2% |
+| **平均** | **0.19** | **99.8%** | 106.1% |
+
+所有场景的饱和像素 bbox 与参考在 x 轴上逐列吻合（15 个列簇位置全部一致）。
+
+### 已知残差（未解决，不声称等价）
+
 | 优先级 | 问题 | 说明 |
 | --- | --- | --- |
-| P0 | bevel/miter 接头缺失 | shader 的 joint 字段仍未生成接头几何，只有 round 是真实圆盘封口 |
-| P0 | 部分 dash 密度仍不同 | vgpu 的 dash 周期与 Godot 屏幕空间 dash shader 不完全一致 |
-| P1 | 饱和像素遮罩覆盖少约 10–14% | 仍有线宽、normal、接头与边缘差异，来源尚未逐项隔离 |
-| P1 | infinite grid 亮度残差 | 参数、LOD、淡出已移植；剩余差异是画布色彩空间（`bgra8unorm` 无法启用 sRGB 编码），见「第三轮」 |
-| P1 | AA 不同 | 未统一 MSAA/边缘模式，粗线有锯齿 |
-| P1 | 缺少 3D 列/行标签 | 参考含 Label3D；vgpu 目前仅有 HTML 参数面板 |
-| P1 | box/实体列未转发 width/dash/normal | `godot-scenes.ts` 中实体列仍是简化实现 |
-| P2 | `demo.gd` 未纳入 | 清单目前 15 个场景，源目录有 `demo.gd` |
-
-源码证据（非截图推断）：实体图元的部分参数列没有传递到 `FrameRecorder`，实体 `segments` 列一律生成 sphere。这些仍是简化实现，不能标记为等价。
+| P0 | bevel/miter 接头缺失 | 只有 round 是真实圆盘封口，bevel/miter 仍是普通线段 |
+| P0 | world-space 线宽侧向近似 | 参考用 3D 视角侧向 `cross(view_b - view_a, -view_position)`；vgpu 用屏幕空间近似，导致 `world_space_width` 饱和像素偏多（172%） |
+| P1 | `curve` 采样与 tolerance | 参考用 `tessellate_even_length`，vgpu 用固定 `ceil(0.5/tol)` 细分，顶点数不同（形状一致），饱和像素少 14% |
+| P1 | `sphere(y axis)` / `sphere(z axis)` 列 | 参考分别控制纬线环与经线大圆；vgpu 只有 `segments`/`rings` 两个参数，映射为近似 |
+| P1 | `cone`/`cylinder` 的 base/side 分段 | 参考是两个独立参数，vgpu 只有一个 `segments` |
+| P1 | `_n` 列法向 | 参考用逐顶点 surface normal，vgpu 传单一代表法向 |
+| P1 | 缺少 3D 列/行标签 | 参考含 Label3D，vgpu 只有 HTML 参数面板 |
+| P1 | AA 不同 | 未统一 MSAA/边缘模式 |
+| P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
+| P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `recorder.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
 
 ## 第一轮：初始观察（使用压缩布局，部分已修复）
 
@@ -143,7 +205,7 @@ http://127.0.0.1:5174/?compare=1&scene=line
 
 1. 实现 round/bevel/miter 的真实接头几何，统一 alpha 叠加与 AA 条件。
 2. 统一 dash 周期与屏幕空间 dash shader，消除剩余 11% 覆盖差。
-3. ~~单独对齐 infinite grid shader（颜色、距离层级、淡出）。~~ 已完成，残差仅剩画布色彩空间（`bgra8unorm` 无法启用 sRGB 编码）。
+3. ~~单独对齐 infinite grid shader（颜色、距离层级、淡出）。~~ 已完成，含色彩空间（线性 target + sRGB present）。
 4. 把 box/实体图元的 width/dash/normal 参数真正传递到 `FrameRecorder`。
 5. 增加 3D 列/行标签，补齐 `demo.gd`，再扩展到其他场景。
 6. 只有对应样例与像素测试验证完，才提高 implementation status。

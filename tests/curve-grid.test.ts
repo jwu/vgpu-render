@@ -34,18 +34,23 @@ test("sampleCurve closes loops through the first anchor", () => {
   expect(points.length).toBeGreaterThan(12);
 });
 
-test("gridLines emits cell + 1 lines per axis and honors skew", () => {
-  const flat = gridLines([4, 3], [0.25, 0.3]);
-  expect(flat.length).toBe(5 + 4);
-  const skewed = gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0.5, 0]);
-  expect(skewed[0]).not.toEqual(flat[0]);
+test("gridLines emits the reference line count per axis and honors skew", () => {
+  // `outer = "xz"` is the full grid: cellCount + 1 lines along each axis.
+  const full = gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0, 0], "xz");
+  expect(full.length).toBe(5 + 4);
+  const skewed = gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0.5, 0], "xz");
+  expect(skewed[0]).not.toEqual(full[0]);
 });
 
-test("gridLines supports outer edge modes", () => {
-  expect(gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0, 0], "none").length).toBe(9);
-  expect(gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0, 0], "x").length).toBe(2);
-  expect(gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0, 0], "z").length).toBe(2);
-  expect(gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0, 0], "xz").length).toBe(4);
+test("gridLines outer modes keep boundary lines instead of dropping them", () => {
+  // Reference `_emit_grid_lines`: without a boundary bit the outermost line on that axis is
+  // skipped (`start = 1`, `end = cellCount`), so "none" keeps interior lines only.
+  const counts = (outer: "none" | "x" | "z" | "xz") =>
+    gridLines([4, 3], [0.25, 0.3], [0, 0, 0], [0, 0, 0], [0, 0], outer).length;
+  expect(counts("none")).toBe(2 + 3);
+  expect(counts("x")).toBe(4 + 3);
+  expect(counts("z")).toBe(2 + 5);
+  expect(counts("xz")).toBe(4 + 5);
 });
 
 test("arrow head parameters change generated geometry", () => {

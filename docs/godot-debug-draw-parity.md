@@ -52,17 +52,20 @@ locks those coordinates and parameters. The remaining scenes still use a compres
 - Infinite shader grid ported from `godot-infinite-grid`: decimal LOD layers with
   de-duplicated alpha, screen-space line width, and edge/grazing/center/far fades
   driven by the reference camera-state rules.
-- Layer filtering, alpha blend, depth test, and depth write for solids.
+- Layer filtering and alpha blend on a linear `rgba16float` target with an sRGB
+  present pass (matching Godot `blend_mix` and bevy's `Rgba16Float` + `add_srgb_suffix`).
+- Depth write for every primitive (`depth_draw_always`), a `-0.001` depth bias, and manual
+  near-plane clipping, all ported from the reference line shader.
 
 ## Known approximations
 
 These are deliberately not claimed as exact parity:
 
 - **Grid**: `InfiniteGrid3D` mirrors `addons/infinite_grid/infinite_grid_3d`
-  (parameter names, LOD range, fade stack, camera LOD distance). Blended line
-  pixels remain darker than the Godot reference because the WebGPU canvas is
-  `bgra8unorm` and Chromium rejects an `-srgb` canvas format; line positions and
-  LOD structure match. See `docs/visual-comparison.md`.
+  (parameter names, LOD range, fade stack, camera LOD distance). The earlier
+  brightness gap is fixed: primitives blend on a linear `rgba16float` target and a
+  present pass encodes to sRGB, so grid peak luminance now matches the reference.
+  See `docs/visual-comparison.md`.
 - **Joints**: round joins render as real screen-space disc caps. `bevel` and `miter` remain plain segments and are flagged as approximations in the manifest.
 - **Arrow head geometry**: head length and angle are now wired into `FrameRecorder.arrow()` and the scene matrix.
 - **Grid outer edges**: `grid()` now supports `none`, `x`, `z`, and `xz` boundary modes.
