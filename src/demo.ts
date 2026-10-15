@@ -251,7 +251,7 @@ const initial = GODOT_EXAMPLES.find((example) => example.id === (params.get("sce
 if (initial) selected = initial;
 renderList(); updateDetails(); syncControls();
 const gpu = await init();
-const output = surface(gpu, canvas, { depth: true });
+const output = surface(gpu, canvas, { depth: true, msaa: 4 });
 const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536 });
 const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
 const grid = new InfiniteGrid3D(gpu);
