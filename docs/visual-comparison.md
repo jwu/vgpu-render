@@ -34,6 +34,37 @@
 
 两边相机/投影/分辨率相同，但场景数据、网格和 AA 不完全一致。因此本轮仍是**结构与视觉诊断**，不报告严格像素误差分数。
 
+## 第三轮：infinite grid 忠实移植（已完成）
+
+`InfiniteGrid3D` 已按 `~/src/godot-infinite-grid@hardpixel/addons/infinite_grid/`
+重写（`Godot InfiniteGrid3D` 与 `godot-debug-draw` 的 `EndlessGrid3D` 是同一份代码）。
+移植内容包括：十进制 LOD 三层叠加与去重 alpha、`lod_finer_levels` / `lod_total_levels`
+范围、屏幕空间线宽、edge / grazing / far-clip / per-LOD center 四类淡出、低 alpha stipple
+discard、thin/thick 颜色与 debug LOD 配色，以及 `_update_camera_lod_distance()` 的相机
+LOD 距离规则（透视用视地面距离并向相机高度混合，正交用 `size`，焦点取射线与地面交点）。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| Godot 参考截图 | `/tmp/godot-grid-ref.png`，独立副本 `/tmp/vgpu-grid-parity`，引用 `~/src` 的 addon，未修改上游仓库 |
+| 相机/投影/分辨率 | eye=(8,16,21.5) look_at 原点，vertical FOV=75°，near=0.05，far=100，1920×1080，DPR=1 |
+| 清屏色 | Godot `default_clear_color` 与 vgpu 背景都取参考项目的 `0.11764706` |
+| 线条位置 | 同一扫描线上 **26 条峰值线一一对应**；vgpu 线条遮罩是 Godot 的**严格子集**（`onlyVgpu = 0`），无额外或错位线条 |
+| LOD 结构 | 两边首个亮像素行 218 / 231，远景 LOD 截止一致 |
+| 单测 | `tests/grid.test.ts` 锁定参考参数默认值、clamp、LOD 范围、相机距离公式与正交分支 |
+| GPU 测试 | `tests/grid.gpu.test.ts` 验证中性灰、debug 三层分色、线性宽覆盖、center fade 覆盖、edge fade 半径 |
+
+### 已知差异：线性空间混合 vs sRGB 输出
+
+线条**位置**、LOD 分层与覆盖结构一致，但 vgpu 线像素偏暗（Godot 峰值 67 vs vgpu 55 的同一像素，`max` 130 vs 112）。
+
+- Godot 在**线性工作空间**做 `blend_mix`，输出时编码到 sRGB；`thin_line_color = 0.42 a=0.45` 经线性混合再编码得约 122/255，与实测 121 吻合。
+- vgpu 画布是 `bgra8unorm`（未编码写入），混合直接在编码空间发生，精确匹配 Godot 需要 `bgra8unorm-srgb`。
+- Chromium 拒绝该格式：`Unsupported canvas context format 'bgra8unorm-srgb'`。因此无法在画布层修正，已记录为已知差异，未用 `ALBEDO` 手写 gamma 绕过（那会改变参考颜色语义）。
+
+这是渲染目标的色彩空间差异，不是 grid 算法差异；不声称像素级等价。
+
 ## 第二轮：忠实移植 Circle / Line 后
 
 已按原始源码还原 Circle/Line 坐标、颜色、宽度、旋转 tunnel 与样例顺序。以下使用 `max(R,G,B)-min(R,G,B)>50` 且 `max(R,G,B)>100` 的遮罩；它排除多数灰色网格，也排除白线和低饱和区域，不是完整 primitive 覆盖测试。
@@ -78,7 +109,7 @@ bun scripts/capture-vgpu.ts circle line
 | P0 | bevel/miter 接头缺失 | shader 的 joint 字段仍未生成接头几何，只有 round 是真实圆盘封口 |
 | P0 | 部分 dash 密度仍不同 | vgpu 的 dash 周期与 Godot 屏幕空间 dash shader 不完全一致 |
 | P1 | 饱和像素遮罩覆盖少约 10–14% | 仍有线宽、normal、接头与边缘差异，来源尚未逐项隔离 |
-| P1 | infinite grid 差异 | 参考网格更暗、距离层级不同；vgpu 前地网格偏亮偏密 |
+| P1 | infinite grid 亮度残差 | 参数、LOD、淡出已移植；剩余差异是画布色彩空间（`bgra8unorm` 无法启用 sRGB 编码），见「第三轮」 |
 | P1 | AA 不同 | 未统一 MSAA/边缘模式，粗线有锯齿 |
 | P1 | 缺少 3D 列/行标签 | 参考含 Label3D；vgpu 目前仅有 HTML 参数面板 |
 | P1 | box/实体列未转发 width/dash/normal | `godot-scenes.ts` 中实体列仍是简化实现 |
@@ -95,7 +126,7 @@ bun scripts/capture-vgpu.ts circle line
 | P0 | Circle 旋转列没有真实倾斜 | Godot 金色列使用旋转法向量与 tunnel depth/scale；vgpu 橙色列只绕 Y 旋转平面圆，几何不变 |
 | P0 | normal 参数样例含义不一致 | Godot Circle 的 normal 行是 base/alpha/color/wide；vgpu 使用同色/同宽而变化 normal |
 | P1 | solid Circle 颜色与透明度错误 | Godot 蓝色半透明 (0.25,0.65,1,0.45)；vgpu 金色不透明 |
-| P1 | infinite grid 差异显著 | Godot 灰色、细分/距离层级不同；vgpu 蓝灰网格、主线更亮 |
+| P1 | infinite grid 差异显著 | 已修复：见「第三轮：infinite grid 忠实移植」 |
 | P1 | AA 与粗线边缘不同 | vgpu 粗线出现明显锯齿；Godot MSAA 与参考 line/joint shader 尚未对齐 |
 | P1 | 缺少 3D 列/行标签 | Godot 样例含 Label3D；vgpu 只有 HTML 参数文本 |
 
@@ -112,7 +143,7 @@ http://127.0.0.1:5174/?compare=1&scene=line
 
 1. 实现 round/bevel/miter 的真实接头几何，统一 alpha 叠加与 AA 条件。
 2. 统一 dash 周期与屏幕空间 dash shader，消除剩余 11% 覆盖差。
-3. 单独对齐 infinite grid shader（颜色、距离层级、淡出）。
+3. ~~单独对齐 infinite grid shader（颜色、距离层级、淡出）。~~ 已完成，残差仅剩画布色彩空间（`bgra8unorm` 无法启用 sRGB 编码）。
 4. 把 box/实体图元的 width/dash/normal 参数真正传递到 `FrameRecorder`。
 5. 增加 3D 列/行标签，补齐 `demo.gd`，再扩展到其他场景。
 6. 只有对应样例与像素测试验证完，才提高 implementation status。

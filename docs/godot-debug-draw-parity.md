@@ -49,13 +49,20 @@ locks those coordinates and parameters. The remaining scenes still use a compres
   `mesh`, `triangle`.
 - Wire and solid geometry: `rect`, `box`, `disc`/`circle`, `arc`, `sphere`,
   `cone`, `cylinder`, `capsule`.
-- Infinite shader grid with minor/major LOD and `fwidth` anti-aliasing.
+- Infinite shader grid ported from `godot-infinite-grid`: decimal LOD layers with
+  de-duplicated alpha, screen-space line width, and edge/grazing/center/far fades
+  driven by the reference camera-state rules.
 - Layer filtering, alpha blend, depth test, and depth write for solids.
 
 ## Known approximations
 
 These are deliberately not claimed as exact parity:
 
+- **Grid**: `InfiniteGrid3D` mirrors `addons/infinite_grid/infinite_grid_3d`
+  (parameter names, LOD range, fade stack, camera LOD distance). Blended line
+  pixels remain darker than the Godot reference because the WebGPU canvas is
+  `bgra8unorm` and Chromium rejects an `-srgb` canvas format; line positions and
+  LOD structure match. See `docs/visual-comparison.md`.
 - **Joints**: round joins render as real screen-space disc caps. `bevel` and `miter` remain plain segments and are flagged as approximations in the manifest.
 - **Arrow head geometry**: head length and angle are now wired into `FrameRecorder.arrow()` and the scene matrix.
 - **Grid outer edges**: `grid()` now supports `none`, `x`, `z`, and `xz` boundary modes.
