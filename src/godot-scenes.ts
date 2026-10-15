@@ -1,19 +1,31 @@
-import type { FrameRecorder, Vec3, Color } from "./frame-recorder.js";
+import type { FrameRecorder, LineOptions, Vec3, Color } from "./frame-recorder.js";
 import { rotatePoint, type Curve3D } from "./curve.js";
-import { box, capsule, cone, cylinder, disc, rect, sphere, type MeshData } from "./geometry-generators.js";
+import { box, capsule, cone, cylinder, disc, sphere, type MeshData } from "./geometry-generators.js";
+import {
+  ALPHA_VALUES,
+  basisCirclePoints,
+  circleBasis,
+  createLayout,
+  crossVector,
+  DASH_VALUES,
+  fromHsv,
+  JOINT_VALUES,
+  NORMAL_SAMPLE_COUNT,
+  normalSampleColor,
+  normalSampleWidth,
+  normalizeVector,
+  RADIUS_VALUES,
+  REFERENCE_OFFSET,
+  referenceOffset,
+  ROTATION_SAMPLE_COUNT,
+  rotateAroundAxis,
+  SCENE_LAYOUTS,
+  SEGMENT_VALUES,
+  WIDTH_VALUES,
+  type CircleBasis,
+} from "./godot-layout.js";
 
 export type SceneContext = { readonly time: number; readonly lineJoint?: "none" | "round" | "bevel" | "miter" };
-
-const WIDTH_VALUES = [1, 2, 5.5, 10];
-const ALPHA_VALUES = [1, 0.65, 0.35, 0.1];
-const DASH_VALUES: readonly (readonly [number, number])[] = [[0.1, 0.1], [0.2, 0.1], [0.4, 0.15], [0.04, 0.12]];
-const JOINT_VALUES = ["none", "round", "bevel", "miter"] as const;
-const NORMAL_VALUES: readonly Vec3[] = [[0, 0, 1], [0, 0.7071, 0.7071], [0, 1, 0], [0, 0, -1]];
-const ROTATIONS = Array.from({ length: 8 }, (_, index) => index * Math.PI / 4);
-const RADII = [0.18, 0.28, 0.38, 0.5];
-const SEGMENTS = [8, 16, 32, 64];
-const SHAPES = [0.25, 0.65, 1, 1.35];
-const TOLERANCES = [0.04, 0.08, 0.16, 0.32];
 
 const WHITE: Color = [1, 1, 1, 1];
 const CYAN: Color = [0.15, 0.85, 1, 0.95];
@@ -22,13 +34,11 @@ const ORANGE: Color = [1, 0.45, 0.2, 0.95];
 const VIOLET: Color = [0.75, 0.45, 1, 1];
 const TEAL: Color = [0.25, 0.95, 0.9, 1];
 const GOLD: Color = [0.95, 0.75, 0.25, 1];
-const RED: Color = [1, 0.25, 0.35, 1];
-
-function slot(column: number, row: number, columns: number, rows: number): Vec3 {
-  const columnSpacing = columns > 1 ? Math.min(1.5, 10 / (columns - 1)) : 0;
-  const rowSpacing = rows > 1 ? Math.min(0.62, 2.6 / (rows - 1)) : 0;
-  return [(column - (columns - 1) / 2) * columnSpacing, 0, (row - (rows - 1) / 2) * rowSpacing];
-}
+const ORANGE_FULL: Color = [1, 0.45, 0.2, 1];
+const PINK: Color = [1, 0.3, 0.6, 1];
+const AXIS_RED: Color = [1, 0, 0, 1];
+const AXIS_GREEN: Color = [0, 1, 0, 1];
+const AXIS_BLUE: Color = [0, 0, 1, 1];
 
 function circlePoints(radius: number, segments: number, rotation: readonly [number, number, number] = [0, 0, 0], center: Vec3 = [0, 0, 0]): Vec3[] {
   const points: Vec3[] = [];
@@ -40,24 +50,20 @@ function circlePoints(radius: number, segments: number, rotation: readonly [numb
   return rotation.some((value) => value !== 0) ? points.map((p) => rotatePoint(p, rotation)) : points;
 }
 
-function arcPoints(radius: number, angle: number, segments: number): Vec3[] {
+/** Reference arc/`draw_arc` points: `center + (basis.x*cos + basis.y*sin) * radius`, `segments + 1` samples. */
+function arcPoints(center: Vec3, radius: number, angle: number, segments: number, basis: CircleBasis): Vec3[] {
   const points: Vec3[] = [];
   for (let i = 0; i <= segments; i++) {
-    const a = i / segments * angle;
-    points.push([Math.cos(a) * radius, 0, Math.sin(a) * radius]);
+    const a = angle * i / segments;
+    const cos = Math.cos(a) * radius;
+    const sin = Math.sin(a) * radius;
+    points.push([
+      center[0] + basis.x[0] * cos + basis.y[0] * sin,
+      center[1] + basis.x[1] * cos + basis.y[1] * sin,
+      center[2] + basis.x[2] * cos + basis.y[2] * sin,
+    ]);
   }
   return points;
-}
-
-function rectPoints(width: number, height: number): Vec3[] {
-  return [[-width / 2, 0, -height / 2], [width / 2, 0, -height / 2], [width / 2, 0, height / 2], [-width / 2, 0, height / 2]].map((p) => [p[0]!, p[1]!, p[2]!]);
-}
-
-function transformPoints(points: readonly Vec3[], position: Vec3, rotation: readonly [number, number, number]): Vec3[] {
-  return points.map((p) => {
-    const r = rotatePoint(p, rotation);
-    return [r[0] + position[0], r[1] + position[1], r[2] + position[2]];
-  });
 }
 
 function curve(points: readonly { position: Vec3; in?: Vec3; out?: Vec3 }[], closed = false): Curve3D {
@@ -71,67 +77,8 @@ function curve(points: readonly { position: Vec3; in?: Vec3; out?: Vec3 }[], clo
 // real column/row coordinates, colors, widths, dash offsets and the rotation
 // tunnel basis. The capture harness translates the Godot scene root by
 // (-10, 0, 1.5) without rescaling geometry, so the same world offset is applied
-// here. No compressed `slot()` layout is used for these scenes.
+// here.
 // ---------------------------------------------------------------------------
-
-const REFERENCE_OFFSET: Vec3 = [-10, 0, 1.5];
-
-type CircleBasis = { readonly x: Vec3; readonly y: Vec3; readonly z: Vec3 };
-
-function referenceOffset(p: Vec3): Vec3 {
-  return [p[0] + REFERENCE_OFFSET[0], p[1] + REFERENCE_OFFSET[1], p[2] + REFERENCE_OFFSET[2]];
-}
-
-function normalizeVector(p: Vec3): Vec3 {
-  const length = Math.hypot(p[0], p[1], p[2]) || 1;
-  return [p[0] / length, p[1] / length, p[2] / length];
-}
-
-function crossVector(a: Vec3, b: Vec3): Vec3 {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-}
-
-/** Godot `Vector3.rotated(axis, angle)` equivalent (right-handed Rodrigues). */
-function rotateAroundAxis(p: Vec3, axis: Vec3, angle: number): Vec3 {
-  const a = normalizeVector(axis);
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const dot = p[0] * a[0] + p[1] * a[1] + p[2] * a[2];
-  const cross = crossVector(a, p);
-  return [
-    p[0] * cos + cross[0] * sin + a[0] * dot * (1 - cos),
-    p[1] * cos + cross[1] * sin + a[1] * dot * (1 - cos),
-    p[2] * cos + cross[2] * sin + a[2] * dot * (1 - cos),
-  ];
-}
-
-/** Port of `_get_circle_rotation(normal, angle)` from circle.gd. */
-function circleBasis(normal: Vec3, angle: number): CircleBasis {
-  const n = normalizeVector(normal);
-  const reference: Vec3 = Math.abs(n[0]) > 0.95 ? [0, 0, 1] : [1, 0, 0];
-  const projection = reference[0] * n[0] + reference[1] * n[1] + reference[2] * n[2];
-  const planar: Vec3 = [reference[0] - n[0] * projection, reference[1] - n[1] * projection, reference[2] - n[2] * projection];
-  const widthAxis = normalizeVector(rotateAroundAxis(normalizeVector(planar), n, angle));
-  const heightAxis = normalizeVector(crossVector(n, widthAxis));
-  return { x: widthAxis, y: heightAxis, z: n };
-}
-
-/** Points on a circle in the plane spanned by a Godot rotation basis. */
-function basisCirclePoints(centerLocal: Vec3, radius: number, segments: number, basis: CircleBasis): Vec3[] {
-  const center = referenceOffset(centerLocal);
-  const points: Vec3[] = [];
-  for (let i = 0; i < segments; i++) {
-    const angle = i / segments * Math.PI * 2;
-    const cos = Math.cos(angle) * radius;
-    const sin = Math.sin(angle) * radius;
-    points.push([
-      center[0] + basis.x[0] * cos + basis.y[0] * sin,
-      center[1] + basis.x[1] * cos + basis.y[1] * sin,
-      center[2] + basis.x[2] * cos + basis.y[2] * sin,
-    ]);
-  }
-  return points;
-}
 
 const LINE_Y = 0.1;
 const LINE_BASE_WIDTH = 2;
@@ -255,112 +202,590 @@ function lineMatrix(recorder: FrameRecorder, context: SceneContext): void {
   NORMAL_LINE_VALUES.forEach((normal, row) => recorder.line(lineStart(6, row), lineEnd(6, row), { color: TEAL, width: LINE_BASE_WIDTH, normal }));
 }
 
-function arrowMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 7;
-  const rowCount = 4;
-  const dirs = [-Math.PI * 0.35, -Math.PI * 0.12, Math.PI * 0.12, Math.PI * 0.35];
-  const headAngles = [Math.PI / 9, Math.PI / 6, Math.PI / 4, Math.PI * 0.42];
+// ---------------------------------------------------------------------------
+// Faithful Arrow reference port (`examples/arrow.gd`).
+//
+// `draw_arrow` emits only a head (two perpendicular V strips); `draw_arrow_line`
+// adds a shaft. Both are reproduced here instead of using `FrameRecorder.arrow`,
+// which always emits a shaft and a single flat V head with different proportions.
+// ---------------------------------------------------------------------------
 
+const ARROW_LAYOUT = createLayout(SCENE_LAYOUTS.arrow, SCENE_LAYOUTS.arrow.baseY);
+const ARROW_Y = SCENE_LAYOUTS.arrow.baseY;
+const ARROW_LENGTH = 1.1;
+const ARROW_BASE_WIDTH = 2;
+const ARROW_JOINT_WIDTH = 8;
+const ARROW_HEAD_LENGTH = 0.22;
+const ARROW_JOINT_HEAD_LENGTH = 0.34;
+const ARROW_BASE_HEAD_ANGLE = Math.PI / 6;
+const ARROW_JOINT_HEAD_ANGLE = Math.PI / 4;
+const ARROW_NORMAL: Vec3 = [0, 0, 1];
+const ARROW_TUNNEL_Y = 0.32;
+const ARROW_TUNNEL_DEPTH_STEP = 0.16;
+const ARROW_TUNNEL_SCALE_STEP = 0.05;
+const ARROW_DIR_ANGLE_VALUES: readonly number[] = [-Math.PI * 0.35, -Math.PI * 0.12, Math.PI * 0.12, Math.PI * 0.35];
+const ARROW_HEAD_LENGTH_VALUES: readonly number[] = [0.12, 0.22, 0.34, 0.46];
+const ARROW_HEAD_ANGLE_VALUES: readonly number[] = [Math.PI / 9, Math.PI / 6, Math.PI / 4, Math.PI * 0.42];
+
+type ArrowHeadOptions = {
+  readonly color: Color;
+  readonly width: number;
+  readonly widthMode?: NonNullable<LineOptions["widthMode"]>;
+  readonly headAngle: number;
+  readonly joint?: NonNullable<LineOptions["joint"]>;
+  readonly normal?: Vec3;
+};
+
+/** Reference `_get_perpendicular_unit(direction)`. */
+function perpendicularUnit(direction: Vec3): Vec3 {
+  const reference: Vec3 = Math.abs(direction[1]) > 0.99 ? [1, 0, 0] : [0, 1, 0];
+  return normalizeVector(crossVector(direction, reference));
+}
+
+/** Reference `_get_projected_perpendicular_unit(direction, vector)`. */
+function projectedPerpendicularUnit(direction: Vec3, vector: Vec3): Vec3 {
+  const dot = direction[0] * vector[0] + direction[1] * vector[1] + direction[2] * vector[2];
+  const perpendicular: Vec3 = [vector[0] - direction[0] * dot, vector[1] - direction[1] * dot, vector[2] - direction[2] * dot];
+  const lengthSquared = perpendicular[0] ** 2 + perpendicular[1] ** 2 + perpendicular[2] ** 2;
+  return lengthSquared <= 0 ? perpendicularUnit(direction) : normalizeVector(perpendicular);
+}
+
+/**
+ * Reference `_emit_arrow`: an X made of two perpendicular V strips with the tip at
+ * `tip` and the head axis along `dir` (`|dir|` is the head length). Normal-aware
+ * draws collapse the per-vertex surface normals into the single `normal` option.
+ */
+function drawArrowHead(recorder: FrameRecorder, tip: Vec3, dir: Vec3, options: ArrowHeadOptions): void {
+  const headLength = Math.hypot(dir[0], dir[1], dir[2]);
+  if (headLength <= 0) return;
+  const forward = scaleVec(dir, 1 / headLength);
+  const tangent = options.normal === undefined ? perpendicularUnit(forward) : projectedPerpendicularUnit(forward, options.normal);
+  const bitangent = normalizeVector(crossVector(forward, tangent));
+  const headAngle = Math.min(Math.max(options.headAngle, 0.001), Math.PI * 0.49);
+  const headRadius = Math.tan(headAngle) * headLength;
+  const headCenter: Vec3 = [tip[0] - forward[0] * headLength, tip[1] - forward[1] * headLength, tip[2] - forward[2] * headLength];
+  const wingOptions: LineOptions = {
+    color: options.color,
+    width: options.width,
+    ...(options.widthMode === undefined ? {} : { widthMode: options.widthMode }),
+    ...(options.joint === undefined ? {} : { joint: options.joint }),
+    ...(options.normal === undefined ? {} : { normal: options.normal }),
+  };
+  const wing = (radial: Vec3): void => {
+    recorder.lineStrip([
+      [headCenter[0] + radial[0] * headRadius, headCenter[1] + radial[1] * headRadius, headCenter[2] + radial[2] * headRadius],
+      tip,
+      [headCenter[0] - radial[0] * headRadius, headCenter[1] - radial[1] * headRadius, headCenter[2] - radial[2] * headRadius],
+    ], wingOptions, false);
+  };
+  wing(tangent);
+  wing(bitangent);
+}
+
+/** `_get_arrow_tip`: head-only column tips sit half a sample (a full one for `dir`) ahead. */
+function arrowTip(column: number, row: number): Vec3 {
+  const offset = column === 1 ? ARROW_LENGTH : ARROW_LENGTH * 0.5;
+  return referenceOffset([ARROW_LAYOUT.columnX(column) + offset, ARROW_Y, ARROW_LAYOUT.rowZ(column, row)]);
+}
+
+/** `_get_arrow_dir`: `RIGHT.rotated(BACK, angle) * ARROW_HEAD_LENGTH`. */
+function arrowDirection(row: number): Vec3 {
+  return scaleVec(rotateAroundAxis([1, 0, 0], [0, 0, 1], ARROW_DIR_ANGLE_VALUES[row]), ARROW_HEAD_LENGTH);
+}
+
+/** `_get_line_start`: the rotation column lifts and recesses each row. */
+function arrowLineStart(column: number, row: number): Vec3 {
+  const local = ARROW_LAYOUT.atLocal(column, row);
+  if (column === 9) {
+    return referenceOffset([local[0], local[1] + ARROW_TUNNEL_Y, local[2] - row * ARROW_TUNNEL_DEPTH_STEP]);
+  }
+  return referenceOffset(local);
+}
+
+/** `_get_rotation_vector`: shrunk, then yawed around UP and pitched around BACK. */
+function arrowLineVector(row: number): Vec3 {
+  const vector = scaleVec([1, 0, 0], ARROW_LENGTH * (1 - row * ARROW_TUNNEL_SCALE_STEP));
+  const yawed = rotateAroundAxis(vector, [0, 1, 0], row * Math.PI * 0.08);
+  return rotateAroundAxis(yawed, [0, 0, 1], -Math.PI * 0.18 + row * Math.PI * 0.08);
+}
+
+function arrowLineEnd(column: number, row: number): Vec3 {
+  const start = arrowLineStart(column, row);
+  const vector: Vec3 = column === 9 ? arrowLineVector(row) : [ARROW_LENGTH, 0, 0];
+  return [start[0] + vector[0], start[1] + vector[1], start[2] + vector[2]];
+}
+
+type ArrowLineOptions = ArrowHeadOptions & { readonly headLength: number; readonly dash?: readonly [number, number, number] };
+
+/** Reference `draw_arrow_line*`: a shaft (optionally dashed/normal-aware) plus a head at `end`. */
+function drawArrowLine(recorder: FrameRecorder, start: Vec3, end: Vec3, options: ArrowLineOptions): void {
+  recorder.line(start, end, {
+    color: options.color,
+    width: options.width,
+    ...(options.widthMode === undefined ? {} : { widthMode: options.widthMode }),
+    ...(options.normal === undefined ? {} : { normal: options.normal }),
+    ...(options.dash === undefined ? {} : { dash: options.dash }),
+  });
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const dz = end[2] - start[2];
+  const length = Math.hypot(dx, dy, dz);
+  if (length <= 0) return;
+  const scale = options.headLength / length;
+  drawArrowHead(recorder, end, [dx * scale, dy * scale, dz * scale], options);
+}
+
+function arrowMatrix(recorder: FrameRecorder, context: SceneContext): void {
+  const dashOffset = fposmod(context.time * DASH_OFFSET_SPEED, 10);
+  const baseHead: Omit<ArrowHeadOptions, "color" | "width"> = { headAngle: ARROW_BASE_HEAD_ANGLE };
+  const jointHead: Omit<ArrowHeadOptions, "color" | "width"> = { headAngle: ARROW_JOINT_HEAD_ANGLE };
+
+  // arrow(width) / arrow(dir) / arrow(head angle) / arrow(joint)
   WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.arrow([p[0] - 0.5, 0, p[2]], [0.9, 0, 0], { color: WHITE, width });
+    drawArrowHead(recorder, arrowTip(0, row), [ARROW_HEAD_LENGTH, 0, 0], { color: WHITE, width, ...baseHead });
   });
-  dirs.forEach((angle, row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.arrow([p[0] - 0.5, 0, p[2]], [Math.cos(angle) * 0.9, 0, Math.sin(angle) * 0.9], { color: CYAN, width: 2 });
+  ARROW_DIR_ANGLE_VALUES.forEach((_angle, row) => {
+    drawArrowHead(recorder, arrowTip(1, row), arrowDirection(row), { color: CYAN, width: ARROW_BASE_WIDTH, ...baseHead });
   });
-  headAngles.forEach((headAngle, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.arrow([p[0] - 0.5, 0, p[2]], [0.9, 0, 0], { color: LIME, width: 2, headAngle });
+  ARROW_HEAD_ANGLE_VALUES.forEach((headAngle, row) => {
+    drawArrowHead(recorder, arrowTip(2, row), [ARROW_HEAD_LENGTH, 0, 0], { color: LIME, width: ARROW_BASE_WIDTH, headAngle });
   });
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.lineStrip(transformPoints([[-0.5, 0, 0.22], [-0.12, 0, -0.22], [0.16, 0, 0.22], [0.5, 0, -0.22]], p, [0, 0, 0]), { color: VIOLET, width: 8, joint }, false);
+    drawArrowHead(recorder, arrowTip(3, row), [ARROW_JOINT_HEAD_LENGTH, 0, 0], { color: VIOLET, width: ARROW_JOINT_WIDTH, ...jointHead, joint });
   });
-  NORMAL_VALUES.forEach((normal, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.arrow([p[0] - 0.4, 0, p[2]], [0.8, 0.2, 0], { color: TEAL, width: 4, normal });
-  });
+
+  // arrow_n / arrow_n(joint)
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    drawArrowHead(recorder, arrowTip(4, row), [ARROW_HEAD_LENGTH, 0, 0], { color: normalSampleColor(row), width: normalSampleWidth(row, ARROW_BASE_WIDTH), ...baseHead, normal: ARROW_NORMAL });
+  }
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.lineStrip(transformPoints([[-0.5, 0, 0.1], [0, 0, -0.2], [0.5, 0, 0.1]], p, [0, 0, 0]), { color: GOLD, width: 6, joint }, false);
+    drawArrowHead(recorder, arrowTip(5, row), [ARROW_JOINT_HEAD_LENGTH, 0, 0], { color: TEAL, width: ARROW_JOINT_WIDTH, ...jointHead, joint, normal: ARROW_NORMAL });
   });
+
+  // arrow_line(width)
   WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.arrow([p[0] - 0.55, 0, p[2]], [1.1, 0, 0], { color: LIME, width });
+    drawArrowLine(recorder, arrowLineStart(6, row), arrowLineEnd(6, row), { color: WHITE, width, headLength: ARROW_HEAD_LENGTH, ...baseHead });
   });
+  // arrow_line(head length)
+  ARROW_HEAD_LENGTH_VALUES.forEach((headLength, row) => {
+    drawArrowLine(recorder, arrowLineStart(7, row), arrowLineEnd(7, row), { color: GOLD, width: ARROW_BASE_WIDTH, headLength, ...baseHead });
+  });
+  // arrow_line(head angle)
+  ARROW_HEAD_ANGLE_VALUES.forEach((headAngle, row) => {
+    drawArrowLine(recorder, arrowLineStart(8, row), arrowLineEnd(8, row), { color: VIOLET, width: ARROW_BASE_WIDTH, headLength: ARROW_HEAD_LENGTH, headAngle });
+  });
+  // arrow_line(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    drawArrowLine(recorder, arrowLineStart(9, row), arrowLineEnd(9, row), { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: ARROW_BASE_WIDTH, headLength: ARROW_HEAD_LENGTH, ...baseHead });
+  }
+  // arrow_line(joint)
+  JOINT_VALUES.forEach((joint, row) => {
+    drawArrowLine(recorder, arrowLineStart(10, row), arrowLineEnd(10, row), { color: VIOLET, width: ARROW_JOINT_WIDTH, headLength: ARROW_JOINT_HEAD_LENGTH, ...jointHead, joint });
+  });
+  // arrow_line_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => {
+    drawArrowLine(recorder, arrowLineStart(11, row), arrowLineEnd(11, row), { color: ORANGE_FULL, width: ARROW_BASE_WIDTH, headLength: ARROW_HEAD_LENGTH, ...baseHead, dash: [dash, space, fposmod(dashOffset, dash + space)] });
+  });
+  // arrow_line_d(joint)
+  JOINT_VALUES.forEach((joint, row) => {
+    drawArrowLine(recorder, arrowLineStart(12, row), arrowLineEnd(12, row), { color: PINK, width: ARROW_JOINT_WIDTH, headLength: ARROW_JOINT_HEAD_LENGTH, ...jointHead, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] });
+  });
+  // arrow_line_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    drawArrowLine(recorder, arrowLineStart(13, row), arrowLineEnd(13, row), { color: normalSampleColor(row), width: normalSampleWidth(row, ARROW_BASE_WIDTH), headLength: ARROW_HEAD_LENGTH, ...baseHead, normal: ARROW_NORMAL });
+  }
+  // arrow_line_n(joint)
+  JOINT_VALUES.forEach((joint, row) => {
+    drawArrowLine(recorder, arrowLineStart(14, row), arrowLineEnd(14, row), { color: TEAL, width: ARROW_JOINT_WIDTH, headLength: ARROW_JOINT_HEAD_LENGTH, ...jointHead, joint, normal: ARROW_NORMAL });
+  });
+  // arrow_line_n_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => {
+    drawArrowLine(recorder, arrowLineStart(15, row), arrowLineEnd(15, row), { color: TEAL, width: ARROW_BASE_WIDTH, headLength: ARROW_HEAD_LENGTH, ...baseHead, normal: ARROW_NORMAL, dash: [dash, space, fposmod(dashOffset, dash + space)] });
+  });
+  // arrow_line_n_d(joint)
+  JOINT_VALUES.forEach((joint, row) => {
+    drawArrowLine(recorder, arrowLineStart(16, row), arrowLineEnd(16, row), { color: TEAL, width: ARROW_JOINT_WIDTH, headLength: ARROW_JOINT_HEAD_LENGTH, ...jointHead, joint, normal: ARROW_NORMAL, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Faithful Rect / Box / Axes reference port.
+//
+// These three scenes mirror `examples/rect.gd`, `examples/box.gd` and
+// `examples/axes.gd`: real column/row coordinates, `Basis` rotations, widths,
+// dash offsets and normal-aware axes. `createLayout` applies the same
+// `(-10, 0, 1.5)` root translation the capture harness uses.
+// ---------------------------------------------------------------------------
+
+const DASH_OFFSET_SPEED = 0.6;
+
+/** A Godot `Basis` expressed as its three world-space column vectors. */
+type Basis3 = { readonly x: Vec3; readonly y: Vec3; readonly z: Vec3 };
+
+const IDENTITY_BASIS: Basis3 = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };
+
+function offsetAlong(origin: Vec3, axis: Vec3, amount: number): Vec3 {
+  return [origin[0] + axis[0] * amount, origin[1] + axis[1] * amount, origin[2] + axis[2] * amount];
+}
+
+function scaleVec(v: Vec3, factor: number): Vec3 {
+  return [v[0] * factor, v[1] * factor, v[2] * factor];
+}
+
+function fposmod(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
+}
+
+/** `Basis.rotated(axis, angle)` is `Basis(axis, angle) * basis`, so every column rotates. */
+function rotateBasis(basis: Basis3, axis: Vec3, angle: number): Basis3 {
+  return {
+    x: rotateAroundAxis(basis.x, axis, angle),
+    y: rotateAroundAxis(basis.y, axis, angle),
+    z: rotateAroundAxis(basis.z, axis, angle),
+  };
+}
+
+/** Places an origin-centred mesh through `Basis(basis.x, basis.y, basis.z)` at `position`. */
+function transformMeshByBasis(mesh: MeshData, position: Vec3, basis: Basis3): MeshData {
+  const apply = (p: Vec3): Vec3 => [
+    position[0] + basis.x[0] * p[0] + basis.y[0] * p[1] + basis.z[0] * p[2],
+    position[1] + basis.x[1] * p[0] + basis.y[1] * p[1] + basis.z[1] * p[2],
+    position[2] + basis.x[2] * p[0] + basis.y[2] * p[1] + basis.z[2] * p[2],
+  ];
+  return {
+    triangles: mesh.triangles.map(([a, b, c]) => [apply(a), apply(b), apply(c)] as const),
+    segments: mesh.segments.map(([a, b]) => [apply(a), apply(b)] as const),
+  };
+}
+
+// --- Rect -----------------------------------------------------------------
+
+const RECT_LAYOUT = createLayout(SCENE_LAYOUTS.rect, SCENE_LAYOUTS.rect.baseY);
+const RECT_WIDTH = 0.95;
+const RECT_HEIGHT = 0.45;
+const RECT_BASE_LINE_WIDTH = 2;
+const RECT_EMPHASIS_LINE_WIDTH = 5.5;
+const RECT_SIZE_VALUES: readonly (readonly [number, number])[] = [[0.95, 0.45], [1.25, 0.45], [0.95, 0.75], [0.55, 0.55]];
+const RECT_ROTATION_TUNNEL_WIDTH = 1.15;
+const RECT_ROTATION_TUNNEL_HEIGHT = 0.7;
+const RECT_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const RECT_ROTATION_TUNNEL_SCALE_STEP = 0.07;
+const RECT_ROTATION_TUNNEL_TWIST_STEP = Math.PI * 0.12;
+const RECT_S_SAMPLE_COUNT = 8;
+const RECT_S_TUNNEL_WIDTH = 1.1;
+const RECT_S_TUNNEL_HEIGHT = 0.65;
+const RECT_S_TUNNEL_DEPTH_STEP = 0.15;
+const RECT_S_TUNNEL_SCALE_STEP = 0.06;
+const RECT_S_TUNNEL_TWIST_STEP = Math.PI * 0.12;
+
+/** `_get_rect_rotation(0.0, true)`: flat rect spanning the XZ plane. */
+const RECT_FLAT_BASIS: Basis3 = { x: [1, 0, 0], y: normalizeVector(crossVector([0, 1, 0], [1, 0, 0])), z: [0, 1, 0] };
+
+/** `_get_rect_points`: four corners in the plane spanned by `basis.x`/`basis.y`. */
+function rectLoop(center: Vec3, basis: Basis3, width: number, height: number): Vec3[] {
+  const halfWidth = scaleVec(basis.x, width * 0.5);
+  const halfHeight = scaleVec(basis.y, height * 0.5);
+  const corner = (sx: number, sy: number): Vec3 => [
+    center[0] + halfWidth[0] * sx + halfHeight[0] * sy,
+    center[1] + halfWidth[1] * sx + halfHeight[1] * sy,
+    center[2] + halfWidth[2] * sx + halfHeight[2] * sy,
+  ];
+  return [corner(-1, -1), corner(1, -1), corner(1, 1), corner(-1, 1)];
+}
+
+function rectMesh(center: Vec3, basis: Basis3, width: number, height: number): MeshData {
+  const p = rectLoop(center, basis, width, height);
+  return {
+    triangles: [[p[0]!, p[1]!, p[2]!], [p[0]!, p[2]!, p[3]!]],
+    segments: [[p[0]!, p[1]!], [p[1]!, p[2]!], [p[2]!, p[3]!], [p[3]!, p[0]!]],
+  };
+}
+
+function rectTunnelCenter(column: number, row: number, yOffset: number, depthStep: number): Vec3 {
+  const center = RECT_LAYOUT.atLocal(column, row);
+  return referenceOffset([center[0], center[1] + yOffset, center[2] - row * depthStep]);
+}
+
+function rectRotationTunnelBasis(row: number): Basis3 {
+  return rotateBasis(IDENTITY_BASIS, [0, 0, 1], row * RECT_ROTATION_TUNNEL_TWIST_STEP);
+}
+
+function rectSolidBasis(row: number): Basis3 {
+  const twisted = rotateBasis(IDENTITY_BASIS, [0, 0, 1], row * RECT_S_TUNNEL_TWIST_STEP);
+  return rotateBasis(twisted, [1, 0, 0], row * 0.08);
+}
+
+// --- Box ------------------------------------------------------------------
+
+const BOX_LAYOUT = createLayout(SCENE_LAYOUTS.box, SCENE_LAYOUTS.box.baseY);
+const BOX_BASE_Y = SCENE_LAYOUTS.box.baseY;
+const BOX_SIZE: Vec3 = [0.72, 0.46, 0.46];
+const BOX_BASE_LINE_WIDTH = 2;
+const BOX_SIZE_VALUES: readonly Vec3[] = [[0.72, 0.46, 0.46], [1, 0.46, 0.46], [0.72, 0.72, 0.46], [0.72, 0.46, 0.76]];
+const BOX_ROTATION_TUNNEL_SIZE: Vec3 = [0.82, 0.52, 0.52];
+const BOX_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const BOX_ROTATION_TUNNEL_SCALE_STEP = 0.05;
+const BOX_ROTATION_TUNNEL_Y = 0.35;
+const BOX_S_SAMPLE_COUNT = 8;
+const BOX_S_TUNNEL_SIZE: Vec3 = [0.82, 0.52, 0.52];
+const BOX_S_TUNNEL_DEPTH_STEP = 0.16;
+const BOX_S_TUNNEL_SCALE_STEP = 0.05;
+const BOX_S_TUNNEL_Y = 0.35;
+
+/** `_get_column_size`: per-column box size, including the shrinking tunnels. */
+function boxColumnSize(column: number, row: number): Vec3 {
+  if (column === 1) return BOX_SIZE_VALUES[row]!;
+  if (column === 2) return scaleVec(BOX_ROTATION_TUNNEL_SIZE, 1 - row * BOX_ROTATION_TUNNEL_SCALE_STEP);
+  if (column === 6) return scaleVec(BOX_S_TUNNEL_SIZE, 1 - row * BOX_S_TUNNEL_SCALE_STEP);
+  return BOX_SIZE;
+}
+
+/** `_get_box_center`: boxes sit with their base at `BOX_BASE_Y`. */
+function boxCenter(column: number, row: number): Vec3 {
+  const size = boxColumnSize(column, row);
+  return referenceOffset([BOX_LAYOUT.columnX(column), BOX_BASE_Y + size[1] * 0.5, BOX_LAYOUT.rowZ(column, row)]);
+}
+
+function boxTunnelCenter(column: number, row: number, yOffset: number, depthStep: number): Vec3 {
+  const center = boxCenter(column, row);
+  return [center[0], center[1] + yOffset, center[2] - row * depthStep];
+}
+
+function boxRotationTunnelBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.24);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.10);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+function boxSolidBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.20);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.10);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+function drawBox(recorder: FrameRecorder, center: Vec3, basis: Basis3, size: Vec3, options: LineOptions): void {
+  const mesh = transformMeshByBasis(box(size), center, basis);
+  for (const [a, b] of mesh.segments) recorder.line(a, b, options);
+}
+
+// --- Axes -----------------------------------------------------------------
+
+const AXES_LAYOUT = createLayout(SCENE_LAYOUTS.axes, SCENE_LAYOUTS.axes.baseY);
+const AXES_LENGTH = 0.75;
+const AXES_BASE_WIDTH = 2;
+const AXES_LENGTH_VALUES: readonly number[] = [0.35, 0.55, 0.75, 1];
+const AXES_ROTATION_TUNNEL_LENGTH = 0.9;
+const AXES_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const AXES_ROTATION_TUNNEL_SCALE_STEP = 0.05;
+const AXES_ROTATION_TUNNEL_Y = 0.35;
+
+function axesTunnelPos(column: number, row: number): Vec3 {
+  const pos = AXES_LAYOUT.atLocal(column, row);
+  return referenceOffset([pos[0], pos[1] + AXES_ROTATION_TUNNEL_Y, pos[2] - row * AXES_ROTATION_TUNNEL_DEPTH_STEP]);
+}
+
+function axesRotationTunnelBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.26);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.11);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+function drawAxes(recorder: FrameRecorder, origin: Vec3, basis: Basis3, length: number, width: number, widthMode?: NonNullable<LineOptions["widthMode"]>): void {
+  const mode = widthMode === undefined ? {} : { widthMode };
+  recorder.line(origin, offsetAlong(origin, basis.x, length), { color: AXIS_RED, width, ...mode });
+  recorder.line(origin, offsetAlong(origin, basis.y, length), { color: AXIS_GREEN, width, ...mode });
+  recorder.line(origin, offsetAlong(origin, basis.z, length), { color: AXIS_BLUE, width, ...mode });
+}
+
+function drawAxesN(recorder: FrameRecorder, origin: Vec3, basis: Basis3, length: number, width: number, widthMode?: NonNullable<LineOptions["widthMode"]>): void {
+  const mode = widthMode === undefined ? {} : { widthMode };
+  recorder.line(origin, offsetAlong(origin, basis.x, length), { color: AXIS_RED, width, normal: basis.x, ...mode });
+  recorder.line(origin, offsetAlong(origin, basis.y, length), { color: AXIS_GREEN, width, normal: basis.y, ...mode });
+  recorder.line(origin, offsetAlong(origin, basis.z, length), { color: AXIS_BLUE, width, normal: basis.z, ...mode });
 }
 
 function axesMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 6;
-  const rowCount = 8;
-  const lengths = [0.35, 0.55, 0.75, 1];
+  AXES_LENGTH_VALUES.forEach((length, row) => {
+    drawAxes(recorder, AXES_LAYOUT.at(0, row), IDENTITY_BASIS, length, AXES_BASE_WIDTH);
+  });
+  WIDTH_VALUES.forEach((width, row) => {
+    drawAxes(recorder, AXES_LAYOUT.at(1, row), IDENTITY_BASIS, AXES_LENGTH, width);
+  });
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * AXES_ROTATION_TUNNEL_SCALE_STEP;
+    drawAxes(recorder, axesTunnelPos(2, row), axesRotationTunnelBasis(row), AXES_ROTATION_TUNNEL_LENGTH * scale, AXES_BASE_WIDTH);
+  }
+  AXES_LENGTH_VALUES.forEach((length, row) => {
+    drawAxesN(recorder, AXES_LAYOUT.at(3, row), IDENTITY_BASIS, length, AXES_BASE_WIDTH);
+  });
+  WIDTH_VALUES.forEach((width, row) => {
+    drawAxesN(recorder, AXES_LAYOUT.at(4, row), IDENTITY_BASIS, AXES_LENGTH, width);
+  });
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * AXES_ROTATION_TUNNEL_SCALE_STEP;
+    drawAxesN(recorder, axesTunnelPos(5, row), axesRotationTunnelBasis(row), AXES_ROTATION_TUNNEL_LENGTH * scale, AXES_BASE_WIDTH);
+  }
+  void context;
+}
 
-  lengths.forEach((length, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.axes([p[0], 0, p[2]], length, 2);
-  });
-  WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.axes([p[0], 0, p[2]], 0.5, width);
-  });
-  ROTATIONS.forEach((_angle, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.axes([p[0], 0, p[2]], 0.4, 2);
-  });
-  lengths.forEach((length, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.axes([p[0], 0, p[2]], length, 2);
-  });
-  WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.axes([p[0], 0, p[2]], 0.5, width);
-  });
-  ROTATIONS.forEach((_angle, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.axes([p[0], 0, p[2]], 0.4, 2);
+// ---------------------------------------------------------------------------
+// Faithful Grid reference port (`examples/grid.gd`).
+//
+// Unlike every other scene, the grid columns are laid out from their own
+// measured bounds: `_get_column_x` chains half widths and `COLUMN_GAP`, while
+// `_get_row_z` stacks each row's z size plus `SAMPLE_SPACING_GAP`. The bounds
+// math is ported from `_get_grid_bounds`; the rendered `skew` and `outer_edges`
+// reuse the library grid (see the notes in `docs/godot-debug-draw-parity.md`).
+// ---------------------------------------------------------------------------
+
+const GRID_SCENE_Y = 0.06;
+const GRID_SCENE_BASE_LINE_WIDTH = 2;
+const GRID_SCENE_CELL_COUNT: readonly [number, number] = [6, 4];
+const GRID_SCENE_SPACING: readonly [number, number] = [0.28, 0.28];
+const GRID_SCENE_START_Z = -0.45;
+const GRID_SCENE_COLUMN_GAP = 1;
+const GRID_SCENE_SAMPLE_GAP = 0.55;
+const GRID_SCENE_WIDTH_VALUES = WIDTH_VALUES;
+const GRID_SCENE_CELL_VALUES: readonly (readonly [number, number])[] = [[4, 4], [6, 4], [10, 3], [3, 8]];
+const GRID_SCENE_SPACING_VALUES: readonly (readonly [number, number])[] = [[0.2, 0.2], [0.28, 0.28], [0.42, 0.22], [0.55, 0.28]];
+const GRID_SCENE_SKEW_VALUES: readonly (readonly [number, number])[] = [[0, 0], [0.28, 0], [-0.28, 0], [0.28, -0.18]];
+const GRID_SCENE_OUTER_VALUES = ["none", "x", "z", "xz"] as const;
+const GRID_SCENE_ROTATION_COUNT = 6;
+const GRID_SCENE_COLOR_COUNT = 4;
+const GRID_SCENE_NORMAL_COUNT = 4;
+
+function gridSceneCellCount(column: number, row: number): readonly [number, number] {
+  return column === 1 ? GRID_SCENE_CELL_VALUES[row]! : GRID_SCENE_CELL_COUNT;
+}
+
+function gridSceneSpacing(column: number, row: number): readonly [number, number] {
+  return column === 2 ? GRID_SCENE_SPACING_VALUES[row]! : GRID_SCENE_SPACING;
+}
+
+function gridSceneSkew(column: number, row: number): readonly [number, number] {
+  return column === 3 ? GRID_SCENE_SKEW_VALUES[row]! : [0, 0];
+}
+
+function gridSceneOuter(column: number, row: number): (typeof GRID_SCENE_OUTER_VALUES)[number] {
+  return column === 4 ? GRID_SCENE_OUTER_VALUES[row]! : "none";
+}
+
+/** `_get_grid_rotation`: identity except the rotation column's yaw-then-pitch basis. */
+function gridSceneRotation(column: number, row: number): readonly [number, number, number] {
+  if (column !== 5) return [0, 0, 0];
+  return [-row * Math.PI * 0.035, row * Math.PI * 0.07, 0];
+}
+
+/** `_get_grid_bounds` in the XY/Z plane, returned as min/max so callers derive size and x bounds. */
+function gridSceneBounds(column: number, row: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  const [cx, cz] = gridSceneCellCount(column, row);
+  const [sx, sz] = gridSceneSpacing(column, row);
+  const [skewX, skewZ] = gridSceneSkew(column, row);
+  const dx: Vec3 = [sx, 0, sx * Math.tan(skewZ)];
+  const dz: Vec3 = [sz * Math.tan(skewX), 0, sz];
+  const start: Vec3 = [-(dx[0] * cx + dz[0] * cz) * 0.5, 0, -(dx[2] * cx + dz[2] * cz) * 0.5];
+  const corners: readonly Vec3[] = [
+    start,
+    [start[0] + dx[0] * cx, start[1], start[2] + dx[2] * cx],
+    [start[0] + dz[0] * cz, start[1], start[2] + dz[2] * cz],
+    [start[0] + dx[0] * cx + dz[0] * cz, start[1], start[2] + dx[2] * cx + dz[2] * cz],
+  ];
+  const rotation = gridSceneRotation(column, row);
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const corner of corners) {
+    const p = rotatePoint(corner, rotation);
+    minX = Math.min(minX, p[0]);
+    maxX = Math.max(maxX, p[0]);
+    minZ = Math.min(minZ, p[2]);
+    maxZ = Math.max(maxZ, p[2]);
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+function gridSceneColumnWidth(column: number): number {
+  let width = 0;
+  for (let row = 0; row < gridSceneRowCount(column); row++) {
+    const bounds = gridSceneBounds(column, row);
+    width = Math.max(width, bounds.maxX - bounds.minX);
+  }
+  return width;
+}
+
+function gridSceneColumnX(column: number): number {
+  let x = gridSceneColumnWidth(0) * 0.5 + 0.5;
+  for (let index = 0; index < column; index++) {
+    x += gridSceneColumnWidth(index) * 0.5 + GRID_SCENE_COLUMN_GAP + gridSceneColumnWidth(index + 1) * 0.5;
+  }
+  return x;
+}
+
+function gridSceneRowZ(column: number, row: number): number {
+  let z = GRID_SCENE_START_Z;
+  for (let index = 0; index < row; index++) {
+    const bounds = gridSceneBounds(column, index);
+    z -= bounds.maxZ - bounds.minZ + GRID_SCENE_SAMPLE_GAP;
+  }
+  return z;
+}
+
+/** `_get_column_sample_count`: the per-column row table. */
+function gridSceneRowCount(column: number): number {
+  if (column === 0) return GRID_SCENE_WIDTH_VALUES.length;
+  if (column === 1) return GRID_SCENE_CELL_VALUES.length;
+  if (column === 2) return GRID_SCENE_SPACING_VALUES.length;
+  if (column === 3) return GRID_SCENE_SKEW_VALUES.length;
+  if (column === 4) return GRID_SCENE_OUTER_VALUES.length;
+  if (column === 5) return GRID_SCENE_ROTATION_COUNT;
+  if (column === 6) return GRID_SCENE_COLOR_COUNT;
+  if (column === 7) return GRID_SCENE_NORMAL_COUNT;
+  return 0;
+}
+
+function gridSceneCenter(column: number, row: number): Vec3 {
+  return referenceOffset([gridSceneColumnX(column), GRID_SCENE_Y, gridSceneRowZ(column, row)]);
+}
+
+/** `_get_color_sample_color`. */
+function gridSceneColorSample(row: number): Color {
+  if (row === 1) return [1, 0.85, 0.1, 0.35];
+  if (row === 2) return [1, 0.45, 0.2, 1];
+  if (row === 3) return [0.25, 0.6, 1, 1];
+  return WHITE;
+}
+
+function gridSceneDraw(recorder: FrameRecorder, column: number, row: number, color: Color, width: number, normal?: Vec3): void {
+  recorder.grid(gridSceneCenter(column, row), gridSceneCellCount(column, row), gridSceneSpacing(column, row), {
+    color,
+    width,
+    rotation: gridSceneRotation(column, row),
+    skew: gridSceneSkew(column, row),
+    outer: gridSceneOuter(column, row),
+    ...(normal === undefined ? {} : { normal }),
   });
 }
 
-function gridMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 8;
-  const rowCount = 4;
-  const cells: readonly (readonly [number, number])[] = [[4, 4], [6, 4], [10, 3], [3, 8]];
-  const spacings: readonly (readonly [number, number])[] = [[0.2, 0.2], [0.28, 0.28], [0.42, 0.22], [0.55, 0.28]];
-  const skews: readonly (readonly [number, number])[] = [[0, 0], [0.5, 0], [-0.5, 0], [0.5, -0.5]];
+function gridMatrix(recorder: FrameRecorder): void {
+  drawAxes(recorder, referenceOffset([0, 0, 0]), IDENTITY_BASIS, 0.75, 2);
 
-  WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], [3, 3], [0.25, 0.25], { color: WHITE, width });
-  });
-  cells.forEach((cell, row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], cell, [0.22, 0.22], { color: CYAN, width: 2 });
-  });
-  spacings.forEach((spacing, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], [3, 3], spacing, { color: LIME, width: 2 });
-  });
-  skews.forEach((skew, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], [4, 4], [0.22, 0.22], { color: ORANGE, width: 2, skew });
-  });
-  [0, 1, 2, 3].forEach((outer, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: VIOLET, width: 2 + outer });
-  });
-  ROTATIONS.slice(0, 4).forEach((angle, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], cells[1]!, spacings[1]!, { color: GOLD, width: 2, rotation: [0, angle, 0], outer: angle === 0 ? "none" : "xz" });
-  });
-  [0, 1, 2, 3].forEach((value, row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: [0.4, 0.6 + value * 0.1, 1, 1], width: 2 });
-  });
-  [0, 1, 2, 3].forEach((_value, row) => {
-    const p = slot(7, row, columnCount, rowCount);
-    recorder.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: TEAL, width: 2 });
-  });
+  // grid(width)
+  GRID_SCENE_WIDTH_VALUES.forEach((width, row) => gridSceneDraw(recorder, 0, row, WHITE, width));
+  // grid(cells)
+  GRID_SCENE_CELL_VALUES.forEach((_cells, row) => gridSceneDraw(recorder, 1, row, [0.15, 0.85, 1, 0.95], GRID_SCENE_BASE_LINE_WIDTH));
+  // grid(spacing)
+  GRID_SCENE_SPACING_VALUES.forEach((_spacing, row) => gridSceneDraw(recorder, 2, row, [0.7, 1, 0.25, 1], GRID_SCENE_BASE_LINE_WIDTH));
+  // grid(skew)
+  GRID_SCENE_SKEW_VALUES.forEach((_skew, row) => gridSceneDraw(recorder, 3, row, [1, 0.45, 0.2, 1], GRID_SCENE_BASE_LINE_WIDTH));
+  // grid(outer)
+  GRID_SCENE_OUTER_VALUES.forEach((_outer, row) => gridSceneDraw(recorder, 4, row, [1, 0.7, 0.2, 1], GRID_SCENE_BASE_LINE_WIDTH));
+  // grid(rotation)
+  for (let row = 0; row < GRID_SCENE_ROTATION_COUNT; row++) gridSceneDraw(recorder, 5, row, [0.75, 0.45, 1, 1 - row * 0.08], GRID_SCENE_BASE_LINE_WIDTH);
+  // grid(color)
+  for (let row = 0; row < GRID_SCENE_COLOR_COUNT; row++) gridSceneDraw(recorder, 6, row, gridSceneColorSample(row), GRID_SCENE_BASE_LINE_WIDTH);
+  // grid_n
+  for (let row = 0; row < GRID_SCENE_NORMAL_COUNT; row++) gridSceneDraw(recorder, 7, row, normalSampleColor(row), normalSampleWidth(row, GRID_SCENE_BASE_LINE_WIDTH), [0, 1, 0]);
 }
 
 function translateMesh(mesh: MeshData, position: Vec3): MeshData {
@@ -368,75 +793,197 @@ function translateMesh(mesh: MeshData, position: Vec3): MeshData {
   return { triangles: mesh.triangles.map(([a, b, c]) => [move(a), move(b), move(c)]), segments: mesh.segments.map(([a, b]) => [move(a), move(b)]) };
 }
 
-const BASE_CURVE = curve([
-  { position: [-0.55, 0, 0.2], out: [0.28, 0, -0.35] },
-  { position: [0, 0, -0.2], in: [-0.28, 0, 0.35], out: [0.28, 0, -0.35] },
-  { position: [0.55, 0, 0.2], in: [-0.28, 0, 0.35] },
-]);
+// ---------------------------------------------------------------------------
+// Faithful Curve reference port (`examples/curve.gd`).
+//
+// The 3D curves are CubicBezier `Curve3D`s. `FrameRecorder.curve` only accepts a
+// center + euler rotation, so the reference `Basis` transforms are baked into each
+// curve's control points before recording. The reference also draws anchor/control
+// point markers per construction curve; those are omitted here.
+// ---------------------------------------------------------------------------
 
-function curveMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 8;
-  const rowCount = 8;
+const CURVE_LAYOUT = createLayout(SCENE_LAYOUTS.curve, SCENE_LAYOUTS.curve.baseY);
+const CURVE_Y = SCENE_LAYOUTS.curve.baseY;
+const CURVE_BASE_LINE_WIDTH = 2;
+const CURVE_EMPHASIS_LINE_WIDTH = 8;
+const CURVE_TOLERANCE_LENGTH = 0.08;
+const CURVE_JOINT_TOLERANCE_LENGTH = 0.35;
+const CONSTRUCTION_SAMPLE_Z = -0.45;
+const CURVE_TUNNEL_DEPTH_STEP = 0.16;
+const CURVE_TUNNEL_SCALE_STEP = 0.06;
+const CURVE_TUNNEL_TWIST_STEP = Math.PI * 0.12;
+const CURVE_SHAPE_VALUES: readonly number[] = [0.25, 0.65, 1, 1.35];
+const CURVE_TOLERANCE_VALUES: readonly number[] = [0.04, 0.08, 0.16, 0.32];
+const CURVE_CONSTRUCTION_COLOR: Color = [0.86, 0.94, 1, 1];
 
-  WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.curve(BASE_CURVE, { color: WHITE, width, tolerance: 0.08, transform: { center: p } });
-  });
-  SHAPES.forEach((scale, row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.curve(scaleCurve(scale), { color: CYAN, width: 2, tolerance: 0.08, transform: { center: p } });
-  });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.curve(BASE_CURVE, { color: LIME, width: 2, tolerance: 0.08, transform: { center: p, rotation: [0, angle, 0] } });
-  });
-  TOLERANCES.forEach((tolerance, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.curve(BASE_CURVE, { color: GOLD, width: 2, tolerance, transform: { center: p } });
-  });
-  [0, 1, 2, 3].forEach((index, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    if (index === 0) recorder.curve(BASE_CURVE, { color: TEAL, width: 2, tolerance: 0.08, transform: { center: p } });
-    else recorder.curve(scaleClosed(0.75 + (index - 1) * 0.25), { color: TEAL, width: 2, tolerance: 0.08, joint: context.lineJoint ?? "round", transform: { center: p } });
-  });
-  JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.curve(cornerCurve(), { color: VIOLET, width: 5, tolerance: 0.16, joint, transform: { center: p } });
-  });
-  DASH_VALUES.forEach(([dash, space], row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.curve(BASE_CURVE, { color: ORANGE, width: 2, dash: [dash, space, context.time * 0.6], tolerance: 0.08, transform: { center: p } });
-  });
-  JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(7, row, columnCount, rowCount);
-    recorder.curve(cornerCurve(), { color: RED, width: 5, dash: [0.18, 0.1, context.time * 0.6], tolerance: 0.16, joint, transform: { center: p } });
-  });
-}
-
-function scaleCurve(scale: number): Curve3D {
+// `_create_*_curve` constructors, ported point-for-point (handles are relative offsets).
+function straightCurve(): Curve3D {
   return curve([
-    { position: [-0.55, 0, 0.2 * scale], out: [0.28, 0, -0.35 * scale] },
-    { position: [0, 0, -0.2 * scale], in: [-0.28, 0, 0.35 * scale], out: [0.28, 0, -0.35 * scale] },
-    { position: [0.55, 0, 0.2 * scale], in: [-0.28, 0, 0.35 * scale] },
+    { position: [-0.5, 0, 0.18] },
+    { position: [0, 0, -0.18] },
+    { position: [0.5, 0, 0.18] },
   ]);
 }
 
-function scaleClosed(scale: number): Curve3D {
+function smoothSymmetricCurve(shapeScale = 1): Curve3D {
   return curve([
-    { position: [-0.45 * scale, 0, 0], in: [0, 0, 0.24 * scale], out: [0, 0, -0.24 * scale] },
-    { position: [0, 0, -0.35 * scale], in: [-0.28 * scale, 0, 0], out: [0.28 * scale, 0, 0] },
-    { position: [0.45 * scale, 0, 0], in: [0, 0, -0.24 * scale], out: [0, 0, 0.24 * scale] },
-    { position: [0, 0, 0.35 * scale], in: [0.28 * scale, 0, 0], out: [-0.28 * scale, 0, 0] },
-  ], true);
+    { position: [-0.55, 0, 0.2 * shapeScale], out: [0.28, 0, -0.35 * shapeScale] },
+    { position: [0, 0, -0.2 * shapeScale], in: [-0.28, 0, 0.35 * shapeScale], out: [0.28, 0, -0.35 * shapeScale] },
+    { position: [0.55, 0, 0.2 * shapeScale], in: [-0.28, 0, 0.35 * shapeScale] },
+  ]);
+}
+
+function flatHandleCurve(): Curve3D {
+  return curve([
+    { position: [-0.55, 0, 0], out: [0.32, 0, 0] },
+    { position: [0.55, 0, 0], in: [-0.32, 0, 0] },
+  ]);
+}
+
+function brokenCornerCurve(): Curve3D {
+  return curve([
+    { position: [-0.55, 0, 0.18], out: [0.28, 0, -0.08] },
+    { position: [0, 0, -0.24], in: [-0.18, 0, 0.34], out: [0.12, 0, 0.34] },
+    { position: [0.55, 0, 0.18], in: [-0.28, 0, -0.08] },
+  ]);
+}
+
+function oneSidedCurve(): Curve3D {
+  return curve([
+    { position: [-0.55, 0, 0.18], out: [0.38, 0, -0.48] },
+    { position: [0, 0, -0.16] },
+    { position: [0.55, 0, 0.18], in: [-0.38, 0, -0.48] },
+  ]);
+}
+
+function yCurve(): Curve3D {
+  return curve([
+    { position: [-0.55, -0.18, 0.18], out: [0.28, 0.36, -0.34] },
+    { position: [0, 0.22, -0.18], in: [-0.28, -0.34, 0.34], out: [0.28, -0.34, -0.34] },
+    { position: [0.55, -0.18, 0.18], in: [-0.28, 0.36, 0.34] },
+  ]);
 }
 
 function cornerCurve(): Curve3D {
   return curve([
-    { position: [-0.5, 0, 0.24] },
+    { position: [-0.55, 0, 0.24] },
     { position: [-0.15, 0, -0.24] },
     { position: [0.18, 0, 0.24] },
-    { position: [0.5, 0, -0.24] },
+    { position: [0.55, 0, -0.24] },
   ]);
+}
+
+function closedCurve(shapeScale: number): Curve3D {
+  const xRadius = 0.45 * shapeScale;
+  const zRadius = 0.35 * shapeScale;
+  const xHandle = 0.28 * shapeScale;
+  const zHandle = 0.24 * shapeScale;
+  return curve([
+    { position: [-xRadius, 0, 0], in: [0, 0, zHandle], out: [0, 0, -zHandle] },
+    { position: [0, 0, -zRadius], in: [-xHandle, 0, 0], out: [xHandle, 0, 0] },
+    { position: [xRadius, 0, 0], in: [0, 0, -zHandle], out: [0, 0, zHandle] },
+    { position: [0, 0, zRadius], in: [xHandle, 0, 0], out: [-xHandle, 0, 0] },
+  ], true);
+}
+
+const CURVE_BASE = smoothSymmetricCurve();
+const CURVE_CORNER = cornerCurve();
+const CURVE_SHAPES: readonly Curve3D[] = CURVE_SHAPE_VALUES.map((shapeScale) => smoothSymmetricCurve(shapeScale));
+const CURVE_CLOSED: readonly Curve3D[] = [smoothSymmetricCurve(), closedCurve(1), closedCurve(0.75), closedCurve(1.25)];
+const CURVE_CONSTRUCTION: readonly Curve3D[] = [straightCurve(), smoothSymmetricCurve(), flatHandleCurve(), brokenCornerCurve(), oneSidedCurve(), yCurve(), closedCurve(1)];
+
+/** Godot `_get_curve_rotation`: `Basis(width_axis, normal, depth_axis)`. */
+function curveRotationBasis(normal: Vec3, angle: number): Basis3 {
+  const n = normalizeVector(normal);
+  const reference: Vec3 = Math.abs(n[0]) > 0.95 ? [0, 0, 1] : [1, 0, 0];
+  const projection = reference[0] * n[0] + reference[1] * n[1] + reference[2] * n[2];
+  const planar: Vec3 = [reference[0] - n[0] * projection, reference[1] - n[1] * projection, reference[2] - n[2] * projection];
+  const widthAxis = normalizeVector(rotateAroundAxis(normalizeVector(planar), n, angle));
+  const depthAxis = normalizeVector(crossVector(widthAxis, n));
+  return { x: widthAxis, y: n, z: depthAxis };
+}
+
+/** `_get_rotation_tunnel_rotation(row)`. */
+function curveTunnelBasis(row: number): Basis3 {
+  const tilted = rotateAroundAxis([0, 1, 0], [1, 0, 0], -Math.PI * 0.38);
+  const normal = normalizeVector(rotateAroundAxis(tilted, [0, 0, 1], row * CURVE_TUNNEL_TWIST_STEP));
+  return curveRotationBasis(normal, row * Math.PI * 0.08);
+}
+
+/** `_get_rotation_tunnel_center`: lift the row, then recess it along -Z. */
+function curveTunnelCenter(column: number, row: number): Vec3 {
+  const center = CURVE_LAYOUT.atLocal(column, row);
+  return referenceOffset([center[0], center[1] + 0.35, center[2] - row * CURVE_TUNNEL_DEPTH_STEP]);
+}
+
+/** Bakes a uniform scale + `Basis` into control points; only the translation is passed to `record`. */
+function scaleCurve(shape: Curve3D, scale: number, basis: Basis3): Curve3D {
+  const map = (p: Vec3): Vec3 => [
+    (basis.x[0] * p[0] + basis.y[0] * p[1] + basis.z[0] * p[2]) * scale,
+    (basis.x[1] * p[0] + basis.y[1] * p[1] + basis.z[1] * p[2]) * scale,
+    (basis.x[2] * p[0] + basis.y[2] * p[1] + basis.z[2] * p[2]) * scale,
+  ];
+  const points = shape.points.map((point) => ({
+    position: map(point.position),
+    ...(point.in === undefined ? {} : { in: map(point.in) }),
+    ...(point.out === undefined ? {} : { out: map(point.out) }),
+  }));
+  return { points, ...(shape.closed === undefined ? {} : { closed: shape.closed }) };
+}
+
+function placeCurve(
+  recorder: FrameRecorder,
+  shape: Curve3D,
+  center: Vec3,
+  options: LineOptions & { readonly tolerance: number },
+  scale = 1,
+  basis: Basis3 = IDENTITY_BASIS,
+): void {
+  recorder.curve(scaleCurve(shape, scale, basis), { ...options, transform: { center } });
+}
+
+function curveMatrix(recorder: FrameRecorder, context: SceneContext): void {
+  const dashOffset = fposmod(context.time * DASH_OFFSET_SPEED, 10);
+
+  // Construction band at CONSTRUCTION_SAMPLE_Z; anchor/control markers are omitted.
+  CURVE_CONSTRUCTION.forEach((shape, index) => {
+    const center = referenceOffset([CURVE_LAYOUT.columnX(index), CURVE_Y, CONSTRUCTION_SAMPLE_Z]);
+    recorder.curve(shape, { color: CURVE_CONSTRUCTION_COLOR, width: CURVE_BASE_LINE_WIDTH, tolerance: CURVE_TOLERANCE_LENGTH, joint: "round", transform: { center } });
+  });
+
+  // curve(width)
+  WIDTH_VALUES.forEach((width, row) => {
+    placeCurve(recorder, CURVE_BASE, CURVE_LAYOUT.at(0, row), { color: WHITE, width, tolerance: CURVE_TOLERANCE_LENGTH });
+  });
+  // curve(shape)
+  CURVE_SHAPES.forEach((shape, row) => {
+    placeCurve(recorder, shape, CURVE_LAYOUT.at(1, row), { color: CYAN, width: CURVE_BASE_LINE_WIDTH, tolerance: CURVE_TOLERANCE_LENGTH });
+  });
+  // curve(transform)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * CURVE_TUNNEL_SCALE_STEP;
+    placeCurve(recorder, CURVE_BASE, curveTunnelCenter(2, row), { color: [0.7, 1, 0.25, 1 - row * 0.07], width: CURVE_BASE_LINE_WIDTH, tolerance: CURVE_TOLERANCE_LENGTH }, scale, curveTunnelBasis(row));
+  }
+  // curve(tolerance)
+  CURVE_TOLERANCE_VALUES.forEach((tolerance, row) => {
+    placeCurve(recorder, CURVE_BASE, CURVE_LAYOUT.at(3, row), { color: GOLD, width: CURVE_BASE_LINE_WIDTH, tolerance });
+  });
+  // curve(closed)
+  CURVE_CLOSED.forEach((shape, row) => {
+    placeCurve(recorder, shape, CURVE_LAYOUT.at(4, row), { color: TEAL, width: CURVE_BASE_LINE_WIDTH, tolerance: CURVE_TOLERANCE_LENGTH, joint: "round" });
+  });
+  // curve(joint)
+  JOINT_VALUES.forEach((joint, row) => {
+    placeCurve(recorder, CURVE_CORNER, CURVE_LAYOUT.at(5, row), { color: VIOLET, width: CURVE_EMPHASIS_LINE_WIDTH, tolerance: CURVE_JOINT_TOLERANCE_LENGTH, joint });
+  });
+  // curve_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => {
+    placeCurve(recorder, CURVE_BASE, CURVE_LAYOUT.at(6, row), { color: ORANGE_FULL, width: CURVE_BASE_LINE_WIDTH, tolerance: CURVE_TOLERANCE_LENGTH, dash: [dash, space, fposmod(dashOffset, dash + space)] });
+  });
+  // curve_d(joint)
+  JOINT_VALUES.forEach((joint, row) => {
+    placeCurve(recorder, CURVE_CORNER, CURVE_LAYOUT.at(7, row), { color: PINK, width: CURVE_EMPHASIS_LINE_WIDTH, tolerance: CURVE_JOINT_TOLERANCE_LENGTH, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] });
+  });
 }
 
 function circleMatrix(recorder: FrameRecorder, context: SceneContext): void {
@@ -447,8 +994,8 @@ function circleMatrix(recorder: FrameRecorder, context: SceneContext): void {
     basisCirclePoints(circleCenterLocal(column, row), radius, segments, basis);
 
   WIDTH_VALUES.forEach((width, row) => recorder.lineStrip(circle(0, row, CIRCLE_RADIUS, CIRCLE_SEGMENTS), { color: WHITE, width }, true));
-  RADII.forEach((radius, row) => recorder.lineStrip(circle(1, row, radius, CIRCLE_SEGMENTS), { color: CYAN, width: 2 }, true));
-  SEGMENTS.forEach((segments, row) => recorder.lineStrip(circle(2, row, CIRCLE_RADIUS, segments), { color: LIME, width: 2 }, true));
+  RADIUS_VALUES.forEach((radius, row) => recorder.lineStrip(circle(1, row, radius, CIRCLE_SEGMENTS), { color: CYAN, width: 2 }, true));
+  SEGMENT_VALUES.forEach((segments, row) => recorder.lineStrip(circle(2, row, CIRCLE_RADIUS, segments), { color: LIME, width: 2 }, true));
 
   for (let row = 0; row < CIRCLE_ROTATION_SAMPLES; row++) {
     const tilted = rotateAroundAxis([0, 1, 0], [1, 0, 0], -Math.PI * 0.38);
@@ -471,252 +1018,832 @@ function circleMatrix(recorder: FrameRecorder, context: SceneContext): void {
   DASH_VALUES.forEach(([dash, space], row) => recorder.lineStrip(circle(8, row, CIRCLE_RADIUS, CIRCLE_SEGMENTS), { color: TEAL, width: CIRCLE_BASE_WIDTH, normal: normalUp, dash: [dash, space, dashOffset], joint: "round" }, true));
   JOINT_VALUES.forEach((joint, row) => recorder.lineStrip(circle(9, row, CIRCLE_RADIUS, CIRCLE_JOINT_SEGMENTS), { color: TEAL, width: 8, normal: normalUp, joint }, true));
 
-  SEGMENTS.forEach((segments, row) => {
+  SEGMENT_VALUES.forEach((segments, row) => {
     const center = referenceOffset(circleCenterLocal(10, row));
     recorder.mesh(translateMesh(disc(CIRCLE_RADIUS, segments), center), { color: [0.25, 0.65, 1, 0.45], solid: true });
   });
 }
 
-function normalOf(index: number): Vec3 { return NORMAL_VALUES[index % NORMAL_VALUES.length]!; }
-function offset(points: readonly Vec3[], p: Vec3): Vec3[] { return points.map((q) => [q[0] + p[0], q[1] + p[1], q[2] + p[2]]); }
+// ---------------------------------------------------------------------------
+// Faithful Arc reference port (`examples/arc.gd`).
+// ---------------------------------------------------------------------------
+
+const ARC_LAYOUT = createLayout(SCENE_LAYOUTS.arc, SCENE_LAYOUTS.arc.baseY);
+const ARC_RADIUS = 0.34;
+const ARC_ANGLE = Math.PI * 1.5;
+const ARC_BASE_LINE_WIDTH = 2;
+const ARC_EMPHASIS_LINE_WIDTH = 8;
+const ARC_SEGMENT_COUNT = 64;
+const ARC_JOINT_SEGMENT_COUNT = 12;
+const ARC_ANGLE_VALUES: readonly number[] = [Math.PI * 0.5, Math.PI, Math.PI * 1.5, Math.PI * 2];
+const ARC_TUNNEL_RADIUS = 0.44;
+const ARC_TUNNEL_DEPTH_STEP = 0.16;
+const ARC_TUNNEL_SCALE_STEP = 0.06;
+const ARC_TUNNEL_TWIST_STEP = Math.PI * 0.12;
+const ARC_NORMAL: Vec3 = [0, 1, 0];
+const FLAT_BASIS: CircleBasis = circleBasis([0, 1, 0], 0);
+
+/** `_get_rotation_tunnel_rotation(row)`. */
+function arcTunnelBasis(row: number): CircleBasis {
+  const tilted = rotateAroundAxis([0, 1, 0], [1, 0, 0], -Math.PI * 0.38);
+  const normal = normalizeVector(rotateAroundAxis(tilted, [0, 0, 1], row * ARC_TUNNEL_TWIST_STEP));
+  return circleBasis(normal, row * Math.PI * 0.08);
+}
+
+/** `_get_rotation_tunnel_center`: lift the row, then recess it along -Z. */
+function arcTunnelCenter(column: number, row: number): Vec3 {
+  const center = ARC_LAYOUT.atLocal(column, row);
+  return referenceOffset([center[0], center[1] + 0.35, center[2] - row * ARC_TUNNEL_DEPTH_STEP]);
+}
 
 function arcMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 11;
-  const rowCount = 4;
-  const angles = [Math.PI / 2, Math.PI, Math.PI * 1.5, Math.PI * 2];
+  const dashOffset = fposmod(context.time * DASH_OFFSET_SPEED, 10);
 
+  // arc(width)
   WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: WHITE, width }, false);
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(0, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: WHITE, width }, false);
   });
-  RADII.forEach((radius, row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(radius, Math.PI * 1.5, 48), p), { color: CYAN, width: 2 }, false);
+  // arc(radius)
+  RADIUS_VALUES.forEach((radius, row) => {
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(1, row), radius, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: CYAN, width: ARC_BASE_LINE_WIDTH }, false);
   });
-  angles.forEach((angle, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, angle, 48), p), { color: LIME, width: 2 }, false);
+  // arc(angle)
+  ARC_ANGLE_VALUES.forEach((angle, row) => {
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(2, row), ARC_RADIUS, angle, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: LIME, width: ARC_BASE_LINE_WIDTH }, false);
   });
-  SEGMENTS.forEach((segments, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, segments), p), { color: ORANGE, width: 2, joint: context.lineJoint ?? "round" }, false);
+  // arc(segments)
+  SEGMENT_VALUES.forEach((segments, row) => {
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(3, row), ARC_RADIUS, ARC_ANGLE, segments, FLAT_BASIS), { color: GOLD, width: ARC_BASE_LINE_WIDTH }, false);
   });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.lineStrip(transformPoints(arcPoints(0.35, Math.PI * 1.5, 32), p, [0, angle, 0]), { color: GOLD, width: 2 }, false);
-  });
+  // arc(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * ARC_TUNNEL_SCALE_STEP;
+    recorder.lineStrip(arcPoints(arcTunnelCenter(4, row), ARC_TUNNEL_RADIUS * scale, ARC_ANGLE, ARC_SEGMENT_COUNT, arcTunnelBasis(row)), { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: ARC_BASE_LINE_WIDTH }, false);
+  }
+  // arc(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: VIOLET, width: 8, joint }, false);
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(5, row), ARC_RADIUS, ARC_ANGLE, ARC_JOINT_SEGMENT_COUNT, FLAT_BASIS), { color: VIOLET, width: ARC_EMPHASIS_LINE_WIDTH, joint }, false);
   });
+  // arc_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 48), p), { color: GOLD, width: 2, dash: [dash, space, context.time * 0.35] }, false);
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(6, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: ORANGE_FULL, width: ARC_BASE_LINE_WIDTH, dash: [dash, space, fposmod(dashOffset, dash + space)] }, false);
   });
+  // arc_d(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(7, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: RED, width: 8, joint, dash: [0.18, 0.1, context.time * 0.35] }, false);
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(7, row), ARC_RADIUS, ARC_ANGLE, ARC_JOINT_SEGMENT_COUNT, FLAT_BASIS), { color: PINK, width: ARC_EMPHASIS_LINE_WIDTH, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] }, false);
   });
-  NORMAL_VALUES.forEach((normal, row) => {
-    const p = slot(8, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: TEAL, width: 4, normal }, false);
-  });
+  // arc_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(8, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: normalSampleColor(row), width: normalSampleWidth(row, ARC_BASE_LINE_WIDTH), normal: ARC_NORMAL, joint: "round" }, false);
+  }
+  // arc_n_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    const p = slot(9, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: TEAL, width: 4, normal: normalOf(0), dash: [dash, space, context.time * 0.35] }, false);
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(9, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: TEAL, width: ARC_BASE_LINE_WIDTH, normal: ARC_NORMAL, dash: [dash, space, fposmod(dashOffset, dash + space)], joint: "round" }, false);
   });
+  // arc_n(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(10, row, columnCount, rowCount);
-    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: TEAL, width: 6, normal: normalOf(1), joint }, false);
+    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(10, row), ARC_RADIUS, ARC_ANGLE, ARC_JOINT_SEGMENT_COUNT, FLAT_BASIS), { color: TEAL, width: ARC_EMPHASIS_LINE_WIDTH, normal: ARC_NORMAL, joint }, false);
   });
 }
 
 function rectMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 10;
-  const rowCount = 8;
-  const sizes: readonly (readonly [number, number])[] = [[0.5, 0.4], [0.8, 0.4], [0.5, 0.7], [0.55, 0.55]];
+  const dashOffset = context.time * DASH_OFFSET_SPEED;
 
+  // rect(width)
   WIDTH_VALUES.forEach((width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: WHITE, width }, true);
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(0, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: WHITE, width }, true);
   });
-  sizes.forEach(([w, h], row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(w, h), p), { color: CYAN, width: 2 }, true);
+  // rect(size)
+  RECT_SIZE_VALUES.forEach(([width, height], row) => {
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(1, row), RECT_FLAT_BASIS, width, height), { color: CYAN, width: RECT_BASE_LINE_WIDTH }, true);
   });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.lineStrip(transformPoints(rectPoints(0.6, 0.4), p, [0, angle, 0]), { color: LIME, width: 2 }, true);
-  });
+  // rect(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * RECT_ROTATION_TUNNEL_SCALE_STEP;
+    const center = rectTunnelCenter(2, row, 0.35, RECT_ROTATION_TUNNEL_DEPTH_STEP);
+    const basis = rectRotationTunnelBasis(row);
+    const color: Color = [0.7, 1, 0.25, 1 - row * 0.07];
+    recorder.lineStrip(rectLoop(center, basis, RECT_ROTATION_TUNNEL_WIDTH * scale, RECT_ROTATION_TUNNEL_HEIGHT * scale), { color, width: RECT_BASE_LINE_WIDTH }, true);
+  }
+  // rect(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: ORANGE, width: 8, joint }, true);
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(3, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: VIOLET, width: 8, joint }, true);
   });
+  // rect_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: VIOLET, width: 2, dash: [dash, space, context.time * 0.35] }, true);
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(4, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: ORANGE_FULL, width: RECT_BASE_LINE_WIDTH, dash: [dash, space, dashOffset] }, true);
   });
+  // rect_d(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: GOLD, width: 8, joint, dash: [0.18, 0.1, context.time * 0.35] }, true);
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(5, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: PINK, width: 8, dash: [0.18, 0.1, dashOffset], joint }, true);
   });
-  NORMAL_VALUES.forEach((normal, row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 4, normal }, true);
-  });
+  // rect_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(6, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: normalSampleColor(row), width: normalSampleWidth(row, RECT_BASE_LINE_WIDTH), normal: [0, 1, 0], joint: "round" }, true);
+  }
+  // rect_n_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    const p = slot(7, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 4, normal: normalOf(0), dash: [dash, space, context.time * 0.35] }, true);
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(7, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: TEAL, width: RECT_BASE_LINE_WIDTH, normal: [0, 1, 0], dash: [dash, space, dashOffset], joint: "round" }, true);
   });
+  // rect_n(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    const p = slot(8, row, columnCount, rowCount);
-    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 6, normal: normalOf(1), joint }, true);
+    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(8, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: TEAL, width: RECT_EMPHASIS_LINE_WIDTH, normal: [0, 1, 0], joint }, true);
   });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(9, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(rect([0.7, 0.5], [0, 0, 0], [0, angle, 0]), p), { color: GOLD, solid: true });
-  });
-}
-
-function boxMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columnCount = 7;
-  const rowCount = 8;
-  const sizes: readonly Vec3[] = [[0.5, 0.4, 0.4], [0.8, 0.4, 0.4], [0.5, 0.6, 0.4], [0.5, 0.4, 0.6]];
-
-  WIDTH_VALUES.forEach((_width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: WHITE });
-  });
-  sizes.forEach((size, row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box(size), p), { color: CYAN });
-  });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4], [0, 0, 0], [0, angle, 0]), p), { color: LIME });
-  });
-  DASH_VALUES.forEach((_dash, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: VIOLET });
-  });
-  NORMAL_VALUES.forEach((_normal, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: TEAL });
-  });
-  DASH_VALUES.forEach((_dash, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: GOLD });
-  });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(box([0.6, 0.5, 0.5], [0, 0, 0], [0, angle, 0]), p), { color: GOLD, solid: true });
-  });
-}
-
-function overviewMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const labels = ["line", "ray", "arrow", "axes", "list", "strip", "loop", "curve", "grid", "rect", "box", "circle", "arc", "sphere", "cone", "cylinder", "capsule"];
-  const shapes: Record<string, MeshData> = {
-    sphere: sphere(0.28, 24, 12),
-    cone: cone(0.28, 0.5, 24),
-    cylinder: cylinder(0.24, 0.24, 24),
-    capsule: capsule(0.2, 0.22, 20, 8),
-  };
-  const total = labels.length;
-  for (let c = 0; c < total; c++) {
-    const label = labels[c]!;
-    for (let row = 0; row < 4; row++) {
-      const p = slot(c, row, total, 4);
-      const color = [WHITE, CYAN, LIME, ORANGE][row % 4]!;
-      const dashed = row === 2 || row === 3;
-      const normal: Vec3 | undefined = row >= 1 ? NORMAL_VALUES[row % NORMAL_VALUES.length] : undefined;
-      const extras = {
-        ...(dashed ? { dash: [0.1, 0.08, context.time * 0.3] as const } : {}),
-        ...(normal === undefined ? {} : { normal }),
-      };
-      const width = 2;
-      switch (label) {
-        case "line": recorder.line([p[0] - 0.4, 0, p[2]], [p[0] + 0.4, 0, p[2]], { color, width, ...extras }); break;
-        case "ray": recorder.ray([p[0] - 0.4, 0, p[2]], [0.8, 0, 0], { color, width, ...(normal === undefined ? {} : { normal }) }); break;
-        case "arrow": recorder.arrow([p[0] - 0.4, 0, p[2]], [0.8, 0, 0], { color, width, ...(normal === undefined ? {} : { normal }) }); break;
-        case "axes": recorder.axes([p[0], 0, p[2]], 0.4, width); break;
-        case "strip": recorder.lineStrip(offset([[-0.4, 0, 0.18], [-0.1, 0, -0.18], [0.15, 0, 0.18], [0.4, 0, -0.18]], p), { color, width: 5, joint: context.lineJoint ?? "round" }, false); break;
-        case "list": recorder.line([p[0] - 0.35, 0, p[2] + 0.12], [p[0] + 0.35, 0, p[2] + 0.12], { color, ...extras }); recorder.line([p[0] - 0.35, 0, p[2] - 0.12], [p[0] + 0.35, 0, p[2] - 0.12], { color, ...extras }); break;
-        case "loop": recorder.lineStrip(offset(circlePoints(0.25, 5), p), { color, width: 5, joint: context.lineJoint ?? "round" }, true); break;
-        case "curve": recorder.curve(BASE_CURVE, { color, width, tolerance: 0.12, transform: { center: p } }); break;
-        case "grid": recorder.grid([p[0], 0, p[2]], [2, 2], [0.22, 0.22], { color, width }); break;
-        case "rect": recorder.lineStrip(offset(rectPoints(0.45, 0.35), p), { color, width }, true); break;
-        case "box": recorder.mesh(translateMesh(box([0.35, 0.3, 0.3]), p), { color }); break;
-        case "circle": recorder.lineStrip(offset(circlePoints(0.24, 24), p), { color, width }, true); break;
-        case "arc": recorder.lineStrip(offset(arcPoints(0.26, Math.PI * 1.5, 20), p), { color, width }, false); break;
-        default: recorder.mesh(translateMesh(shapes[label] ?? box([0.3, 0.3, 0.3]), p), { color }); break;
-      }
-    }
+  // rect_s(solid)
+  for (let row = 0; row < RECT_S_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * RECT_S_TUNNEL_SCALE_STEP;
+    const hue = row / RECT_S_SAMPLE_COUNT + 0.6;
+    const center = rectTunnelCenter(9, row, 0.5, RECT_S_TUNNEL_DEPTH_STEP);
+    const basis = rectSolidBasis(row);
+    const color = fromHsv(hue, 0.7, 1, 1 - row * 0.08);
+    recorder.mesh(rectMesh(center, basis, RECT_S_TUNNEL_WIDTH * scale, RECT_S_TUNNEL_HEIGHT * scale), { color, solid: true });
   }
 }
 
-function shapeScene(recorder: FrameRecorder, id: string, context: SceneContext): void {
-  const columnCount = 7;
-  const rowCount = 8;
-  const base: Record<string, MeshData> = {
-    sphere: sphere(0.24, 24, 12),
-    cone: cone(0.24, 0.46, 24),
-    cylinder: cylinder(0.22, 0.22, 24),
-    capsule: capsule(0.18, 0.2, 20, 8),
+function boxMatrix(recorder: FrameRecorder, context: SceneContext): void {
+  const dashOffset = context.time * DASH_OFFSET_SPEED;
+
+  // box(width)
+  WIDTH_VALUES.forEach((width, row) => {
+    drawBox(recorder, boxCenter(0, row), IDENTITY_BASIS, BOX_SIZE, { color: WHITE, width });
+  });
+  // box(size)
+  BOX_SIZE_VALUES.forEach((size, row) => {
+    drawBox(recorder, boxCenter(1, row), IDENTITY_BASIS, size, { color: CYAN, width: BOX_BASE_LINE_WIDTH });
+  });
+  // box(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * BOX_ROTATION_TUNNEL_SCALE_STEP;
+    const center = boxTunnelCenter(2, row, BOX_ROTATION_TUNNEL_Y, BOX_ROTATION_TUNNEL_DEPTH_STEP);
+    const color: Color = [0.7, 1, 0.25, 1 - row * 0.07];
+    drawBox(recorder, center, boxRotationTunnelBasis(row), scaleVec(BOX_ROTATION_TUNNEL_SIZE, scale), { color, width: BOX_BASE_LINE_WIDTH });
+  }
+  // box_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => {
+    drawBox(recorder, boxCenter(3, row), IDENTITY_BASIS, BOX_SIZE, { color: ORANGE_FULL, width: BOX_BASE_LINE_WIDTH, dash: [dash, space, fposmod(dashOffset, dash + space)] });
+  });
+  // box_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    drawBox(recorder, boxCenter(4, row), IDENTITY_BASIS, BOX_SIZE, { color: normalSampleColor(row), width: normalSampleWidth(row, BOX_BASE_LINE_WIDTH), normal: [0, 1, 0] });
+  }
+  // box_n_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => {
+    drawBox(recorder, boxCenter(5, row), IDENTITY_BASIS, BOX_SIZE, { color: TEAL, width: BOX_BASE_LINE_WIDTH, normal: [0, 1, 0], dash: [dash, space, fposmod(dashOffset, dash + space)] });
+  });
+  // box_s(solid): the reference also overlays the normal-aware wireframe.
+  for (let row = 0; row < BOX_S_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * BOX_S_TUNNEL_SCALE_STEP;
+    const hue = row / BOX_S_SAMPLE_COUNT + 0.6;
+    const center = boxTunnelCenter(6, row, BOX_S_TUNNEL_Y, BOX_S_TUNNEL_DEPTH_STEP);
+    const basis = boxSolidBasis(row);
+    const size = scaleVec(BOX_S_TUNNEL_SIZE, scale);
+    recorder.mesh(transformMeshByBasis(box(size), center, basis), { color: fromHsv(hue, 0.7, 1, 0.35), solid: true });
+    drawBox(recorder, center, basis, size, { color: fromHsv(hue, 0.7, 1, 1), width: BOX_BASE_LINE_WIDTH });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Faithful Index / World Space Width reference ports (`examples/index.gd`,
+// `examples/world_space_width.gd`).
+//
+// Both scenes drive the same 17-column API matrix. `world_space_width` keeps the
+// layout but converts every line width from screen pixels to world units
+// (`_world_width(px) = px * 0.01`) and drops the `*_s` solid columns, so the two
+// share one implementation that differs only in width conversion, width mode and
+// whether solid columns are included.
+//
+// Approximations (also noted in `docs/godot-debug-draw-parity.md`):
+// - `Label3D` column and sample labels are omitted; the gallery draws its own.
+// - `draw_curve` uses a fixed `tolerance` instead of adaptive `max_stages` sampling.
+// - Arrow heads keep the flat X-strip approximation shared with `arrow.gd`.
+// - `draw_grid`/`draw_grid_n` use the library grid, whose skew shear and outer
+//   edge semantics are the port's own (see the grid scene note).
+// - Normal-aware columns pass one representative normal; cone/cylinder/capsule
+//   use one segment count for the base ring and the side lines.
+// ---------------------------------------------------------------------------
+
+const INDEX_LAYOUT = createLayout(SCENE_LAYOUTS.index, SCENE_LAYOUTS.index.baseY);
+const INDEX_DASH_WIDTH = 0.16;
+const INDEX_DASH_SPACE = 0.09;
+const INDEX_DASH_OFFSET = 0;
+const WSW_LINE_WIDTH_SCALE = 0.01;
+const INDEX_UP: Vec3 = [0, 1, 0];
+const INDEX_BRIGHT_CYAN: Color = [0.35, 1, 1, 1];
+const INDEX_GOLD: Color = [1, 0.75, 0.25, 1];
+const INDEX_MINT: Color = [0.5, 1, 0.65, 1];
+const INDEX_MAGENTA: Color = [1, 0.45, 1, 1];
+const INDEX_LAVENDER: Color = [0.7, 0.7, 1, 1];
+
+/** `index.gd` `_p(column, row, x_offset, z_offset, y)` with the capture translation applied. */
+function indexPath(column: number, row: number, xOffset = 0, zOffset = 0, y: number = SCENE_LAYOUTS.index.baseY): Vec3 {
+  const local = INDEX_LAYOUT.atLocal(column, row);
+  return referenceOffset([local[0] + xOffset, y, local[2] + zOffset]);
+}
+
+/** `index.gd`'s `_curve` control points (three cubic Bezier anchors). */
+const INDEX_CURVE: Curve3D = curve([
+  { position: [-0.45, -0.15, 0], in: [0, 0, 0], out: [0.25, 0.4, 0] },
+  { position: [0.15, 0.25, 0.25], in: [-0.25, 0.35, 0], out: [0.25, -0.35, 0] },
+  { position: [0.65, -0.15, 0.45], in: [-0.25, -0.35, 0], out: [0, 0, 0] },
+]);
+
+/** `draw_line_list`: independent segments taken as consecutive point pairs. */
+function drawLineList(recorder: FrameRecorder, points: readonly Vec3[], options: LineOptions): void {
+  for (let index = 0; index + 1 < points.length; index += 2) recorder.line(points[index]!, points[index + 1]!, options);
+}
+
+type ApiMatrixConfig = {
+  readonly width: (pixels: number) => number;
+  readonly widthMode: NonNullable<LineOptions["widthMode"]>;
+  readonly solids: boolean;
+};
+
+function apiMatrix(recorder: FrameRecorder, config: ApiMatrixConfig): void {
+  const { width: w, widthMode, solids } = config;
+  const dash: readonly [number, number, number] = [INDEX_DASH_WIDTH, INDEX_DASH_SPACE, INDEX_DASH_OFFSET];
+
+  drawAxes(recorder, referenceOffset([0, 0, 0]), IDENTITY_BASIS, 0.75, w(2), widthMode);
+
+  // line
+  recorder.line(indexPath(0, 0), indexPath(0, 0, 1, 0, 0.9), { color: WHITE, width: w(2), widthMode });
+  recorder.line(indexPath(0, 1), indexPath(0, 1, 1, 0, 0.9), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, normal: INDEX_UP });
+  recorder.line(indexPath(0, 2), indexPath(0, 2, 1, 0, 0.9), { color: INDEX_GOLD, width: w(2), widthMode, dash });
+  recorder.line(indexPath(0, 3), indexPath(0, 3, 1, 0, 0.9), { color: INDEX_MINT, width: w(2), widthMode, normal: INDEX_UP, dash });
+
+  // ray
+  const ray = (row: number, options: LineOptions): void => {
+    const origin = indexPath(1, row);
+    recorder.line(origin, [origin[0] + 1, origin[1] + 0.35, origin[2]], options);
   };
-  const mesh = base[id]!;
-  const radii: readonly (readonly [number, number])[] = [[0.18, 0.18], [0.26, 0.26], [0.34, 0.34], [0.44, 0.44]];
+  ray(0, { color: WHITE, width: w(2), widthMode });
+  ray(1, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, normal: INDEX_UP });
+  ray(2, { color: INDEX_GOLD, width: w(2), widthMode, dash });
+  ray(3, { color: INDEX_MINT, width: w(2), widthMode, normal: INDEX_UP, dash });
 
-  WIDTH_VALUES.forEach((_width, row) => {
-    const p = slot(0, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(mesh, p), { color: WHITE });
-  });
-  radii.forEach(([radius], row) => {
-    const p = slot(1, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(scaleMesh(mesh, 0.6 + radius), p), { color: CYAN });
-  });
-  SEGMENTS.forEach((segments, row) => {
-    const p = slot(2, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(sphere(0.24, segments, Math.max(4, segments / 2)), p), { color: LIME });
-  });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(3, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(rotateMesh(mesh, [0, angle, 0]), p), { color: ORANGE });
-  });
-  JOINT_VALUES.forEach((_joint, row) => {
-    const p = slot(4, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(mesh, p), { color: VIOLET });
-  });
-  NORMAL_VALUES.forEach((_normal, row) => {
-    const p = slot(5, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(mesh, p), { color: TEAL });
-  });
-  ROTATIONS.forEach((angle, row) => {
-    const p = slot(6, row, columnCount, rowCount);
-    recorder.mesh(translateMesh(rotateMesh(mesh, [0, angle, 0]), p), { color: GOLD, solid: true });
-  });
+  // arrow
+  drawArrowHead(recorder, indexPath(2, 0, 1, 0, 0.9), [0.55, 0.2, 0], { color: WHITE, width: w(2), widthMode, headAngle: ARROW_BASE_HEAD_ANGLE, joint: "round" });
+  drawArrowHead(recorder, indexPath(2, 1, 1, 0, 0.9), [0.55, 0.2, 0], { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, headAngle: ARROW_BASE_HEAD_ANGLE, joint: "bevel", normal: INDEX_UP });
+  drawArrowLine(recorder, indexPath(2, 2), indexPath(2, 2, 1, 0, 0.9), { color: INDEX_GOLD, width: w(2), widthMode, headLength: 0.25, headAngle: ARROW_BASE_HEAD_ANGLE, joint: "round" });
+  drawArrowLine(recorder, indexPath(2, 3), indexPath(2, 3, 1, 0, 0.9), { color: INDEX_MINT, width: w(2), widthMode, headLength: 0.25, headAngle: ARROW_BASE_HEAD_ANGLE, joint: "bevel", normal: INDEX_UP });
+  drawArrowLine(recorder, indexPath(2, 4), indexPath(2, 4, 1, 0, 0.9), { color: INDEX_MAGENTA, width: w(2), widthMode, headLength: 0.25, headAngle: ARROW_BASE_HEAD_ANGLE, joint: "miter", dash });
+  drawArrowLine(recorder, indexPath(2, 5), indexPath(2, 5, 1, 0, 0.9), { color: INDEX_LAVENDER, width: w(2), widthMode, headLength: 0.25, headAngle: ARROW_BASE_HEAD_ANGLE, joint: "round", normal: INDEX_UP, dash });
+
+  // axes
+  drawAxes(recorder, indexPath(3, 0, 0.5), IDENTITY_BASIS, 0.55, w(2), widthMode);
+  drawAxesN(recorder, indexPath(3, 1, 0.5), rotateBasis(IDENTITY_BASIS, INDEX_UP, Math.PI * 0.25), 0.55, w(2), widthMode);
+
+  // line_list
+  const listPoints = (column: number, row: number): Vec3[] => [
+    indexPath(column, row),
+    indexPath(column, row, 0.8, 0, 0.85),
+    indexPath(column, row, 0.1, 0.35),
+    indexPath(column, row, 0.9, 0.35, 0.85),
+  ];
+  drawLineList(recorder, listPoints(4, 0), { color: WHITE, width: w(2), widthMode });
+  drawLineList(recorder, listPoints(4, 1), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, normal: INDEX_UP });
+
+  // strip
+  const stripPoints = (column: number, row: number): Vec3[] => [indexPath(column, row), indexPath(column, row, 0.45, 0.18, 0.95), indexPath(column, row, 1, 0, 0.7)];
+  recorder.lineStrip(stripPoints(5, 0), { color: WHITE, width: w(4), widthMode, joint: "round" }, false);
+  recorder.lineStrip(stripPoints(5, 1), { color: INDEX_BRIGHT_CYAN, width: w(4), widthMode, joint: "bevel", normal: INDEX_UP }, false);
+  recorder.lineStrip(stripPoints(5, 2), { color: INDEX_GOLD, width: w(4), widthMode, joint: "miter", dash }, false);
+  recorder.lineStrip(stripPoints(5, 3), { color: INDEX_MINT, width: w(4), widthMode, joint: "round", normal: INDEX_UP, dash }, false);
+
+  // loop
+  const loopPoints = (column: number, row: number): Vec3[] => [indexPath(column, row), indexPath(column, row, 0.55, 0.25, 0.95), indexPath(column, row, 1, 0, 0.65)];
+  recorder.lineStrip(loopPoints(6, 0), { color: WHITE, width: w(4), widthMode, joint: "round" }, true);
+  recorder.lineStrip(loopPoints(6, 1), { color: INDEX_BRIGHT_CYAN, width: w(4), widthMode, joint: "bevel", normal: INDEX_UP }, true);
+  recorder.lineStrip(loopPoints(6, 2), { color: INDEX_GOLD, width: w(4), widthMode, joint: "miter", dash }, true);
+  recorder.lineStrip(loopPoints(6, 3), { color: INDEX_MINT, width: w(4), widthMode, joint: "round", normal: INDEX_UP, dash }, true);
+
+  // curve
+  recorder.curve(INDEX_CURVE, { color: WHITE, width: w(2.5), widthMode, tolerance: 0.04, joint: "round", transform: { center: indexPath(7, 0, 0.5, 0, 0.65) } });
+  recorder.curve(INDEX_CURVE, { color: INDEX_GOLD, width: w(2.5), widthMode, tolerance: 0.04, joint: "bevel", dash, transform: { center: indexPath(7, 1, 0.5, 0, 0.65) } });
+
+  // grid
+  recorder.grid(indexPath(8, 0, 0.5, 0, 0.05), [4, 3], [0.25, 0.25], { color: WHITE, width: w(1.5), widthMode, outer: "xz", skew: [0, 0] });
+  recorder.grid(indexPath(8, 1, 0.5), [4, 3], [0.25, 0.25], { color: INDEX_BRIGHT_CYAN, width: w(1.5), widthMode, rotation: [Math.PI * 0.5, 0, 0], outer: "xz", skew: [0, 0], normal: INDEX_UP });
+
+  // rect: base, [solid], normal, dashed, normal + dashed
+  let rectRow = 0;
+  const wireRect = (row: number, options: LineOptions): void => {
+    recorder.lineStrip(rectLoop(indexPath(9, row, 0.5), RECT_FLAT_BASIS, 0.8, 0.5), options, true);
+  };
+  wireRect(rectRow++, { color: WHITE, width: w(2), widthMode, joint: "round" });
+  if (solids) recorder.mesh(rectMesh(indexPath(9, rectRow++, 0.5), RECT_FLAT_BASIS, 0.8, 0.5), { color: [1, 0.25, 0.25, 0.45], solid: true });
+  wireRect(rectRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  wireRect(rectRow++, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
+  wireRect(rectRow++, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+
+  // box: base, [solid], normal, dashed, normal + dashed
+  const boxSize: Vec3 = [0.7, 0.7, 0.7];
+  let boxRow = 0;
+  const wireBox = (row: number, options: LineOptions): void => {
+    drawBox(recorder, indexPath(10, row, 0.5), IDENTITY_BASIS, boxSize, options);
+  };
+  wireBox(boxRow++, { color: WHITE, width: w(2), widthMode });
+  if (solids) recorder.mesh(transformMeshByBasis(box(boxSize), indexPath(10, boxRow++, 0.5), IDENTITY_BASIS), { color: [1, 0.45, 0.2, 0.35], solid: true });
+  wireBox(boxRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, normal: INDEX_UP });
+  wireBox(boxRow++, { color: INDEX_GOLD, width: w(2), widthMode, dash });
+  wireBox(boxRow++, { color: INDEX_MINT, width: w(2), widthMode, normal: INDEX_UP, dash });
+
+  // circle: base, [solid], normal, dashed, normal + dashed
+  let circleRow = 0;
+  const wireCircle = (row: number, options: LineOptions): void => {
+    recorder.lineStrip(circlePoints(0.4, 32, [0, 0, 0], indexPath(11, row, 0.5)), options, true);
+  };
+  wireCircle(circleRow++, { color: WHITE, width: w(2), widthMode, joint: "round" });
+  if (solids) recorder.mesh(disc(0.4, 32, indexPath(11, circleRow++, 0.5)), { color: [0.25, 0.65, 1, 0.45], solid: true });
+  wireCircle(circleRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  wireCircle(circleRow++, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
+  wireCircle(circleRow++, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+
+  // arc
+  const wireArc = (row: number, options: LineOptions): void => {
+    recorder.lineStrip(arcPoints(indexPath(12, row, 0.5), 0.45, Math.PI * 1.25, 32, FLAT_BASIS), options, false);
+  };
+  wireArc(0, { color: WHITE, width: w(2), widthMode, joint: "round" });
+  wireArc(1, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  wireArc(2, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
+  wireArc(3, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+
+  // sphere: base, [solid], normal, dashed, normal + dashed
+  const sphereMesh = (row: number): MeshData => sphere(0.4, 32, 2, indexPath(13, row, 0.5));
+  let sphereRow = 0;
+  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: WHITE, width: w(2), widthMode, joint: "round" });
+  if (solids) recorder.mesh(sphereMesh(sphereRow++), { color: [0.35, 0.75, 1, 0.35], solid: true });
+  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
+  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+
+  // cone: base, [solid], normal
+  const coneMesh = (row: number): MeshData => cone(0.35, 0.8, 32, indexPath(14, row, 0.5));
+  let coneRow = 0;
+  drawMeshEdges(recorder, coneMesh(coneRow++), { color: WHITE, width: w(2), widthMode, joint: "round" });
+  if (solids) recorder.mesh(coneMesh(coneRow++), { color: [1, 0.45, 0.25, 0.35], solid: true });
+  drawMeshEdges(recorder, coneMesh(coneRow++), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+
+  // cylinder: base, [solid], normal
+  const cylinderMesh = (row: number): MeshData => cylinder(0.35, 0.4, 32, indexPath(15, row, 0.5));
+  let cylinderRow = 0;
+  drawMeshEdges(recorder, cylinderMesh(cylinderRow++), { color: WHITE, width: w(2), widthMode, joint: "round" });
+  if (solids) recorder.mesh(cylinderMesh(cylinderRow++), { color: [0.6, 0.45, 1, 0.35], solid: true });
+  drawMeshEdges(recorder, cylinderMesh(cylinderRow++), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+
+  // capsule: base, normal
+  const capsuleMesh = (row: number): MeshData => capsule(0.32, 0.45, 32, 2, indexPath(16, row, 0.5));
+  drawMeshEdges(recorder, capsuleMesh(0), { color: WHITE, width: w(2), widthMode, joint: "round" });
+  drawMeshEdges(recorder, capsuleMesh(1), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
 }
 
-function rotateMesh(mesh: MeshData, rotation: readonly [number, number, number]): MeshData {
-  const r = (p: Vec3): Vec3 => rotatePoint(p, rotation);
-  return { triangles: mesh.triangles.map(([a, b, c]) => [r(a), r(b), r(c)]), segments: mesh.segments.map(([a, b]) => [r(a), r(b)]) };
+/** `index.gd`: screen-space widths, with the `*_s` solid columns. */
+function indexMatrix(recorder: FrameRecorder): void {
+  apiMatrix(recorder, { width: (pixels) => pixels, widthMode: "screen", solids: true });
 }
 
-function scaleMesh(mesh: MeshData, scale: number): MeshData {
-  return { triangles: mesh.triangles.map(([a, b, c]) => [a.map((v) => v * scale) as unknown as Vec3, b.map((v) => v * scale) as unknown as Vec3, c.map((v) => v * scale) as unknown as Vec3]), segments: mesh.segments.map(([a, b]) => [a.map((v) => v * scale) as unknown as Vec3, b.map((v) => v * scale) as unknown as Vec3]) };
+// ---------------------------------------------------------------------------
+// Faithful Sphere/Cone/Cylinder/Capsule reference ports.
+//
+// `examples/sphere.gd`, `cone.gd`, `cylinder.gd` and `capsule.gd` share the same
+// structure: per-column centres, a rotation tunnel and (except for capsule) a
+// solid `*_s` column that draws a `from_hsv` mesh plus the normal-aware
+// wireframe. Capsule deliberately has no solid column in the reference.
+//
+// Our generators expose one mesh with triangles and edges, so wireframe columns
+// draw the generated edges and solid columns draw the triangles plus the same
+// edges as the reference's `*_n` overlay. Known approximations, also recorded
+// in `docs/godot-debug-draw-parity.md`:
+// - `draw_sphere` takes independent y-axis latitude rings and z-axis meridian
+//   great circles, but the generator only exposes longitudes (`segments`) and
+//   latitudes (`rings`). The y-axis column maps to `rings` and the z-axis column
+//   scales `segments`; the topology is representative, not exact.
+// - `draw_cone`/`draw_cylinder` take separate base and side segment counts while
+//   the generator uses one `segments` value for both.
+// - Normal-aware columns pass a single representative normal instead of the
+//   per-vertex normals the reference computes, and dashed wireframes dash each
+//   edge independently instead of following the continuous loop.
+// ---------------------------------------------------------------------------
+
+const SHAPE_NORMAL: Vec3 = [0, 1, 0];
+
+function drawMeshEdges(recorder: FrameRecorder, mesh: MeshData, options: LineOptions): void {
+  for (const [a, b] of mesh.segments) recorder.line(a, b, options);
+}
+
+/** Only the cone/cylinder segment tables differ from the shared sphere values. */
+const SHAPE_SEGMENT_VALUES = [3, 4, 8, 16] as const;
+
+function shapeScene(recorder: FrameRecorder, id: string, context: SceneContext): void {
+  if (id === "sphere") sphereShape(recorder, context);
+  else if (id === "cone") coneShape(recorder);
+  else if (id === "cylinder") cylinderShape(recorder);
+  else capsuleShape(recorder);
+}
+
+// --- Sphere ---------------------------------------------------------------
+
+const SPHERE_LAYOUT = createLayout(SCENE_LAYOUTS.sphere, SCENE_LAYOUTS.sphere.baseY);
+const SPHERE_BASE_Y = SCENE_LAYOUTS.sphere.baseY;
+const SPHERE_RADIUS = 0.30;
+const SPHERE_BASE_LINE_WIDTH = 2;
+const SPHERE_JOINT_LINE_WIDTH = 8;
+const SPHERE_SEGMENT_COUNT = 48;
+const SPHERE_JOINT_SEGMENT_COUNT = 16;
+const SPHERE_AXIS_SEGMENT_COUNT = 2;
+const SPHERE_Y_AXIS_SEGMENT_VALUES = [0, 1, 2, 6] as const;
+const SPHERE_Z_AXIS_SEGMENT_VALUES = [0, 1, 2, 6] as const;
+const SPHERE_ROTATION_TUNNEL_RADIUS = 0.42;
+const SPHERE_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const SPHERE_ROTATION_TUNNEL_SCALE_STEP = 0.05;
+const SPHERE_ROTATION_TUNNEL_Y = 0.35;
+const SPHERE_S_SAMPLE_COUNT = 8;
+const SPHERE_S_TUNNEL_RADIUS = 0.42;
+const SPHERE_S_TUNNEL_DEPTH_STEP = 0.16;
+const SPHERE_S_TUNNEL_SCALE_STEP = 0.05;
+const SPHERE_S_TUNNEL_Y = 0.35;
+
+/** `_get_column_radius`: the radius row plus the two shrinking tunnels. */
+function sphereColumnRadius(column: number, row: number): number {
+  if (column === 1) return RADIUS_VALUES[row]!;
+  if (column === 5) return SPHERE_ROTATION_TUNNEL_RADIUS * (1 - row * SPHERE_ROTATION_TUNNEL_SCALE_STEP);
+  if (column === 13) return SPHERE_S_TUNNEL_RADIUS * (1 - row * SPHERE_S_TUNNEL_SCALE_STEP);
+  return SPHERE_RADIUS;
+}
+
+/** `_get_sphere_center`: the sphere rests on `SPHERE_Y`, so its centre rises with the radius. */
+function sphereCenter(column: number, row: number): Vec3 {
+  return referenceOffset([SPHERE_LAYOUT.columnX(column), SPHERE_BASE_Y + sphereColumnRadius(column, row), SPHERE_LAYOUT.rowZ(column, row)]);
+}
+
+function sphereTunnelCenter(column: number, row: number, yOffset: number, depthStep: number): Vec3 {
+  const center = sphereCenter(column, row);
+  return [center[0], center[1] + yOffset, center[2] - row * depthStep];
+}
+
+/** `_get_rotation_tunnel_rotation` / `_get_sphere_s_tunnel_rotation` (identical). */
+function sphereTunnelBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.35);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.10);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+/** `draw_sphere(segments, y_axis_segments, z_axis_segments)` approximated by a UV sphere. */
+function sphereAxisMesh(radius: number, segmentCount: number, yAxis: number, zAxis: number): MeshData {
+  const rings = Math.max(2, yAxis);
+  const segments = zAxis === SPHERE_AXIS_SEGMENT_COUNT ? segmentCount : Math.max(6, zAxis * 24);
+  return sphere(radius, segments, rings);
+}
+
+function sphereMeshAt(radius: number, segmentCount: number, yAxis: number, zAxis: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(sphereAxisMesh(radius, segmentCount, yAxis, zAxis), center, basis);
+}
+
+function sphereShape(recorder: FrameRecorder, context: SceneContext): void {
+  const dashOffset = context.time * DASH_OFFSET_SPEED;
+  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
+  const base = (column: number, row: number, segments = SPHERE_SEGMENT_COUNT, yAxis = 2, zAxis = 2): MeshData =>
+    sphereMeshAt(sphereColumnRadius(column, row), segments, yAxis, zAxis, sphereCenter(column, row), IDENTITY_BASIS);
+
+  // sphere(width)
+  WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
+  // sphere(radius)
+  RADIUS_VALUES.forEach((_radius, row) => wire(base(1, row), { color: CYAN, width: SPHERE_BASE_LINE_WIDTH }));
+  // sphere(segments)
+  SEGMENT_VALUES.forEach((segments, row) => wire(base(2, row, segments), { color: LIME, width: SPHERE_BASE_LINE_WIDTH }));
+  // sphere(y axis)
+  SPHERE_Y_AXIS_SEGMENT_VALUES.forEach((yAxis, row) => wire(base(3, row, SPHERE_SEGMENT_COUNT, yAxis), { color: GOLD, width: SPHERE_BASE_LINE_WIDTH }));
+  // sphere(z axis)
+  SPHERE_Z_AXIS_SEGMENT_VALUES.forEach((zAxis, row) => wire(base(4, row, SPHERE_SEGMENT_COUNT, 2, zAxis), { color: ORANGE_FULL, width: SPHERE_BASE_LINE_WIDTH }));
+  // sphere(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * SPHERE_ROTATION_TUNNEL_SCALE_STEP;
+    const mesh = sphereMeshAt(SPHERE_ROTATION_TUNNEL_RADIUS * scale, SPHERE_SEGMENT_COUNT, 2, 2, sphereTunnelCenter(5, row, SPHERE_ROTATION_TUNNEL_Y, SPHERE_ROTATION_TUNNEL_DEPTH_STEP), sphereTunnelBasis(row));
+    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: SPHERE_BASE_LINE_WIDTH });
+  }
+  // sphere(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, SPHERE_JOINT_SEGMENT_COUNT), { color: VIOLET, width: SPHERE_JOINT_LINE_WIDTH, joint }));
+  // sphere_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => wire(base(7, row), { color: ORANGE_FULL, width: SPHERE_BASE_LINE_WIDTH, dash: [dash, space, fposmod(dashOffset, dash + space)] }));
+  // sphere_d(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, SPHERE_JOINT_SEGMENT_COUNT), { color: PINK, width: SPHERE_JOINT_LINE_WIDTH, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] }));
+  // sphere_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    wire(base(9, row), { color: normalSampleColor(row), width: normalSampleWidth(row, SPHERE_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+  }
+  // sphere_n(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(10, row, SPHERE_JOINT_SEGMENT_COUNT), { color: TEAL, width: SPHERE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  // sphere_n_d(dash)
+  DASH_VALUES.forEach(([dash, space], row) => wire(base(11, row), { color: TEAL, width: SPHERE_BASE_LINE_WIDTH, normal: SHAPE_NORMAL, dash: [dash, space, fposmod(dashOffset, dash + space)], joint: "round" }));
+  // sphere_n_d(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(12, row, SPHERE_JOINT_SEGMENT_COUNT), { color: TEAL, width: SPHERE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] }));
+  // sphere_s(solid): the reference also overlays the normal-aware wireframe.
+  for (let row = 0; row < SPHERE_S_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * SPHERE_S_TUNNEL_SCALE_STEP;
+    const mesh = sphereMeshAt(SPHERE_S_TUNNEL_RADIUS * scale, SPHERE_SEGMENT_COUNT, 2, 2, sphereTunnelCenter(13, row, SPHERE_S_TUNNEL_Y, SPHERE_S_TUNNEL_DEPTH_STEP), sphereTunnelBasis(row));
+    recorder.mesh(mesh, { color: fromHsv(row / SPHERE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
+    wire(mesh, { color: fromHsv(row / SPHERE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: SPHERE_BASE_LINE_WIDTH });
+  }
+}
+
+// --- Cone -----------------------------------------------------------------
+
+const CONE_LAYOUT = createLayout(SCENE_LAYOUTS.cone, SCENE_LAYOUTS.cone.baseY);
+const CONE_BASE_Y = SCENE_LAYOUTS.cone.baseY;
+const CONE_RADIUS = 0.28;
+const CONE_HEIGHT = 0.7;
+const CONE_BASE_LINE_WIDTH = 2;
+const CONE_JOINT_LINE_WIDTH = 8;
+const CONE_HEIGHT_VALUES = [0.45, 0.65, 0.85, 1.05] as const;
+const CONE_ROTATION_TUNNEL_RADIUS = 0.34;
+const CONE_ROTATION_TUNNEL_HEIGHT = 0.82;
+const CONE_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const CONE_ROTATION_TUNNEL_SCALE_STEP = 0.05;
+const CONE_ROTATION_TUNNEL_Y = 0.35;
+const CONE_S_SAMPLE_COUNT = 8;
+const CONE_S_TUNNEL_RADIUS = 0.34;
+const CONE_S_TUNNEL_HEIGHT = 0.82;
+const CONE_S_TUNNEL_DEPTH_STEP = 0.16;
+const CONE_S_TUNNEL_SCALE_STEP = 0.05;
+const CONE_S_TUNNEL_Y = 0.35;
+
+/** `_get_column_radius`: the radius row plus the rotation/solid tunnels. */
+function coneColumnRadius(column: number, row: number): number {
+  if (column === 1) return RADIUS_VALUES[row]!;
+  if (column === 5) return CONE_ROTATION_TUNNEL_RADIUS * (1 - row * CONE_ROTATION_TUNNEL_SCALE_STEP);
+  if (column === 9) return CONE_S_TUNNEL_RADIUS * (1 - row * CONE_S_TUNNEL_SCALE_STEP);
+  return CONE_RADIUS;
+}
+
+/** `_get_column_height`: the height row plus the rotation/solid tunnels. */
+function coneColumnHeight(column: number, row: number): number {
+  if (column === 2) return CONE_HEIGHT_VALUES[row]!;
+  if (column === 5) return CONE_ROTATION_TUNNEL_HEIGHT * (1 - row * CONE_ROTATION_TUNNEL_SCALE_STEP);
+  if (column === 9) return CONE_S_TUNNEL_HEIGHT * (1 - row * CONE_S_TUNNEL_SCALE_STEP);
+  return CONE_HEIGHT;
+}
+
+/** `_get_cone_center`: the cone base stays at `CONE_BASE_Y`, so the centre rises with half the height. */
+function coneCenter(column: number, row: number): Vec3 {
+  return referenceOffset([CONE_LAYOUT.columnX(column), CONE_BASE_Y + coneColumnHeight(column, row) * 0.5, CONE_LAYOUT.rowZ(column, row)]);
+}
+
+function coneTunnelCenter(column: number, row: number, yOffset: number, depthStep: number): Vec3 {
+  const center = coneCenter(column, row);
+  return [center[0], center[1] + yOffset, center[2] - row * depthStep];
+}
+
+/** `_get_rotation_tunnel_rotation` / `_get_cone_s_tunnel_rotation` (identical). */
+function coneTunnelBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.26);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.10);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+function coneMeshAt(radius: number, height: number, segments: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(cone(radius, height, Math.max(3, segments)), center, basis);
+}
+
+function coneShape(recorder: FrameRecorder): void {
+  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
+  const base = (column: number, row: number, segments = 16): MeshData =>
+    coneMeshAt(coneColumnRadius(column, row), coneColumnHeight(column, row), segments, coneCenter(column, row), IDENTITY_BASIS);
+
+  // cone(width)
+  WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
+  // cone(radius)
+  RADIUS_VALUES.forEach((_radius, row) => wire(base(1, row), { color: CYAN, width: CONE_BASE_LINE_WIDTH }));
+  // cone(height)
+  CONE_HEIGHT_VALUES.forEach((_height, row) => wire(base(2, row), { color: LIME, width: CONE_BASE_LINE_WIDTH }));
+  // cone(segments)
+  SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(3, row, segments), { color: GOLD, width: CONE_BASE_LINE_WIDTH }));
+  // cone(side segments)
+  SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(4, row, segments), { color: ORANGE_FULL, width: CONE_BASE_LINE_WIDTH }));
+  // cone(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * CONE_ROTATION_TUNNEL_SCALE_STEP;
+    const mesh = coneMeshAt(CONE_ROTATION_TUNNEL_RADIUS * scale, CONE_ROTATION_TUNNEL_HEIGHT * scale, 16, coneTunnelCenter(5, row, CONE_ROTATION_TUNNEL_Y, CONE_ROTATION_TUNNEL_DEPTH_STEP), coneTunnelBasis(row));
+    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CONE_BASE_LINE_WIDTH });
+  }
+  // cone(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, 8), { color: VIOLET, width: CONE_JOINT_LINE_WIDTH, joint }));
+  // cone_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    wire(base(7, row), { color: normalSampleColor(row), width: normalSampleWidth(row, CONE_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+  }
+  // cone_n(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, 8), { color: TEAL, width: CONE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  // cone_s(solid): the reference also overlays the normal-aware wireframe.
+  for (let row = 0; row < CONE_S_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * CONE_S_TUNNEL_SCALE_STEP;
+    const mesh = coneMeshAt(CONE_S_TUNNEL_RADIUS * scale, CONE_S_TUNNEL_HEIGHT * scale, 16, coneTunnelCenter(9, row, CONE_S_TUNNEL_Y, CONE_S_TUNNEL_DEPTH_STEP), coneTunnelBasis(row));
+    recorder.mesh(mesh, { color: fromHsv(row / CONE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
+    wire(mesh, { color: fromHsv(row / CONE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: CONE_BASE_LINE_WIDTH });
+  }
+}
+
+// --- Cylinder -------------------------------------------------------------
+
+const CYLINDER_LAYOUT = createLayout(SCENE_LAYOUTS.cylinder, SCENE_LAYOUTS.cylinder.baseY);
+const CYLINDER_BASE_Y = SCENE_LAYOUTS.cylinder.baseY;
+const CYLINDER_RADIUS = 0.28;
+const CYLINDER_HALF_HEIGHT = 0.35;
+const CYLINDER_BASE_LINE_WIDTH = 2;
+const CYLINDER_JOINT_LINE_WIDTH = 8;
+const CYLINDER_HALF_HEIGHT_VALUES = [0.225, 0.325, 0.425, 0.525] as const;
+const CYLINDER_ROTATION_TUNNEL_RADIUS = 0.34;
+const CYLINDER_ROTATION_TUNNEL_HALF_HEIGHT = 0.41;
+const CYLINDER_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const CYLINDER_ROTATION_TUNNEL_SCALE_STEP = 0.05;
+const CYLINDER_ROTATION_TUNNEL_Y = 0.35;
+const CYLINDER_S_SAMPLE_COUNT = 8;
+const CYLINDER_S_TUNNEL_RADIUS = 0.34;
+const CYLINDER_S_TUNNEL_HALF_HEIGHT = 0.41;
+const CYLINDER_S_TUNNEL_DEPTH_STEP = 0.16;
+const CYLINDER_S_TUNNEL_SCALE_STEP = 0.05;
+const CYLINDER_S_TUNNEL_Y = 0.35;
+
+/** `_get_column_radius`: the radius row plus the rotation/solid tunnels. */
+function cylinderColumnRadius(column: number, row: number): number {
+  if (column === 1) return RADIUS_VALUES[row]!;
+  if (column === 5) return CYLINDER_ROTATION_TUNNEL_RADIUS * (1 - row * CYLINDER_ROTATION_TUNNEL_SCALE_STEP);
+  if (column === 9) return CYLINDER_S_TUNNEL_RADIUS * (1 - row * CYLINDER_S_TUNNEL_SCALE_STEP);
+  return CYLINDER_RADIUS;
+}
+
+/** `_get_column_half_height`: the half-height row plus the rotation/solid tunnels. */
+function cylinderColumnHalfHeight(column: number, row: number): number {
+  if (column === 2) return CYLINDER_HALF_HEIGHT_VALUES[row]!;
+  if (column === 5) return CYLINDER_ROTATION_TUNNEL_HALF_HEIGHT * (1 - row * CYLINDER_ROTATION_TUNNEL_SCALE_STEP);
+  if (column === 9) return CYLINDER_S_TUNNEL_HALF_HEIGHT * (1 - row * CYLINDER_S_TUNNEL_SCALE_STEP);
+  return CYLINDER_HALF_HEIGHT;
+}
+
+/** `_get_cylinder_center`: the cylinder base stays at `CYLINDER_BASE_Y`. */
+function cylinderCenter(column: number, row: number): Vec3 {
+  return referenceOffset([CYLINDER_LAYOUT.columnX(column), CYLINDER_BASE_Y + cylinderColumnHalfHeight(column, row), CYLINDER_LAYOUT.rowZ(column, row)]);
+}
+
+function cylinderTunnelCenter(column: number, row: number, yOffset: number, depthStep: number): Vec3 {
+  const center = cylinderCenter(column, row);
+  return [center[0], center[1] + yOffset, center[2] - row * depthStep];
+}
+
+/** `_get_rotation_tunnel_rotation` / `_get_cylinder_s_tunnel_rotation` (identical). */
+function cylinderTunnelBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.26);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.10);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+function cylinderMeshAt(radius: number, halfHeight: number, segments: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(cylinder(radius, halfHeight, Math.max(3, segments)), center, basis);
+}
+
+function cylinderShape(recorder: FrameRecorder): void {
+  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
+  const base = (column: number, row: number, segments = 16): MeshData =>
+    cylinderMeshAt(cylinderColumnRadius(column, row), cylinderColumnHalfHeight(column, row), segments, cylinderCenter(column, row), IDENTITY_BASIS);
+
+  // cylinder(width)
+  WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
+  // cylinder(radius)
+  RADIUS_VALUES.forEach((_radius, row) => wire(base(1, row), { color: CYAN, width: CYLINDER_BASE_LINE_WIDTH }));
+  // cylinder(half height)
+  CYLINDER_HALF_HEIGHT_VALUES.forEach((_halfHeight, row) => wire(base(2, row), { color: LIME, width: CYLINDER_BASE_LINE_WIDTH }));
+  // cylinder(segments)
+  SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(3, row, segments), { color: GOLD, width: CYLINDER_BASE_LINE_WIDTH }));
+  // cylinder(side segments)
+  SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(4, row, segments), { color: ORANGE_FULL, width: CYLINDER_BASE_LINE_WIDTH }));
+  // cylinder(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * CYLINDER_ROTATION_TUNNEL_SCALE_STEP;
+    const mesh = cylinderMeshAt(CYLINDER_ROTATION_TUNNEL_RADIUS * scale, CYLINDER_ROTATION_TUNNEL_HALF_HEIGHT * scale, 16, cylinderTunnelCenter(5, row, CYLINDER_ROTATION_TUNNEL_Y, CYLINDER_ROTATION_TUNNEL_DEPTH_STEP), cylinderTunnelBasis(row));
+    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CYLINDER_BASE_LINE_WIDTH });
+  }
+  // cylinder(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, 8), { color: VIOLET, width: CYLINDER_JOINT_LINE_WIDTH, joint }));
+  // cylinder_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    wire(base(7, row), { color: normalSampleColor(row), width: normalSampleWidth(row, CYLINDER_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+  }
+  // cylinder_n(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, 8), { color: TEAL, width: CYLINDER_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  // cylinder_s(solid): the reference also overlays the normal-aware wireframe.
+  for (let row = 0; row < CYLINDER_S_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * CYLINDER_S_TUNNEL_SCALE_STEP;
+    const mesh = cylinderMeshAt(CYLINDER_S_TUNNEL_RADIUS * scale, CYLINDER_S_TUNNEL_HALF_HEIGHT * scale, 16, cylinderTunnelCenter(9, row, CYLINDER_S_TUNNEL_Y, CYLINDER_S_TUNNEL_DEPTH_STEP), cylinderTunnelBasis(row));
+    recorder.mesh(mesh, { color: fromHsv(row / CYLINDER_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
+    wire(mesh, { color: fromHsv(row / CYLINDER_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: CYLINDER_BASE_LINE_WIDTH });
+  }
+}
+
+// --- Capsule --------------------------------------------------------------
+
+const CAPSULE_LAYOUT = createLayout(SCENE_LAYOUTS.capsule, SCENE_LAYOUTS.capsule.baseY);
+const CAPSULE_BASE_Y = SCENE_LAYOUTS.capsule.baseY;
+const CAPSULE_RADIUS = 0.28;
+const CAPSULE_HALF_HEIGHT = 0.225;
+const CAPSULE_BASE_LINE_WIDTH = 2;
+const CAPSULE_JOINT_LINE_WIDTH = 8;
+const CAPSULE_SEGMENT_COUNT = 32;
+const CAPSULE_SIDE_SEGMENT_COUNT = 2;
+const CAPSULE_JOINT_SEGMENT_COUNT = 12;
+const CAPSULE_JOINT_SIDE_SEGMENT_COUNT = 4;
+const CAPSULE_RADIUS_VALUES = [0.16, 0.24, 0.32, 0.40] as const;
+const CAPSULE_HALF_HEIGHT_VALUES = [0.0, 0.125, 0.225, 0.35] as const;
+const CAPSULE_SIDE_SEGMENT_VALUES = [1, 2, 4, 8] as const;
+const CAPSULE_ROTATION_TUNNEL_RADIUS = 0.34;
+const CAPSULE_ROTATION_TUNNEL_HALF_HEIGHT = 0.275;
+const CAPSULE_ROTATION_TUNNEL_DEPTH_STEP = 0.16;
+const CAPSULE_ROTATION_TUNNEL_SCALE_STEP = 0.05;
+const CAPSULE_ROTATION_TUNNEL_Y = 0.35;
+
+/** `_get_column_radius`: the radius row plus the rotation tunnel. */
+function capsuleColumnRadius(column: number, row: number): number {
+  if (column === 1) return CAPSULE_RADIUS_VALUES[row]!;
+  if (column === 5) return CAPSULE_ROTATION_TUNNEL_RADIUS * (1 - row * CAPSULE_ROTATION_TUNNEL_SCALE_STEP);
+  return CAPSULE_RADIUS;
+}
+
+/** `_get_column_half_height`: the half-height row plus the rotation tunnel. */
+function capsuleColumnHalfHeight(column: number, row: number): number {
+  if (column === 2) return CAPSULE_HALF_HEIGHT_VALUES[row]!;
+  if (column === 5) return CAPSULE_ROTATION_TUNNEL_HALF_HEIGHT * (1 - row * CAPSULE_ROTATION_TUNNEL_SCALE_STEP);
+  return CAPSULE_HALF_HEIGHT;
+}
+
+/** `_get_capsule_center`: base at `CAPSULE_BASE_Y`, so the centre rises by half height plus radius. */
+function capsuleCenter(column: number, row: number): Vec3 {
+  const y = CAPSULE_BASE_Y + capsuleColumnHalfHeight(column, row) + capsuleColumnRadius(column, row);
+  return referenceOffset([CAPSULE_LAYOUT.columnX(column), y, CAPSULE_LAYOUT.rowZ(column, row)]);
+}
+
+function capsuleTunnelCenter(column: number, row: number, yOffset: number, depthStep: number): Vec3 {
+  const center = capsuleCenter(column, row);
+  return [center[0], center[1] + yOffset, center[2] - row * depthStep];
+}
+
+/** `_get_rotation_tunnel_rotation`. */
+function capsuleTunnelBasis(row: number): Basis3 {
+  let basis = rotateBasis(IDENTITY_BASIS, [1, 0, 0], -Math.PI * 0.28);
+  basis = rotateBasis(basis, [0, 0, 1], row * Math.PI * 0.10);
+  return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
+}
+
+function capsuleMeshAt(radius: number, halfHeight: number, segments: number, sideSegments: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(capsule(radius, halfHeight, Math.max(3, segments), Math.max(2, sideSegments)), center, basis);
+}
+
+function capsuleShape(recorder: FrameRecorder): void {
+  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
+  const base = (column: number, row: number, segments = CAPSULE_SEGMENT_COUNT, sideSegments = CAPSULE_SIDE_SEGMENT_COUNT): MeshData =>
+    capsuleMeshAt(capsuleColumnRadius(column, row), capsuleColumnHalfHeight(column, row), segments, sideSegments, capsuleCenter(column, row), IDENTITY_BASIS);
+
+  // capsule(width)
+  WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
+  // capsule(radius)
+  CAPSULE_RADIUS_VALUES.forEach((_radius, row) => wire(base(1, row), { color: CYAN, width: CAPSULE_BASE_LINE_WIDTH }));
+  // capsule(half height)
+  CAPSULE_HALF_HEIGHT_VALUES.forEach((_halfHeight, row) => wire(base(2, row), { color: LIME, width: CAPSULE_BASE_LINE_WIDTH }));
+  // capsule(segments)
+  SEGMENT_VALUES.forEach((segments, row) => wire(base(3, row, segments), { color: GOLD, width: CAPSULE_BASE_LINE_WIDTH }));
+  // capsule(side segments)
+  CAPSULE_SIDE_SEGMENT_VALUES.forEach((sideSegments, row) => wire(base(4, row, CAPSULE_SEGMENT_COUNT, sideSegments), { color: PINK, width: CAPSULE_BASE_LINE_WIDTH }));
+  // capsule(rotation)
+  for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
+    const scale = 1 - row * CAPSULE_ROTATION_TUNNEL_SCALE_STEP;
+    const mesh = capsuleMeshAt(CAPSULE_ROTATION_TUNNEL_RADIUS * scale, CAPSULE_ROTATION_TUNNEL_HALF_HEIGHT * scale, CAPSULE_SEGMENT_COUNT, CAPSULE_SIDE_SEGMENT_COUNT, capsuleTunnelCenter(5, row, CAPSULE_ROTATION_TUNNEL_Y, CAPSULE_ROTATION_TUNNEL_DEPTH_STEP), capsuleTunnelBasis(row));
+    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CAPSULE_BASE_LINE_WIDTH });
+  }
+  // capsule(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, CAPSULE_JOINT_SEGMENT_COUNT, CAPSULE_JOINT_SIDE_SEGMENT_COUNT), { color: VIOLET, width: CAPSULE_JOINT_LINE_WIDTH, joint }));
+  // capsule_n
+  for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
+    wire(base(7, row), { color: normalSampleColor(row), width: normalSampleWidth(row, CAPSULE_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+  }
+  // capsule_n(joint)
+  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, CAPSULE_JOINT_SEGMENT_COUNT, CAPSULE_JOINT_SIDE_SEGMENT_COUNT), { color: TEAL, width: CAPSULE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
 }
 
 export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
   const context: SceneContext = lineJoint === undefined ? { time } : { time, lineJoint };
-  // The reference capture harness translates the whole Godot scene root, so the
-  // origin axes move with it for circle/line; other scenes keep the gallery layout.
-  const referenceScene = id === "circle" || id === "line";
-  recorder.axes(referenceScene ? referenceOffset([0, 0, 0]) : [0, 0, 0], 0.6, 2);
+  // Reference: every example's first `_process()` line is
+  // `draw_axes(Vector3.ZERO, IDENTITY, 0.75, 2.0)`. `DebugDraw3D` is a child of the scene
+  // root, so the local `ZERO` picks up the capture harness's scene translation and the axes
+  // land on the shifted origin. `_validate_global_basis()` only rejects rotation/scale, which
+  // is what allows that translation. The axes are unconditional scene content, not a
+  // toggle: `EndlessGrid3D` and `DebugDraw3D` are sibling nodes that never know about each
+  // other, so the grid has no bearing on whether the axes show.
+  const selfAxes = id === "index" || id === "grid" || id === "world_space_width";
+  // index/grid/world_space_width draw their own translated origin axes (and
+  // world_space_width needs world-space widths), so they opt out of the generic one.
+  if (!selfAxes) recorder.axes(referenceOffset([0, 0, 0]), AXES_LENGTH, 2);
   switch (id) {
-    case "index": overviewMatrix(recorder, context); break;
+    case "index": indexMatrix(recorder); break;
     case "line": lineMatrix(recorder, context); break;
     case "arrow": arrowMatrix(recorder, context); break;
     case "axes": axesMatrix(recorder, context); break;
-    case "grid": gridMatrix(recorder, context); break;
+    case "grid": gridMatrix(recorder); break;
     case "rect": rectMatrix(recorder, context); break;
     case "box": boxMatrix(recorder, context); break;
     case "circle": circleMatrix(recorder, context); break;
@@ -726,40 +1853,12 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
     case "cone":
     case "cylinder":
     case "capsule": shapeScene(recorder, id, context); break;
-    case "world_space_width": worldWidthMatrix(recorder, context); break;
-    default: overviewMatrix(recorder, context); break;
+    case "world_space_width": worldWidthMatrix(recorder); break;
+    default: break;
   }
 }
 
-function worldWidthMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const labels = ["line", "arrow", "axes", "strip", "loop", "curve", "grid", "rect", "box", "circle", "arc", "sphere", "cone", "cylinder", "capsule"];
-  const widths = [0.02, 0.04, 0.08, 0.14];
-  const total = labels.length;
-  for (let c = 0; c < total; c++) {
-    const label = labels[c]!;
-    for (let row = 0; row < 4; row++) {
-      const p = slot(c, row, total, 4);
-      const width = widths[row]!;
-      const options = { color: [0.4, 0.85, 1, 1] as Color, width, widthMode: "world" as const };
-      switch (label) {
-        case "line": recorder.line([p[0] - 0.35, 0, p[2]], [p[0] + 0.35, 0, p[2]], options); break;
-        case "arrow": recorder.arrow([p[0] - 0.3, 0, p[2]], [0.6, 0, 0], options); break;
-        case "axes": recorder.axes([p[0], 0, p[2]], 0.35, width); break;
-        case "strip": recorder.lineStrip(offset([[-0.35, 0, 0.15], [0, 0, -0.15], [0.35, 0, 0.15]], p), { ...options, joint: context.lineJoint ?? "round" }, false); break;
-        case "loop": recorder.lineStrip(offset(circlePoints(0.2, 6), p), { ...options, joint: context.lineJoint ?? "round" }, true); break;
-        case "curve": recorder.curve(BASE_CURVE, { ...options, tolerance: 0.12, transform: { center: p } }); break;
-        case "grid": recorder.grid([p[0], 0, p[2]], [2, 2], [0.2, 0.2], options); break;
-        case "rect": recorder.lineStrip(offset(rectPoints(0.4, 0.3), p), { ...options, joint: context.lineJoint ?? "round" }, true); break;
-        case "box": recorder.mesh(translateMesh(box([0.3, 0.26, 0.26]), p), { color: options.color }); break;
-        case "circle": recorder.lineStrip(offset(circlePoints(0.2, 24), p), { ...options, joint: context.lineJoint ?? "round" }, true); break;
-        case "arc": recorder.lineStrip(offset(arcPoints(0.22, Math.PI * 1.5, 20), p), { ...options, joint: context.lineJoint ?? "round" }, false); break;
-        default: {
-          const shape = { sphere: sphere(0.2, 20, 10), cone: cone(0.2, 0.4, 20), cylinder: cylinder(0.18, 0.18, 20), capsule: capsule(0.15, 0.16, 16, 6) }[label]!;
-          recorder.mesh(translateMesh(shape, p), { color: options.color });
-          break;
-        }
-      }
-    }
-  }
-  void context;
+/** `world_space_width.gd`: the same matrix with world-space widths and no solid columns. */
+function worldWidthMatrix(recorder: FrameRecorder): void {
+  apiMatrix(recorder, { width: (pixels) => pixels * WSW_LINE_WIDTH_SCALE, widthMode: "world", solids: false });
 }
