@@ -1,4 +1,4 @@
-import { draw, geometry, type Draw, type FramePass, type Gpu } from "vgpu";
+import { compute, draw, geometry, storage, type Compute, type Draw, type Frame, type FramePass, type Gpu, type StorageBuffer } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
@@ -94,6 +94,19 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 
 type Camera = { viewProjection: ArrayLike<number> };
 
+const INDIRECT_SHADER = prepareShader(`
+struct Params { vertexCount: u32, instanceCount: u32 }
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var<storage, read_write> args: array<u32>;
+@compute @workgroup_size(1)
+fn cs_main() {
+  args[0] = params.vertexCount;
+  args[1] = params.instanceCount;
+  args[2] = 0u;
+  args[3] = 0u;
+}
+`);
+
 const TRIANGLE_SHADER = `
 struct Camera { viewProjection: mat4x4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -146,9 +159,33 @@ function identity(): Float32Array {
 function world(collection: InstanceCollection, id: InstanceId): void {
   collection.setWorld(id, identity());
 }
-function clear(collection: InstanceCollection, ids: InstanceId[]): void {
-  for (const id of ids) collection.remove(id);
-  ids.length = 0;
+function sameVec3(a: Vec3, b: Vec3): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+function sameColor(a: readonly [number, number, number, number], b: readonly [number, number, number, number]): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+function samePoint(a: PointCommand, b: PointCommand): boolean {
+  return sameVec3(a.position, b.position) && sameColor(a.color, b.color) && a.size === b.size && a.sizeMode === b.sizeMode && a.round === b.round;
+}
+function sameLine(a: LineCommand, b: LineCommand): boolean {
+  return sameVec3(a.start, b.start) && sameVec3(a.end, b.end) && sameColor(a.color, b.color) && sameColor(a.colorEnd, b.colorEnd)
+    && a.width === b.width && a.widthMode === b.widthMode && a.dash?.[0] === b.dash?.[0] && a.dash?.[1] === b.dash?.[1] && a.dash?.[2] === b.dash?.[2]
+    && (a.normal === undefined ? b.normal === undefined : b.normal !== undefined && sameVec3(a.normal, b.normal)) && a.joint === b.joint;
+}
+function sameTriangle(a: TriangleCommand, b: TriangleCommand): boolean {
+  return sameVec3(a.a, b.a) && sameVec3(a.b, b.b) && sameVec3(a.c, b.c) && sameColor(a.color, b.color);
+}
+function trim(collection: InstanceCollection, ids: InstanceId[], count: number): boolean {
+  let changed = false;
+  for (let i = ids.length - 1; i >= count; i--) {
+    collection.remove(ids.pop()!);
+    changed = true;
+  }
+  return changed;
+}
+function indirectArgs(buffer: StorageBuffer, vertexCount: number, instanceCount: number): void {
+  buffer.write(new Uint32Array([vertexCount, instanceCount, 0, 0]));
 }
 function zeroGeometry(gpu: Gpu) {
   return geometry(gpu, {
@@ -171,16 +208,26 @@ export class GpuDebugDraw3D {
   readonly #pointIds: InstanceId[] = [];
   readonly #lineIds: InstanceId[] = [];
   readonly #triangleIds: InstanceId[] = [];
+  readonly #pointCache: PointCommand[] = [];
+  readonly #lineCache: LineCommand[] = [];
+  readonly #triangleCache: TriangleCommand[] = [];
   readonly #pointBridge: InstanceGeometry;
   readonly #lineBridge: InstanceGeometry;
   readonly #triangleBridge: InstanceGeometry;
   readonly #pointDraw: Draw;
   readonly #lineDraw: Draw;
   readonly #triangleDraw: Draw;
+  readonly #pointIndirect: StorageBuffer;
+  readonly #lineIndirect: StorageBuffer;
+  readonly #triangleIndirect: StorageBuffer;
+  readonly #indirectCompute: Compute;
   #viewProjection: ArrayLike<number> = identity();
   #pointCount = 0;
   #lineCount = 0;
   #triangleCount = 0;
+  #pointDirty = true;
+  #lineDirty = true;
+  #triangleDirty = true;
 
   constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number } = {}) {
     const points = capacities.points ?? 4096;
@@ -198,21 +245,60 @@ export class GpuDebugDraw3D {
     this.#pointDraw = draw(gpu, { shader: prepareShader(POINT_SHADER), geometry: this.#pointBridge.geometry, instances: 0, blend: "alpha", depth: { write: false, compare: "less-equal" } });
     this.#lineDraw = draw(gpu, { shader: prepareShader(LINE_SHADER), geometry: this.#lineBridge.geometry, instances: 0, blend: "alpha", depth: { write: false, compare: "less-equal" } });
     this.#triangleDraw = draw(gpu, { shader: prepareShader(TRIANGLE_SHADER), geometry: this.#triangleBridge.geometry, instances: 0, blend: "alpha", depth: { write: true, compare: "less-equal" } });
+    this.#pointIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
+    this.#lineIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
+    this.#triangleIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
+    this.#indirectCompute = compute(gpu, INDIRECT_SHADER);
+    indirectArgs(this.#pointIndirect, 6, 0);
+    indirectArgs(this.#lineIndirect, 6, 0);
+    indirectArgs(this.#triangleIndirect, 3, 0);
   }
 
   prepare(commands: readonly FrameCommand[], camera: Camera): void {
-    clear(this.#points, this.#pointIds);
-    clear(this.#lines, this.#lineIds);
-    clear(this.#triangles, this.#triangleIds);
+    let pointCount = 0;
+    let lineCount = 0;
+    let triangleCount = 0;
+    this.#pointDirty = false;
+    this.#lineDirty = false;
+    this.#triangleDirty = false;
     for (const command of commands) {
-      if (command.kind === "point") this.addPoint(command);
-      else if (command.kind === "triangle") this.addTriangle(command);
-      else this.addLine(command);
+      if (command.kind === "point") this.addPoint(command, pointCount++);
+      else if (command.kind === "triangle") this.addTriangle(command, triangleCount++);
+      else this.addLine(command, lineCount++);
     }
-    this.#pointCount = this.#pointBridge.publish();
-    this.#lineCount = this.#lineBridge.publish();
-    this.#triangleCount = this.#triangleBridge.publish();
+    if (trim(this.#points, this.#pointIds, pointCount)) this.#pointDirty = true;
+    if (trim(this.#lines, this.#lineIds, lineCount)) this.#lineDirty = true;
+    if (trim(this.#triangles, this.#triangleIds, triangleCount)) this.#triangleDirty = true;
+    if (this.#pointCache.length !== pointCount) this.#pointDirty = true;
+    if (this.#lineCache.length !== lineCount) this.#lineDirty = true;
+    if (this.#triangleCache.length !== triangleCount) this.#triangleDirty = true;
+    this.#pointCache.length = pointCount;
+    this.#lineCache.length = lineCount;
+    this.#triangleCache.length = triangleCount;
+    if (this.#pointDirty) {
+      this.#pointCount = this.#pointBridge.publish();
+      indirectArgs(this.#pointIndirect, 6, this.#pointCount);
+    }
+    if (this.#lineDirty) {
+      this.#lineCount = this.#lineBridge.publish();
+      indirectArgs(this.#lineIndirect, 6, this.#lineCount);
+    }
+    if (this.#triangleDirty) {
+      this.#triangleCount = this.#triangleBridge.publish();
+      indirectArgs(this.#triangleIndirect, 3, this.#triangleCount);
+    }
     this.#viewProjection = camera.viewProjection;
+  }
+
+  updateIndirect(frame: Frame): void {
+    frame.computePass((pass) => {
+      this.#indirectCompute.set({ params: { vertexCount: 6, instanceCount: this.#pointCount }, args: this.#pointIndirect });
+      pass.dispatch(this.#indirectCompute, 1);
+      this.#indirectCompute.set({ params: { vertexCount: 6, instanceCount: this.#lineCount }, args: this.#lineIndirect });
+      pass.dispatch(this.#indirectCompute, 1);
+      this.#indirectCompute.set({ params: { vertexCount: 3, instanceCount: this.#triangleCount }, args: this.#triangleIndirect });
+      pass.dispatch(this.#indirectCompute, 1);
+    });
   }
 
   draw(pass: FramePass): void {
@@ -220,38 +306,69 @@ export class GpuDebugDraw3D {
     this.#pointDraw.set({ camera });
     this.#lineDraw.set({ camera });
     this.#triangleDraw.set({ camera: { viewProjection: this.#viewProjection } });
-    if (this.#triangleCount > 0) pass.draw(this.#triangleDraw, { instances: this.#triangleCount });
-    if (this.#pointCount > 0) pass.draw(this.#pointDraw, { instances: this.#pointCount });
-    if (this.#lineCount > 0) pass.draw(this.#lineDraw, { instances: this.#lineCount });
+    if (this.#triangleCount > 0) pass.draw(this.#triangleDraw, { indirect: this.#triangleIndirect });
+    if (this.#pointCount > 0) pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
+    if (this.#lineCount > 0) pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });
   }
 
   destroy(): void {
     this.#pointDraw.dispose();
     this.#lineDraw.dispose();
     this.#triangleDraw.dispose();
+    this.#indirectCompute.dispose();
     this.#pointBridge.destroy();
     this.#lineBridge.destroy();
     this.#triangleBridge.destroy();
   }
 
-  private addTriangle(command: TriangleCommand): void {
-    const id = this.#triangles.add({ a: command.a, b: command.b, c: command.c, color: command.color });
+  private addTriangle(command: TriangleCommand, index: number): void {
+    const previous = this.#triangleCache[index];
+    this.#triangleCache[index] = command;
+    if (previous !== undefined && sameTriangle(previous, command)) return;
+    this.#triangleDirty = true;
+    const id = this.#triangleIds[index] ?? this.#addTriangleId(index);
+    this.#triangles.set(id, { a: command.a, b: command.b, c: command.c, color: command.color });
+  }
+
+  #addTriangleId(index: number): InstanceId {
+    const id = this.#triangles.add({ a: [0, 0, 0], b: [0, 0, 0], c: [0, 0, 0], color: [0, 0, 0, 0] });
     world(this.#triangles, id);
-    this.#triangleIds.push(id);
+    this.#triangleIds[index] = id;
+    return id;
   }
 
-  private addPoint(command: PointCommand): void {
-    const id = this.#points.add({ point: command.position, color: command.color, size: command.size, flags: (command.sizeMode === "world" ? 1 : 0) | (command.round ? 2 : 0) });
+  private addPoint(command: PointCommand, index: number): void {
+    const previous = this.#pointCache[index];
+    this.#pointCache[index] = command;
+    if (previous !== undefined && samePoint(previous, command)) return;
+    this.#pointDirty = true;
+    const id = this.#pointIds[index] ?? this.#addPointId(index);
+    this.#points.set(id, { point: command.position, color: command.color, size: command.size, flags: (command.sizeMode === "world" ? 1 : 0) | (command.round ? 2 : 0) });
+  }
+
+  #addPointId(index: number): InstanceId {
+    const id = this.#points.add({ point: [0, 0, 0], color: [0, 0, 0, 0], size: 0, flags: 0 });
     world(this.#points, id);
-    this.#pointIds.push(id);
+    this.#pointIds[index] = id;
+    return id;
   }
 
-  private addLine(command: LineCommand): void {
+  private addLine(command: LineCommand, index: number): void {
+    const previous = this.#lineCache[index];
+    this.#lineCache[index] = command;
+    if (previous !== undefined && sameLine(previous, command)) return;
+    this.#lineDirty = true;
+    const id = this.#lineIds[index] ?? this.#addLineId(index);
     const dash = command.dash ?? [0, 0, 0];
     const normal = command.normal ?? [0, 0, 0];
     const joint = command.joint === "round" ? 1 : command.joint === "bevel" ? 2 : command.joint === "miter" ? 3 : 0;
-    const id = this.#lines.add({ start: command.start, end: command.end, color: command.color, colorEnd: command.colorEnd, width: command.width, flags: command.widthMode === "world" ? 1 : 0, dash, normal, joint });
+    this.#lines.set(id, { start: command.start, end: command.end, color: command.color, colorEnd: command.colorEnd, width: command.width, flags: command.widthMode === "world" ? 1 : 0, dash, normal, joint });
+  }
+
+  #addLineId(index: number): InstanceId {
+    const id = this.#lines.add({ start: [0, 0, 0], end: [0, 0, 0], color: [0, 0, 0, 0], colorEnd: [0, 0, 0, 0], width: 0, flags: 0, dash: [0, 0, 0], normal: [0, 0, 0], joint: 0 });
     world(this.#lines, id);
-    this.#lineIds.push(id);
+    this.#lineIds[index] = id;
+    return id;
   }
 }

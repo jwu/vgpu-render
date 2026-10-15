@@ -39,7 +39,10 @@ test("real GPU renders every Godot example without errors", async () => {
       buildScene(example.id, recorder, 0.6);
       const commands = debug.finishFrame(recorder);
       renderer.prepare(commands, { viewProjection: identity });
-      frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p)));
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
       const pixels = await output.color.read({ mipLevel: 0, region: "all" });
       let lit = 0;
       for (let i = 0; i < pixels.length; i += 4) if (pixels[i]! > 10 || pixels[i + 1]! > 10 || pixels[i + 2]! > 10) lit++;

@@ -28,7 +28,13 @@ const projection = document.querySelector<HTMLSelectElement>("#projection")!;
 const background = document.querySelector<HTMLInputElement>("#background")!;
 const resetConfig = document.querySelector<HTMLButtonElement>("#reset-config")!;
 let selected: GodotExample = GODOT_EXAMPLES[0]!;
-let pointer: { x: number; y: number } | undefined;
+type PointerMode = "rotate" | "pan" | "fps";
+type PointerState = { x: number; y: number; mode: PointerMode };
+let pointer: PointerState | undefined;
+const keys = new Set<string>();
+const FPS_SPEED = 8;
+const LOOK_SENSITIVITY = 0.008;
+const PAN_SENSITIVITY = 0.0015;
 let time = 0;
 let previousTimestamp: number | undefined;
 let viewProjection: Float32Array = new Float32Array(16);
@@ -165,6 +171,27 @@ function multiply(a: Float32Array, b: Float32Array): Float32Array {
   for (let col = 0; col < 4; col++) for (let row = 0; row < 4; row++) out[col * 4 + row] = a[row]! * b[col * 4]! + a[4 + row]! * b[col * 4 + 1]! + a[8 + row]! * b[col * 4 + 2]! + a[12 + row]! * b[col * 4 + 3]!;
   return out;
 }
+function applyFpsMovement(delta: number): void {
+  if (compareMode || pointer?.mode !== "fps" || keys.size === 0) return;
+  const c = config.camera;
+  const forward: Vec3 = [-Math.cos(c.yaw), 0, -Math.sin(c.yaw)];
+  const right: Vec3 = [-forward[2], 0, forward[0]];
+  const forwardAmount = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
+  const strafeAmount = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
+  const verticalAmount = (keys.has("e") ? 1 : 0) - (keys.has("q") ? 1 : 0);
+  const horizontalLength = Math.hypot(forwardAmount, strafeAmount);
+  const horizontalScale = horizontalLength > 1 ? 1 / horizontalLength : 1;
+  const step = FPS_SPEED * delta;
+  c.target[0] += (forward[0] * forwardAmount + right[0] * strafeAmount) * horizontalScale * step;
+  c.target[1] += verticalAmount * step;
+  c.target[2] += (forward[2] * forwardAmount + right[2] * strafeAmount) * horizontalScale * step;
+}
+function cameraBasis(): { right: Vec3; up: Vec3 } {
+  const c = config.camera;
+  const right: Vec3 = [Math.sin(c.yaw), 0, -Math.cos(c.yaw)];
+  const up: Vec3 = [-Math.sin(c.pitch) * Math.cos(c.yaw), Math.cos(c.pitch), -Math.sin(c.pitch) * Math.sin(c.yaw)];
+  return { right, up };
+}
 window.addEventListener("error", (event) => { status.textContent = `error: ${event.message}`; });
 window.addEventListener("unhandledrejection", (event) => { status.textContent = `error: ${String(event.reason)}`; });
 window.addEventListener("hashchange", () => {
@@ -180,7 +207,9 @@ const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangle
 const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
 const grid = new InfiniteGrid3D(gpu);
 function render(timestamp: number): void {
-  if (config.view.animate && previousTimestamp !== undefined) time += Math.min((timestamp - previousTimestamp) / 1000, 0.1);
+  const delta = previousTimestamp === undefined ? 0 : Math.min((timestamp - previousTimestamp) / 1000, 0.1);
+  if (config.view.animate) time += delta;
+  applyFpsMovement(delta);
   previousTimestamp = timestamp;
   const width = Math.max(canvas.clientWidth, 1);
   const height = Math.max(canvas.clientHeight, 1);
@@ -194,10 +223,13 @@ function render(timestamp: number): void {
   renderer.prepare(commands, { viewProjection });
   grid.setOpacity(config.view.gridOpacity);
   grid.prepare({ viewProjection, cameraPosition: eye, gridCenter: [c.target[0], c.target[2]], viewportSize: [width, height] });
-  frame(gpu, (f) => f.pass({ target: output, clear: config.view.background, clearDepth: 1 }, (pass) => {
-    if (config.view.showGrid) grid.draw(pass);
-    renderer.draw(pass);
-  }));
+  frame(gpu, (f) => {
+    renderer.updateIndirect(f);
+    f.pass({ target: output, clear: config.view.background, clearDepth: 1 }, (pass) => {
+      if (config.view.showGrid) grid.draw(pass);
+      renderer.draw(pass);
+    });
+  });
   counts.textContent = `${commands.length} commands · ${selected.columns.length} columns`;
   status.textContent = "WebGPU ready · partial parity";
   document.documentElement.dataset.renderReady = "true";
@@ -211,22 +243,58 @@ gridOpacity.oninput = () => { config.view.gridOpacity = Number(gridOpacity.value
 projection.onchange = () => { config.camera.projection = projection.value === "orthographic" ? "orthographic" : "perspective"; persist(); };
 background.oninput = () => { const hex = background.value; config.view.background = [parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255, 1]; persist(); };
 resetConfig.onclick = () => { config = cloneDemoConfig(DEFAULT_DEMO_CONFIG); time = 0; syncControls(); persist(); };
+canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 canvas.addEventListener("pointerdown", (event) => {
-  if (compareMode || event.button !== 1) return;
-  pointer = { x: event.clientX, y: event.clientY };
+  if (compareMode) return;
+  const mode: PointerMode = event.button === 0 ? "rotate" : event.button === 1 ? "pan" : event.button === 2 ? "fps" : "rotate";
+  if (event.button > 2) return;
+  pointer = { x: event.clientX, y: event.clientY, mode };
   canvas.setPointerCapture(event.pointerId);
+  if (mode === "fps") void canvas.requestPointerLock();
 });
 canvas.addEventListener("pointermove", (event) => {
-  if (!pointer) return;
+  if (!pointer || compareMode) return;
   const dx = event.clientX - pointer.x;
   const dy = event.clientY - pointer.y;
   const c = config.camera;
-  if (event.shiftKey) { const pan = c.distance * 0.0015; c.target[0] -= dx * pan; c.target[2] += dy * pan; }
-  else { c.yaw -= dx * 0.008; c.pitch = Math.max(-1.35, Math.min(1.35, c.pitch + dy * 0.008)); }
-  pointer = { x: event.clientX, y: event.clientY };
+  if (pointer.mode === "rotate" || pointer.mode === "fps") {
+    const lookX = pointer.mode === "fps" && document.pointerLockElement === canvas ? event.movementX : dx;
+    const lookY = pointer.mode === "fps" && document.pointerLockElement === canvas ? event.movementY : dy;
+    c.yaw += lookX * LOOK_SENSITIVITY;
+    c.pitch = Math.max(-1.35, Math.min(1.35, c.pitch + lookY * LOOK_SENSITIVITY));
+  } else if (pointer.mode === "pan") {
+    const { right, up } = cameraBasis();
+    const pan = c.distance * PAN_SENSITIVITY;
+    c.target[0] += (right[0] * dx + up[0] * dy) * pan;
+    c.target[1] += (right[1] * dx + up[1] * dy) * pan;
+    c.target[2] += (right[2] * dx + up[2] * dy) * pan;
+  }
+  pointer = { x: event.clientX, y: event.clientY, mode: pointer.mode };
 });
-canvas.addEventListener("pointerup", () => { pointer = undefined; persist(); });
-canvas.addEventListener("pointercancel", () => { pointer = undefined; });
+const releasePointer = (event: PointerEvent) => {
+  if (pointer === undefined) return;
+  pointer = undefined;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  persist();
+};
+canvas.addEventListener("pointerup", releasePointer);
+canvas.addEventListener("pointercancel", releasePointer);
+window.addEventListener("keydown", (event) => {
+  if (compareMode) return;
+  const key = event.key.toLowerCase();
+  if (!["w", "a", "s", "d", "q", "e"].includes(key)) return;
+  keys.add(key);
+  if (pointer?.mode === "fps") event.preventDefault();
+});
+window.addEventListener("keyup", (event) => keys.delete(event.key.toLowerCase()));
+window.addEventListener("pointerlockchange", () => {
+  if (document.pointerLockElement !== canvas && pointer?.mode === "fps") {
+    pointer = undefined;
+    keys.clear();
+    persist();
+  }
+});
 canvas.addEventListener("wheel", (event) => {
   if (compareMode) return;
   const factor = Math.exp(event.deltaY * 0.001);
