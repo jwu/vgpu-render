@@ -13,16 +13,18 @@ import "./demo.css";
 
 const params = new URLSearchParams(location.search);
 const compareMode = params.get("compare") === "1";
+// `?camera=reference` pins the pose for parity comparisons, so example switches must not re-frame it.
+const autoFrame = !compareMode && params.get("camera") !== "reference";
 if (compareMode) document.documentElement.classList.add("compare-mode");
 
 function createEngine(): DemoEngine {
   // Storage can be unavailable (private mode, blocked cookies); fall back to
   // URL-only configuration instead of failing the page.
   try {
-    return new DemoEngine({ compareMode, config: resolveInitialConfig(compareMode, params, window.localStorage) });
+    return new DemoEngine({ compareMode, config: resolveInitialConfig(compareMode, params, window.localStorage), autoFrame });
   } catch (error) {
     document.documentElement.dataset.configError = error instanceof Error ? error.message : String(error);
-    return new DemoEngine({ compareMode, config: resolveInitialConfig(compareMode, params) });
+    return new DemoEngine({ compareMode, config: resolveInitialConfig(compareMode, params), autoFrame });
   }
 }
 

@@ -24,6 +24,14 @@ export type LineOptions = {
   widthMode?: "screen" | "world";
   dash?: readonly [number, number, number];
   normal?: Vec3;
+  /**
+   * Per-vertex normals for path primitives (reference `*_n` variants). Every segment uses
+   * the normal of its **start** vertex, matching `_emit_normal_line_strip` /
+   * `_emit_normal_line_loop`, and the joints between them interpolate the two normals. A
+   * closed path needs one entry per vertex, an open one per segment (as the reference
+   * accepts). Takes precedence over `normal` when both are given.
+   */
+  normals?: readonly Vec3[];
   joint?: LineJoint;
   layer?: LayerMask;
 };
@@ -71,6 +79,14 @@ export type JointCommand = {
    * dash phase of the segments that meet it.
    */
   readonly dash?: readonly [number, number, number];
+  /**
+   * Normal of the previous path vertex and of this one, mirroring
+   * `_emit_normal_joint(previous, center, next, previous_normal, next_normal, ...)`.
+   * The wedge interpolates between them so a normal-aware joint keeps the shading of the
+   * segments it joins. Both are absent for plain joints.
+   */
+  readonly previousNormal?: Vec3;
+  readonly nextNormal?: Vec3;
   readonly joint: RenderedJoint;
   readonly layer: LayerMask;
 };
@@ -326,16 +342,34 @@ export class FrameRecorder {
     // Dash distance must accumulate across the whole path, otherwise each segment
     // restarts the pattern and closed shapes render as a nearly continuous line.
     const dash = options.dash ?? this.#defaults.line.dash;
+    // Per-vertex normals mirror the reference `*_n` entry points: each segment is emitted
+    // with its start vertex's normal instead of one normal for the whole path.
+    const normals = options.normals;
+    if (normals !== undefined) {
+      // Reference `draw_line_strip_n` accepts one normal per segment, `draw_line_loop_n` one
+      // per vertex; the loop's closing segment reuses the last vertex's normal.
+      const required = closed ? points.length : Math.max(0, points.length - 1);
+      if (normals.length < required) {
+        throw new RangeError(`normals must have at least ${required} entries for this path`);
+      }
+    }
+    const { normals: _normals, ...sharedOptions } = options;
+    void _normals;
     const vertexDistances: number[] = [0];
     let traveled = 0;
-    const segment = (a: Vec3, b: Vec3): void => {
-      if (dash === undefined) this.line(a, b, options);
-      else this.line(a, b, { ...options, dash: [dash[0], dash[1], dash[2] + traveled] });
+    const segment = (a: Vec3, b: Vec3, index: number): void => {
+      const normal = normals === undefined ? undefined : normals[index];
+      const segmentOptions: LineOptions = {
+        ...sharedOptions,
+        ...(dash === undefined ? {} : { dash: [dash[0], dash[1], dash[2] + traveled] as const }),
+        ...(normal === undefined ? {} : { normal }),
+      };
+      this.line(a, b, segmentOptions);
       traveled += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
       vertexDistances.push(traveled);
     };
-    for (let i = 0; i + 1 < points.length; i++) segment(points[i]!, points[i + 1]!);
-    if (closed && points.length > 1) segment(points[points.length - 1]!, points[0]!);
+    for (let i = 0; i + 1 < points.length; i++) segment(points[i]!, points[i + 1]!, i);
+    if (closed && points.length > 1) segment(points[points.length - 1]!, points[0]!, points.length - 1);
     const joint = options.joint ?? this.#defaults.line.joint;
     // Reference `_emit_line_strip` / `_emit_line_loop`: an open strip only joins its
     // interior vertices, while a loop also joins the two wrap-around seam vertices.
@@ -344,14 +378,16 @@ export class FrameRecorder {
       const first = closed ? 0 : 1;
       const last = closed ? (count > 2 ? count : 0) : count - 1;
       for (let i = first; i < last; i++) {
+        const previousIndex = (i - 1 + count) % count;
         this.#jointCommand(
-          points[(i - 1 + count) % count]!,
+          points[previousIndex]!,
           points[i]!,
           points[(i + 1) % count]!,
           joint,
-          options,
+          sharedOptions,
           dash,
           vertexDistances[i]!,
+          normals === undefined ? undefined : [normals[previousIndex]!, normals[i]!],
         );
       }
     }
@@ -371,6 +407,7 @@ export class FrameRecorder {
     options: LineOptions,
     dash: readonly [number, number, number] | undefined,
     distance: number,
+    normals?: readonly [Vec3, Vec3],
   ): void {
     const resolvedPrevious = vec3(previous, "previous");
     const resolvedCenter = vec3(center, "center");
@@ -389,7 +426,8 @@ export class FrameRecorder {
       widthMode: options.widthMode ?? this.#defaults.line.widthMode ?? "screen",
       joint,
       layer: layer(options.layer ?? this.#defaults.line.layer),
-      ...(dash === undefined ? {} : { dash: [dash[0], dash[1], dash[2] + distance] }),
+      ...(dash === undefined ? {} : { dash: [dash[0], dash[1], dash[2] + distance] as const }),
+      ...(normals === undefined ? {} : { previousNormal: vec3(normals[0], "previousNormal"), nextNormal: vec3(normals[1], "nextNormal") }),
     });
   }
 

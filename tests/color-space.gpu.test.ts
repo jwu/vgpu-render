@@ -56,7 +56,7 @@ test("linear blending plus sRGB present matches the Godot reference pixels", asy
         widthMode: "screen",
         layer: 1,
       }];
-      renderer.prepare(commands, { viewProjection: identity });
+      renderer.prepare(commands, { viewProjection: identity, view: identity });
       frame(gpu, (f) => {
         f.pass({ target: scene, clear: linearClearColor([30 / 255, 30 / 255, 30 / 255, 1]), clearDepth: 1 }, (pass) => renderer.draw(pass));
         f.pass({ target: output }, (pass) => pass.draw(present));
@@ -102,7 +102,7 @@ test("solid primitives keep the reference translucent color", async () => {
     const commands: FrameCommand[] = [{
       kind: "triangle", a: [-0.8, -0.8, 0], b: [0.8, -0.8, 0], c: [0, 0.8, 0], color, layer: 1,
     }];
-    renderer.prepare(commands, { viewProjection: identity });
+    renderer.prepare(commands, { viewProjection: identity, view: identity });
     frame(gpu, (f) => {
       f.pass({ target: scene, clear: linearClearColor([30 / 255, 30 / 255, 30 / 255, 1]), clearDepth: 1 }, (pass) => renderer.draw(pass));
       f.pass({ target: output }, (pass) => pass.draw(present));
@@ -134,7 +134,7 @@ test("sub-pixel line widths fade alpha instead of collapsing to a sliver", async
         color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1],
         width, widthMode: "screen", layer: 1,
       }];
-      renderer.prepare(commands, { viewProjection: identity });
+      renderer.prepare(commands, { viewProjection: identity, view: identity });
       frame(gpu, (f) => {
         f.pass({ target: scene, clear: linearClearColor([0, 0, 0, 1]), clearDepth: 1 }, (pass) => renderer.draw(pass));
         f.pass({ target: output }, (pass) => pass.draw(present));

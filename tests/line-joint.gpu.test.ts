@@ -44,7 +44,7 @@ async function renderPath(
 ): Promise<Uint8Array> {
   const recorder = new FrameRecorder();
   recorder.lineStrip(path, { joint, width: STROKE, color: [1, 1, 1, 1], ...options });
-  renderer.prepare(recorder.commands(), { viewProjection: identity });
+  renderer.prepare(recorder.commands(), { viewProjection: identity, view: identity });
   frame(gpu, (f) => {
     renderer.updateIndirect(f);
     f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));

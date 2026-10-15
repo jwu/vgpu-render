@@ -13,7 +13,7 @@ test("subdividing a dashed path preserves every GPU dash and gap pixel", async (
     const render = async (points: readonly Vec3[]) => {
       const recorder = new FrameRecorder();
       recorder.lineStrip(points, { width: 10, dash: [0.18, 0.18, -0.07] });
-      renderer.prepare(recorder.commands(), { viewProjection: identity });
+      renderer.prepare(recorder.commands(), { viewProjection: identity, view: identity });
       frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (pass) => renderer.draw(pass)));
       return output.color.read({ mipLevel: 0, region: "all" });
     };
@@ -58,7 +58,7 @@ test("round GPU points discard corners while preserving square point behavior", 
     const output = target(gpu, { size: [64, 64], depth: true });
     const recorder = new FrameRecorder();
     recorder.point([0, 0, 0], { size: 16, round: true });
-    renderer.prepare(recorder.commands(), { viewProjection: identity });
+    renderer.prepare(recorder.commands(), { viewProjection: identity, view: identity });
     frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (pass) => renderer.draw(pass)));
     const pixels = await output.color.read({ mipLevel: 0, region: "all" });
     expect(pixels[(32 * 64 + 32) * 4]! > 20).toBe(true);

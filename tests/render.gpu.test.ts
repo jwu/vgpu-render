@@ -16,7 +16,7 @@ test("real GPU renders continuous lines and centered pixel-sized points", async 
       width: 16, widthMode: "screen", layer: 1,
     }];
     const render = async () => {
-      renderer.prepare(commands, { viewProjection: identity });
+      renderer.prepare(commands, { viewProjection: identity, view: identity });
       frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (p) => renderer.draw(p)));
       return output.color.read({ mipLevel: 0, region: "all" });
     };
@@ -56,7 +56,7 @@ test("real GPU preserves dash gaps along a line", async () => {
       kind: "line", start: [-0.9, 0, 0], end: [0.9, 0, 0],
       color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1], width: 10,
       widthMode: "screen", dash: [0.18, 0.18, 0], layer: 1,
-    }], { viewProjection: identity });
+    }], { viewProjection: identity, view: identity });
     frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (p) => renderer.draw(p)));
     const pixels = await output.color.read({ mipLevel: 0, region: "all" });
     const lit = (x: number) => pixels[(32 * 256 + x) * 4]! > 20;
@@ -76,7 +76,7 @@ test("real GPU scales world-space line width with the projection", async () => {
       kind: "line", start: [-0.5, 0, 0], end: [0.5, 0, 0],
       color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1], width: 0.25,
       widthMode: "world", layer: 1,
-    }], { viewProjection: identity });
+    }], { viewProjection: identity, view: identity });
     frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (p) => renderer.draw(p)));
     const pixels = await output.color.read({ mipLevel: 0, region: "all" });
     let height = 0;
@@ -94,7 +94,7 @@ test("real GPU fills triangles from transient solid commands", async () => {
     renderer.prepare([{
       kind: "triangle", a: [-0.75, -0.75, 0], b: [0.75, -0.75, 0], c: [0, 0.75, 0],
       color: [1, 0.5, 0, 1], layer: 1,
-    }], { viewProjection: identity });
+    }], { viewProjection: identity, view: identity });
     frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (p) => renderer.draw(p)));
     const pixels = await output.color.read({ mipLevel: 0, region: "all" });
     const lit = (x: number, y: number) => pixels[(y * 64 + x) * 4]! > 20;

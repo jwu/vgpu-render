@@ -38,7 +38,7 @@ test("real GPU renders every Godot example without errors", async () => {
       const recorder = debug.beginFrame();
       buildScene(example.id, recorder, 0.6);
       const commands = debug.finishFrame(recorder);
-      renderer.prepare(commands, { viewProjection: identity });
+      renderer.prepare(commands, { viewProjection: identity, view: identity });
       frame(gpu, (f) => {
         renderer.updateIndirect(f);
         f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));

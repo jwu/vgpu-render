@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { FrameRecorder, type LineCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
+import { FrameRecorder, type JointCommand, type LineCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
 import { buildScene, CIRCLE_REFERENCE, LINE_REFERENCE } from "../src/godot-scenes.js";
 
-function commandsFor(id: string): readonly (LineCommand | TriangleCommand | { kind: "point" })[] {
+function commandsFor(id: string): readonly (LineCommand | JointCommand | TriangleCommand | { kind: "point" })[] {
   const recorder = new FrameRecorder();
   buildScene(id, recorder, 0);
   return recorder.commands() as never;
@@ -14,6 +14,10 @@ function linesOf(id: string): LineCommand[] {
 
 function trianglesOf(id: string): TriangleCommand[] {
   return commandsFor(id).filter((command): command is TriangleCommand => command.kind === "triangle");
+}
+
+function jointsOf(id: string): JointCommand[] {
+  return commandsFor(id).filter((command): command is JointCommand => command.kind === "joint");
 }
 
 function near(actual: readonly number[], expected: readonly number[], epsilon = 1e-6): boolean {
@@ -44,9 +48,18 @@ describe("Circle reference scene", () => {
 
   test("keeps the wide normal row and the tilted rotation tunnel", () => {
     const lines = linesOf("circle");
-    const wideNormal = lines.find((line) => near(line.color, [0.25, 0.95, 0.9, 1]) && line.width === 10);
-    expect(wideNormal).toBeDefined();
-    expect(wideNormal!.normal).toEqual([0, 1, 0]);
+    // `draw_circle_n` shades every segment with the radial normal of its own midpoint
+    // (`_get_circle_normals`), so the wide row's normals fan out inside the ring's plane
+    // instead of sharing one direction.
+    const wideRow = lines.filter((line) => near(line.color, [0.25, 0.95, 0.9, 1]) && line.width === 10);
+    expect(wideRow.length).toBeGreaterThan(2);
+    for (const line of wideRow) {
+      expect(line.normal).toBeDefined();
+      expect(Math.hypot(...(line.normal as Vec3))).toBeCloseTo(1, 6);
+      // The circle's flat basis spans XZ, so the radials have no vertical component.
+      expect(line.normal![1]).toBeCloseTo(0, 6);
+    }
+    expect(new Set(wideRow.map((line) => (line.normal as Vec3).join(","))).size).toBeGreaterThan(2);
     // Rotation tunnel lifts the first row above the ground plane.
     const tunnel = lines.filter((line) => near(line.color, [0.95, 0.75, 0.25, 1], 1e-3) && Math.abs(line.start[1] - 0.45) < 1e-6);
     expect(tunnel.length).toBeGreaterThan(0);
@@ -81,6 +94,76 @@ describe("Curve reference scene", () => {
     // Handle edges keep the reference handle lengths (`smoothSymmetricCurve` uses |(0.28, 0, -0.35)|).
     const edges = controlEdges.map((line) => Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1], line.end[2] - line.start[2]));
     expect(edges.filter((length) => Math.abs(length - Math.hypot(0.28, 0.35)) < 1e-6).length).toBeGreaterThan(0);
+  });
+});
+
+describe("Sphere reference scene", () => {
+  test("y-axis column selects latitude rings and z-axis column the meridian circles", () => {
+    const lines = linesOf("sphere");
+    const gold = lines.filter((line) => near(line.color, [0.95, 0.75, 0.25, 1]));
+    // sphere(y axis) rows use Y_AXIS_SEGMENT_VALUES = [0, 1, 2, 6] with z = 2, so the
+    // loops per row are 2, 2, 3 and 7: each is a 48-point ring, giving 96 + 96 + 144 + 336.
+    // The rotation column's first row shares the same color (alpha 1 - 0 * 0.07) and adds
+    // its own 3 rings, hence 816.
+    expect(gold).toHaveLength(672 + 144);
+    // sphere(z axis) rows use Z_AXIS_SEGMENT_VALUES = [0, 1, 2, 6], so a z value of n emits
+    // n great circles that all survive de-duplication: 48 + 96 + 144 + 336. The dashed
+    // column shares the orange color (4 rows x 3 rings x 48) as does the normal row 2.
+    const orange = lines.filter((line) => near(line.color, [1, 0.45, 0.2, 1]));
+    expect(orange).toHaveLength(624 + 576 + 144);
+    // sphere(segments) keeps y = z = 2, so each row draws three rings of `seg` points.
+    const lime = lines.filter((line) => near(line.color, [0.7, 1, 0.25, 1]));
+    expect(lime).toHaveLength(3 * (8 + 16 + 32 + 64));
+  });
+});
+
+describe("Capsule reference scene", () => {
+  test("emits rings plus side silhouettes and no solid geometry", () => {
+    const lines = linesOf("capsule");
+    expect(trianglesOf("capsule")).toHaveLength(0);
+    // capsule(side segments) uses SIDE_SEGMENT_VALUES = [1, 2, 4, 8] with 32 segments:
+    // 2 rings x 32 plus `side` closed silhouettes of 2 * (16 + 1) points each.
+    const pink = lines.filter((line) => near(line.color, [1, 0.3, 0.6, 1]));
+    expect(pink).toHaveLength([1, 2, 4, 8].reduce((total, side) => total + 64 + side * 34, 0));
+    // capsule(segments) uses SEGMENT_VALUES = [8, 16, 32, 64] with two silhouettes, so each
+    // row is `2 * seg` ring segments plus `4 * (ceil(seg / 2) + 1)` silhouette segments.
+    const gold = lines.filter((line) => near(line.color, [0.95, 0.75, 0.25, 1]));
+    const segmentRows = [8, 16, 32, 64].reduce((total, seg) => total + 2 * seg + 4 * (Math.ceil(seg / 2) + 1), 0);
+    expect(gold).toHaveLength(segmentRows + 2 * 32 + 4 * (16 + 1));
+  });
+});
+
+describe("Cone and cylinder reference scenes", () => {
+  test("the side-segment column is independent of the base-segment column", () => {
+    // cone(segments) rows draw a `seg`-point base ring plus 8 side lines; cone(side segments)
+    // rows keep 16 base segments and vary only the side line count.
+    const coneGold = linesOf("cone").filter((line) => near(line.color, [0.95, 0.75, 0.25, 1]));
+    expect(coneGold).toHaveLength([3, 4, 8, 16].reduce((total, seg) => total + seg + 8, 0) + 16 + 8);
+    const coneOrange = linesOf("cone").filter((line) => near(line.color, [1, 0.45, 0.2, 1]));
+    expect(coneOrange).toHaveLength([3, 4, 8, 16].reduce((total, side) => total + 16 + side, 0) + 16 + 8);
+
+    // cylinder(segments) draws two rings per row; cylinder(side segments) keeps 16 and
+    // varies the vertical wall lines.
+    const cylinderGold = linesOf("cylinder").filter((line) => near(line.color, [0.95, 0.75, 0.25, 1]));
+    expect(cylinderGold).toHaveLength([3, 4, 8, 16].reduce((total, seg) => total + 2 * seg + 8, 0) + 2 * 16 + 8);
+    const cylinderOrange = linesOf("cylinder").filter((line) => near(line.color, [1, 0.45, 0.2, 1]));
+    expect(cylinderOrange).toHaveLength([3, 4, 8, 16].reduce((total, side) => total + 2 * 16 + side, 0) + 2 * 16 + 8);
+  });
+});
+
+describe("Arrow reference scene", () => {
+  test("normal-aware heads shade each segment from the cone surface, and shafts stay plain", () => {
+    const withNormal = linesOf("arrow").filter((line) => line.normal !== undefined);
+    // Six normal-aware columns x four rows x (two wings x two segments) = 96 head segments; the
+    // shafts of `draw_arrow_line_n*` are `_emit_line` calls and carry no normal at all.
+    expect(withNormal).toHaveLength(96);
+    for (const line of withNormal) expect(Math.hypot(...(line.normal as Vec3))).toBeCloseTo(1, 6);
+    // `draw_arrow_n` passes NORMAL = (0, 0, 1) only as the tangent-plane hint. Every segment gets
+    // `_get_arrow_surface_normal(direction, ±radial, headLength, headRadius)` instead, so the hint
+    // never appears and the two head shapes contribute four normals each.
+    const normals = new Set(withNormal.map((line) => (line.normal as Vec3).join(",")));
+    expect(normals.has("0,0,1")).toBe(false);
+    expect(normals.size).toBe(8);
   });
 });
 
@@ -132,5 +215,52 @@ describe("Line reference scene", () => {
       [0, 1, 0],
       [0, 0, -1],
     ]);
+  });
+});
+
+describe("Normal-aware reference columns", () => {
+  test("shape *_n columns carry the reference per-vertex normals", () => {
+    const joints = jointsOf("sphere");
+    const withNormals = joints.filter((joint) => joint.previousNormal !== undefined && joint.nextNormal !== undefined);
+    // sphere(joint) draws plain joints; sphere_n(joint) and sphere_n_d(joint) carry normals.
+    expect(withNormals.length).toBeGreaterThan(0);
+    expect(withNormals.length).toBeLessThan(joints.length);
+    // Per-vertex normals vary around every ring, so the seam blends many distinct directions.
+    const distinct = new Set(withNormals.map((joint) => (joint.previousNormal as Vec3).join(",")));
+    expect(distinct.size).toBeGreaterThan(8);
+
+    const normals = linesOf("sphere").filter((line) => line.normal !== undefined);
+    expect(new Set(normals.map((line) => (line.normal as Vec3).join(","))).size).toBeGreaterThan(8);
+  });
+
+  test("capsule silhouettes and cap rings carry distinct normals", () => {
+    const normals = linesOf("capsule").filter((line) => line.normal !== undefined);
+    expect(normals.length).toBeGreaterThan(0);
+    expect(new Set(normals.map((line) => (line.normal as Vec3).join(","))).size).toBeGreaterThan(8);
+    expect(jointsOf("capsule").some((joint) => joint.previousNormal !== undefined)).toBe(true);
+  });
+
+  test("flat primitives shade with per-vertex normals too", () => {
+    // `draw_circle_n` / `draw_arc_n` / `draw_rect_n` / `draw_box_n` all derive a normal per
+    // segment or corner instead of one normal for the whole path.
+    for (const id of ["circle", "arc", "rect", "box"]) {
+      const normals = linesOf(id).filter((line) => line.normal !== undefined);
+      expect(normals.length, `${id} has no normal-aware lines`).toBeGreaterThan(0);
+      expect(new Set(normals.map((line) => (line.normal as Vec3).join(","))).size, `${id} reuses one normal`).toBeGreaterThan(2);
+    }
+    // The box and rect columns take their normals from the basis, so they fan out around the
+    // shape rather than all pointing at the camera.
+    const boxNormals = new Set(linesOf("box").filter((line) => line.normal !== undefined).map((line) => (line.normal as Vec3).join(",")));
+    expect(boxNormals.size).toBeGreaterThanOrEqual(4);
+  });
+
+  test("cone and cylinder normal columns shade rings and side lines separately", () => {
+    for (const id of ["cone", "cylinder"]) {
+      const normals = linesOf(id).filter((line) => line.normal !== undefined);
+      expect(normals.length, `${id} has no normal-aware lines`).toBeGreaterThan(0);
+      // Ring normals are perpendicular to the axis while side-line normals are radial/tilted,
+      // so the column mixes both families.
+      expect(new Set(normals.map((line) => (line.normal as Vec3).join(","))).size).toBeGreaterThan(4);
+    }
   });
 });

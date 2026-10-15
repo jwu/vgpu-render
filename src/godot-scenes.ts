@@ -1,6 +1,28 @@
 import type { FrameRecorder, LineOptions, Vec3, Color } from "./frame-recorder.js";
 import { rotatePoint, type Curve3D } from "./curve.js";
-import { box, capsule, cone, cylinder, disc, sphere, type MeshData } from "./geometry-generators.js";
+import {
+  arcNormals,
+  box,
+  boxEdgeNormals,
+  capsuleOutlineNormals,
+  capsuleWire,
+  circleNormals,
+  circlePoints,
+  cone,
+  coneBaseBasis,
+  coneSideLineNormals,
+  coneWire,
+  cylinder,
+  cylinderSideLineNormals,
+  cylinderWire,
+  disc,
+  rectNormals,
+  sphere,
+  sphereRingNormals,
+  sphereWire,
+  type MeshData,
+  type ShapeWire,
+} from "./geometry-generators.js";
 import {
   ALPHA_VALUES,
   basisCirclePoints,
@@ -40,14 +62,32 @@ const AXIS_RED: Color = [1, 0, 0, 1];
 const AXIS_GREEN: Color = [0, 1, 0, 1];
 const AXIS_BLUE: Color = [0, 0, 1, 1];
 
-function circlePoints(radius: number, segments: number, rotation: readonly [number, number, number] = [0, 0, 0], center: Vec3 = [0, 0, 0]): Vec3[] {
-  const points: Vec3[] = [];
-  for (let i = 0; i < segments; i++) {
-    const a = i / segments * Math.PI * 2;
-    const p: Vec3 = [Math.cos(a) * radius, 0, Math.sin(a) * radius];
-    points.push([p[0] + center[0], p[1] + center[1], p[2] + center[2]]);
-  }
-  return rotation.some((value) => value !== 0) ? points.map((p) => rotatePoint(p, rotation)) : points;
+/** `draw_circle_n`: `_get_circle_normals` gives one radial normal per segment. */
+function drawCircleNormals(recorder: FrameRecorder, points: readonly Vec3[], segments: number, basis: CircleBasis, options: LineOptions): void {
+  recorder.lineStrip(points, { ...options, normals: circleNormals(segments, basis) }, true);
+}
+
+/** `draw_arc_n`: `_get_arc_normals` gives one radial normal per segment of the sweep. */
+function drawArcNormals(recorder: FrameRecorder, points: readonly Vec3[], angle: number, segments: number, basis: CircleBasis, options: LineOptions): void {
+  recorder.lineStrip(points, { ...options, normals: arcNormals(angle, segments, basis) }, false);
+}
+
+/** `draw_rect_n`: `_get_rect_normals` gives one corner normal per loop vertex. */
+function drawRectNormals(recorder: FrameRecorder, points: readonly Vec3[], basis: CircleBasis, options: LineOptions): void {
+  recorder.lineStrip(points, { ...options, normals: rectNormals(basis) }, true);
+}
+
+/** `draw_box_n`: `_get_box_line_normals` gives one normal per edge (see `boxEdgeNormals`). */
+function drawBoxNormals(recorder: FrameRecorder, center: Vec3, basis: Basis3, size: Vec3, options: LineOptions): void {
+  const mesh = transformMeshByBasis(box(size), center, basis);
+  const normals = boxEdgeNormals(mesh.segments, center, basis);
+  mesh.segments.forEach(([a, b], index) => recorder.line(a, b, { ...options, normal: normals[index]! }));
+}
+
+/** Reference `_emit_circle_s`: a fan in the circle's own basis, which `disc` builds in its XZ plane. */
+function circleSolidMesh(radius: number, segments: number, center: Vec3, basis: CircleBasis): MeshData {
+  const frame: Basis3 = { x: basis.x, y: normalizeVector(crossVector(basis.x, basis.y)), z: basis.y };
+  return transformMeshByBasis(disc(radius, segments), center, frame);
 }
 
 /** Reference arc/`draw_arc` points: `center + (basis.x*cos + basis.y*sin) * radius`, `segments + 1` samples. */
@@ -259,24 +299,31 @@ function drawArrowHead(recorder: FrameRecorder, tip: Vec3, dir: Vec3, options: A
   const headLength = Math.hypot(dir[0], dir[1], dir[2]);
   if (headLength <= 0) return;
   const forward = scaleVec(dir, 1 / headLength);
-  const tangent = options.normal === undefined ? perpendicularUnit(forward) : projectedPerpendicularUnit(forward, options.normal);
+  const normalAware = options.normal !== undefined;
+  // `_emit_arrow_with_normal` only uses the caller's normal to pick the head's tangent plane;
+  // the segments themselves are shaded from the cone surface (see `surfaceNormal` below).
+  const tangent = normalAware ? projectedPerpendicularUnit(forward, options.normal!) : perpendicularUnit(forward);
   const bitangent = normalizeVector(crossVector(forward, tangent));
   const headAngle = Math.min(Math.max(options.headAngle, 0.001), Math.PI * 0.49);
   const headRadius = Math.tan(headAngle) * headLength;
-  const headCenter: Vec3 = [tip[0] - forward[0] * headLength, tip[1] - forward[1] * headLength, tip[2] - forward[2] * headLength];
+  const headCenter = offsetAlong(tip, forward, -headLength);
   const wingOptions: LineOptions = {
     color: options.color,
     width: options.width,
     ...(options.widthMode === undefined ? {} : { widthMode: options.widthMode }),
     ...(options.joint === undefined ? {} : { joint: options.joint }),
-    ...(options.normal === undefined ? {} : { normal: options.normal }),
   };
+  /** `_get_arrow_surface_normal`: `normalize(radial * headLength + direction * headRadius)`. */
+  const surfaceNormal = (radial: Vec3): Vec3 => normalizeVector(offsetAlong(scaleVec(radial, headLength), forward, headRadius));
   const wing = (radial: Vec3): void => {
-    recorder.lineStrip([
-      [headCenter[0] + radial[0] * headRadius, headCenter[1] + radial[1] * headRadius, headCenter[2] + radial[2] * headRadius],
-      tip,
-      [headCenter[0] - radial[0] * headRadius, headCenter[1] - radial[1] * headRadius, headCenter[2] - radial[2] * headRadius],
-    ], wingOptions, false);
+    const points: Vec3[] = [offsetAlong(headCenter, radial, headRadius), tip, offsetAlong(headCenter, radial, -headRadius)];
+    // `_emit_normal_line_strip` carries one normal per segment, each the surface normal of the
+    // wing that segment starts from.
+    recorder.lineStrip(
+      points,
+      normalAware ? { ...wingOptions, normals: [surfaceNormal(radial), surfaceNormal(scaleVec(radial, -1))] } : wingOptions,
+      false,
+    );
   };
   wing(tangent);
   wing(bitangent);
@@ -317,13 +364,14 @@ function arrowLineEnd(column: number, row: number): Vec3 {
 
 type ArrowLineOptions = ArrowHeadOptions & { readonly headLength: number; readonly dash?: readonly [number, number, number] };
 
-/** Reference `draw_arrow_line*`: a shaft (optionally dashed/normal-aware) plus a head at `end`. */
+/** Reference `draw_arrow_line*`: a plain shaft plus the head at `end`. */
 function drawArrowLine(recorder: FrameRecorder, start: Vec3, end: Vec3, options: ArrowLineOptions): void {
+  // Both `draw_arrow_line` and `draw_arrow_line_n` emit the shaft with `_emit_line`, which carries
+  // no normal: the caller's normal only orients the head's tangent plane.
   recorder.line(start, end, {
     color: options.color,
     width: options.width,
     ...(options.widthMode === undefined ? {} : { widthMode: options.widthMode }),
-    ...(options.normal === undefined ? {} : { normal: options.normal }),
     ...(options.dash === undefined ? {} : { dash: options.dash }),
   });
   const dx = end[0] - start[0];
@@ -1039,7 +1087,6 @@ function curveMatrix(recorder: FrameRecorder, context: SceneContext): void {
 function circleMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const dashOffset = context.time * CIRCLE_DASH_SPEED;
   const flat = circleBasis([0, 1, 0], 0);
-  const normalUp: Vec3 = [0, 1, 0];
   const circle = (column: number, row: number, radius: number, segments: number, basis: CircleBasis = flat): Vec3[] =>
     basisCirclePoints(circleCenterLocal(column, row), radius, segments, basis);
 
@@ -1063,10 +1110,10 @@ function circleMatrix(recorder: FrameRecorder, context: SceneContext): void {
   for (let row = 0; row < 4; row++) {
     const color: Color = row === 1 ? [0.25, 0.95, 0.9, 0.35] : row === 2 ? [1, 0.45, 0.2, 1] : TEAL;
     const width = row === 3 ? 10 : CIRCLE_BASE_WIDTH;
-    recorder.lineStrip(circle(7, row, CIRCLE_RADIUS, CIRCLE_SEGMENTS), { color, width, normal: normalUp, joint: "round" }, true);
+    drawCircleNormals(recorder, circle(7, row, CIRCLE_RADIUS, CIRCLE_SEGMENTS), CIRCLE_SEGMENTS, flat, { color, width, joint: "round" });
   }
-  DASH_VALUES.forEach(([dash, space], row) => recorder.lineStrip(circle(8, row, CIRCLE_RADIUS, CIRCLE_SEGMENTS), { color: TEAL, width: CIRCLE_BASE_WIDTH, normal: normalUp, dash: [dash, space, dashOffset], joint: "round" }, true));
-  JOINT_VALUES.forEach((joint, row) => recorder.lineStrip(circle(9, row, CIRCLE_RADIUS, CIRCLE_JOINT_SEGMENTS), { color: TEAL, width: 8, normal: normalUp, joint }, true));
+  DASH_VALUES.forEach(([dash, space], row) => drawCircleNormals(recorder, circle(8, row, CIRCLE_RADIUS, CIRCLE_SEGMENTS), CIRCLE_SEGMENTS, flat, { color: TEAL, width: CIRCLE_BASE_WIDTH, dash: [dash, space, dashOffset], joint: "round" }));
+  JOINT_VALUES.forEach((joint, row) => drawCircleNormals(recorder, circle(9, row, CIRCLE_RADIUS, CIRCLE_JOINT_SEGMENTS), CIRCLE_JOINT_SEGMENTS, flat, { color: TEAL, width: 8, joint }));
 
   SEGMENT_VALUES.forEach((segments, row) => {
     const center = referenceOffset(circleCenterLocal(10, row));
@@ -1090,7 +1137,6 @@ const ARC_TUNNEL_RADIUS = 0.44;
 const ARC_TUNNEL_DEPTH_STEP = 0.16;
 const ARC_TUNNEL_SCALE_STEP = 0.06;
 const ARC_TUNNEL_TWIST_STEP = Math.PI * 0.12;
-const ARC_NORMAL: Vec3 = [0, 1, 0];
 const FLAT_BASIS: CircleBasis = circleBasis([0, 1, 0], 0);
 
 /** `_get_rotation_tunnel_rotation(row)`. */
@@ -1144,15 +1190,15 @@ function arcMatrix(recorder: FrameRecorder, context: SceneContext): void {
   });
   // arc_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(8, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: normalSampleColor(row), width: normalSampleWidth(row, ARC_BASE_LINE_WIDTH), normal: ARC_NORMAL, joint: "round" }, false);
+    drawArcNormals(recorder, arcPoints(ARC_LAYOUT.at(8, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS, { color: normalSampleColor(row), width: normalSampleWidth(row, ARC_BASE_LINE_WIDTH), joint: "round" });
   }
   // arc_n_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(9, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), { color: TEAL, width: ARC_BASE_LINE_WIDTH, normal: ARC_NORMAL, dash: [dash, space, fposmod(dashOffset, dash + space)], joint: "round" }, false);
+    drawArcNormals(recorder, arcPoints(ARC_LAYOUT.at(9, row), ARC_RADIUS, ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS), ARC_ANGLE, ARC_SEGMENT_COUNT, FLAT_BASIS, { color: TEAL, width: ARC_BASE_LINE_WIDTH, dash: [dash, space, fposmod(dashOffset, dash + space)], joint: "round" });
   });
   // arc_n(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    recorder.lineStrip(arcPoints(ARC_LAYOUT.at(10, row), ARC_RADIUS, ARC_ANGLE, ARC_JOINT_SEGMENT_COUNT, FLAT_BASIS), { color: TEAL, width: ARC_EMPHASIS_LINE_WIDTH, normal: ARC_NORMAL, joint }, false);
+    drawArcNormals(recorder, arcPoints(ARC_LAYOUT.at(10, row), ARC_RADIUS, ARC_ANGLE, ARC_JOINT_SEGMENT_COUNT, FLAT_BASIS), ARC_ANGLE, ARC_JOINT_SEGMENT_COUNT, FLAT_BASIS, { color: TEAL, width: ARC_EMPHASIS_LINE_WIDTH, joint });
   });
 }
 
@@ -1189,15 +1235,15 @@ function rectMatrix(recorder: FrameRecorder, context: SceneContext): void {
   });
   // rect_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(6, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: normalSampleColor(row), width: normalSampleWidth(row, RECT_BASE_LINE_WIDTH), normal: [0, 1, 0], joint: "round" }, true);
+    drawRectNormals(recorder, rectLoop(RECT_LAYOUT.at(6, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), RECT_FLAT_BASIS, { color: normalSampleColor(row), width: normalSampleWidth(row, RECT_BASE_LINE_WIDTH), joint: "round" });
   }
   // rect_n_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(7, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: TEAL, width: RECT_BASE_LINE_WIDTH, normal: [0, 1, 0], dash: [dash, space, dashOffset], joint: "round" }, true);
+    drawRectNormals(recorder, rectLoop(RECT_LAYOUT.at(7, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), RECT_FLAT_BASIS, { color: TEAL, width: RECT_BASE_LINE_WIDTH, dash: [dash, space, dashOffset], joint: "round" });
   });
   // rect_n(joint)
   JOINT_VALUES.forEach((joint, row) => {
-    recorder.lineStrip(rectLoop(RECT_LAYOUT.at(8, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), { color: TEAL, width: RECT_EMPHASIS_LINE_WIDTH, normal: [0, 1, 0], joint }, true);
+    drawRectNormals(recorder, rectLoop(RECT_LAYOUT.at(8, row), RECT_FLAT_BASIS, RECT_WIDTH, RECT_HEIGHT), RECT_FLAT_BASIS, { color: TEAL, width: RECT_EMPHASIS_LINE_WIDTH, joint });
   });
   // rect_s(solid)
   for (let row = 0; row < RECT_S_SAMPLE_COUNT; row++) {
@@ -1234,11 +1280,11 @@ function boxMatrix(recorder: FrameRecorder, context: SceneContext): void {
   });
   // box_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    drawBox(recorder, boxCenter(4, row), IDENTITY_BASIS, BOX_SIZE, { color: normalSampleColor(row), width: normalSampleWidth(row, BOX_BASE_LINE_WIDTH), normal: [0, 1, 0] });
+    drawBoxNormals(recorder, boxCenter(4, row), IDENTITY_BASIS, BOX_SIZE, { color: normalSampleColor(row), width: normalSampleWidth(row, BOX_BASE_LINE_WIDTH) });
   }
   // box_n_d(dash)
   DASH_VALUES.forEach(([dash, space], row) => {
-    drawBox(recorder, boxCenter(5, row), IDENTITY_BASIS, BOX_SIZE, { color: TEAL, width: BOX_BASE_LINE_WIDTH, normal: [0, 1, 0], dash: [dash, space, fposmod(dashOffset, dash + space)] });
+    drawBoxNormals(recorder, boxCenter(5, row), IDENTITY_BASIS, BOX_SIZE, { color: TEAL, width: BOX_BASE_LINE_WIDTH, dash: [dash, space, fposmod(dashOffset, dash + space)] });
   });
   // box_s(solid): the reference also overlays the normal-aware wireframe.
   for (let row = 0; row < BOX_S_SAMPLE_COUNT; row++) {
@@ -1375,15 +1421,15 @@ function apiMatrix(recorder: FrameRecorder, config: ApiMatrixConfig): void {
   recorder.grid(indexPath(8, 1, 0.5), [4, 3], [0.25, 0.25], { color: INDEX_BRIGHT_CYAN, width: w(1.5), widthMode, rotation: [Math.PI * 0.5, 0, 0], outer: "xz", skew: [0, 0], normal: INDEX_UP });
 
   // rect: base, [solid], normal, dashed, normal + dashed
+  // `index.gd` passes `Quaternion.IDENTITY` for this column, so the rect lies in the XY plane
+  // rather than the ground plane (unlike `rect.gd`, whose own flat basis is the XZ plane).
   let rectRow = 0;
-  const wireRect = (row: number, options: LineOptions): void => {
-    recorder.lineStrip(rectLoop(indexPath(9, row, 0.5), RECT_FLAT_BASIS, 0.8, 0.5), options, true);
-  };
-  wireRect(rectRow++, { color: WHITE, width: w(2), widthMode, joint: "round" });
-  if (solids) recorder.mesh(rectMesh(indexPath(9, rectRow++, 0.5), RECT_FLAT_BASIS, 0.8, 0.5), { color: [1, 0.25, 0.25, 0.45], solid: true });
-  wireRect(rectRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
-  wireRect(rectRow++, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
-  wireRect(rectRow++, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+  const rectAt = (row: number): Vec3[] => rectLoop(indexPath(9, row, 0.5), IDENTITY_BASIS, 0.8, 0.5);
+  recorder.lineStrip(rectAt(rectRow++), { color: WHITE, width: w(2), widthMode, joint: "round" }, true);
+  if (solids) recorder.mesh(rectMesh(indexPath(9, rectRow++, 0.5), IDENTITY_BASIS, 0.8, 0.5), { color: [1, 0.25, 0.25, 0.45], solid: true });
+  drawRectNormals(recorder, rectAt(rectRow++), IDENTITY_BASIS, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" });
+  recorder.lineStrip(rectAt(rectRow++), { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash }, true);
+  drawRectNormals(recorder, rectAt(rectRow++), IDENTITY_BASIS, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", dash });
 
   // box: base, [solid], normal, dashed, normal + dashed
   const boxSize: Vec3 = [0.7, 0.7, 0.7];
@@ -1391,59 +1437,76 @@ function apiMatrix(recorder: FrameRecorder, config: ApiMatrixConfig): void {
   const wireBox = (row: number, options: LineOptions): void => {
     drawBox(recorder, indexPath(10, row, 0.5), IDENTITY_BASIS, boxSize, options);
   };
+  const wireBoxNormals = (row: number, options: LineOptions): void => {
+    drawBoxNormals(recorder, indexPath(10, row, 0.5), IDENTITY_BASIS, boxSize, options);
+  };
   wireBox(boxRow++, { color: WHITE, width: w(2), widthMode });
   if (solids) recorder.mesh(transformMeshByBasis(box(boxSize), indexPath(10, boxRow++, 0.5), IDENTITY_BASIS), { color: [1, 0.45, 0.2, 0.35], solid: true });
-  wireBox(boxRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, normal: INDEX_UP });
+  wireBoxNormals(boxRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode });
   wireBox(boxRow++, { color: INDEX_GOLD, width: w(2), widthMode, dash });
-  wireBox(boxRow++, { color: INDEX_MINT, width: w(2), widthMode, normal: INDEX_UP, dash });
+  wireBoxNormals(boxRow++, { color: INDEX_MINT, width: w(2), widthMode, dash });
 
   // circle: base, [solid], normal, dashed, normal + dashed
+  // `Quaternion.IDENTITY` in `index.gd` puts this column in the XY plane as well, so the ring and
+  // its solid fan are vertical here while `circle.gd`'s own flat basis stays on the ground.
   let circleRow = 0;
-  const wireCircle = (row: number, options: LineOptions): void => {
-    recorder.lineStrip(circlePoints(0.4, 32, [0, 0, 0], indexPath(11, row, 0.5)), options, true);
-  };
-  wireCircle(circleRow++, { color: WHITE, width: w(2), widthMode, joint: "round" });
-  if (solids) recorder.mesh(disc(0.4, 32, indexPath(11, circleRow++, 0.5)), { color: [0.25, 0.65, 1, 0.45], solid: true });
-  wireCircle(circleRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
-  wireCircle(circleRow++, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
-  wireCircle(circleRow++, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+  const circleRing = (row: number): Vec3[] => circlePoints(indexPath(11, row, 0.5), 0.4, 32, IDENTITY_BASIS);
+  recorder.lineStrip(circleRing(circleRow++), { color: WHITE, width: w(2), widthMode, joint: "round" }, true);
+  if (solids) recorder.mesh(circleSolidMesh(0.4, 32, indexPath(11, circleRow++, 0.5), IDENTITY_BASIS), { color: [0.25, 0.65, 1, 0.45], solid: true });
+  drawCircleNormals(recorder, circleRing(circleRow++), 32, IDENTITY_BASIS, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" });
+  recorder.lineStrip(circleRing(circleRow++), { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash }, true);
+  drawCircleNormals(recorder, circleRing(circleRow++), 32, IDENTITY_BASIS, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", dash });
 
   // arc
-  const wireArc = (row: number, options: LineOptions): void => {
-    recorder.lineStrip(arcPoints(indexPath(12, row, 0.5), 0.45, Math.PI * 1.25, 32, FLAT_BASIS), options, false);
-  };
-  wireArc(0, { color: WHITE, width: w(2), widthMode, joint: "round" });
-  wireArc(1, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
-  wireArc(2, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
-  wireArc(3, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+  const arcAt = (row: number): Vec3[] => arcPoints(indexPath(12, row, 0.5), 0.45, Math.PI * 1.25, 32, IDENTITY_BASIS);
+  recorder.lineStrip(arcAt(0), { color: WHITE, width: w(2), widthMode, joint: "round" }, false);
+  drawArcNormals(recorder, arcAt(1), Math.PI * 1.25, 32, IDENTITY_BASIS, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" });
+  recorder.lineStrip(arcAt(2), { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash }, false);
+  drawArcNormals(recorder, arcAt(3), Math.PI * 1.25, 32, IDENTITY_BASIS, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", dash });
 
   // sphere: base, [solid], normal, dashed, normal + dashed
-  const sphereMesh = (row: number): MeshData => sphere(0.4, 32, 2, indexPath(13, row, 0.5));
+  const sphereAt = (row: number): ShapeWire => sphereWire(0.4, 32, 2, 2, indexPath(13, row, 0.5), IDENTITY_BASIS);
+  const wireSphere = (row: number, options: LineOptions, normalAware: boolean): void => {
+    const shape = sphereAt(row);
+    drawShapeWire(recorder, shape, options, normalAware ? sphereWireNormals(indexPath(13, row, 0.5), shape) : undefined);
+  };
   let sphereRow = 0;
-  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: WHITE, width: w(2), widthMode, joint: "round" });
-  if (solids) recorder.mesh(sphereMesh(sphereRow++), { color: [0.35, 0.75, 1, 0.35], solid: true });
-  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
-  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash });
-  drawMeshEdges(recorder, sphereMesh(sphereRow++), { color: INDEX_MINT, width: w(2), widthMode, joint: "round", normal: INDEX_UP, dash });
+  wireSphere(sphereRow++, { color: WHITE, width: w(2), widthMode, joint: "round" }, false);
+  if (solids) recorder.mesh(sphereSolidMesh(0.4, indexPath(13, sphereRow++, 0.5), IDENTITY_BASIS), { color: [0.35, 0.75, 1, 0.35], solid: true });
+  wireSphere(sphereRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" }, true);
+  wireSphere(sphereRow++, { color: INDEX_GOLD, width: w(2), widthMode, joint: "miter", dash }, false);
+  wireSphere(sphereRow++, { color: INDEX_MINT, width: w(2), widthMode, joint: "round", dash }, true);
 
   // cone: base, [solid], normal
-  const coneMesh = (row: number): MeshData => cone(0.35, 0.8, 32, indexPath(14, row, 0.5));
+  const coneAt = (row: number): ShapeWire => coneWire(0.35, 0.8, 32, 8, indexPath(14, row, 0.5), IDENTITY_BASIS);
+  const wireCone = (row: number, options: LineOptions, normalAware: boolean): void => {
+    const shape = coneAt(row);
+    drawShapeWire(recorder, shape, options, normalAware ? coneWireNormals(shape, 0.35, 0.8, 8, IDENTITY_BASIS) : undefined);
+  };
   let coneRow = 0;
-  drawMeshEdges(recorder, coneMesh(coneRow++), { color: WHITE, width: w(2), widthMode, joint: "round" });
-  if (solids) recorder.mesh(coneMesh(coneRow++), { color: [1, 0.45, 0.25, 0.35], solid: true });
-  drawMeshEdges(recorder, coneMesh(coneRow++), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  wireCone(coneRow++, { color: WHITE, width: w(2), widthMode, joint: "round" }, false);
+  if (solids) recorder.mesh(coneSolidMesh(0.35, 0.8, indexPath(14, coneRow++, 0.5), IDENTITY_BASIS), { color: [1, 0.45, 0.25, 0.35], solid: true });
+  wireCone(coneRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" }, true);
 
   // cylinder: base, [solid], normal
-  const cylinderMesh = (row: number): MeshData => cylinder(0.35, 0.4, 32, indexPath(15, row, 0.5));
+  const cylinderAt = (row: number): ShapeWire => cylinderWire(0.35, 0.4, 32, 8, indexPath(15, row, 0.5), IDENTITY_BASIS);
+  const wireCylinder = (row: number, options: LineOptions, normalAware: boolean): void => {
+    const shape = cylinderAt(row);
+    drawShapeWire(recorder, shape, options, normalAware ? cylinderWireNormals(shape, 0.35, 0.4, 8, IDENTITY_BASIS) : undefined);
+  };
   let cylinderRow = 0;
-  drawMeshEdges(recorder, cylinderMesh(cylinderRow++), { color: WHITE, width: w(2), widthMode, joint: "round" });
-  if (solids) recorder.mesh(cylinderMesh(cylinderRow++), { color: [0.6, 0.45, 1, 0.35], solid: true });
-  drawMeshEdges(recorder, cylinderMesh(cylinderRow++), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  wireCylinder(cylinderRow++, { color: WHITE, width: w(2), widthMode, joint: "round" }, false);
+  if (solids) recorder.mesh(cylinderSolidMesh(0.35, 0.4, indexPath(15, cylinderRow++, 0.5), IDENTITY_BASIS), { color: [0.6, 0.45, 1, 0.35], solid: true });
+  wireCylinder(cylinderRow++, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" }, true);
 
   // capsule: base, normal
-  const capsuleMesh = (row: number): MeshData => capsule(0.32, 0.45, 32, 2, indexPath(16, row, 0.5));
-  drawMeshEdges(recorder, capsuleMesh(0), { color: WHITE, width: w(2), widthMode, joint: "round" });
-  drawMeshEdges(recorder, capsuleMesh(1), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel", normal: INDEX_UP });
+  const capsuleAt = (row: number): ShapeWire => capsuleWire(0.32, 0.45, 32, 2, indexPath(16, row, 0.5), IDENTITY_BASIS);
+  const wireCapsule = (row: number, options: LineOptions, normalAware: boolean): void => {
+    const shape = capsuleAt(row);
+    drawShapeWire(recorder, shape, options, normalAware ? capsuleWireNormals(shape, 0.45, indexPath(16, row, 0.5), IDENTITY_BASIS) : undefined);
+  };
+  wireCapsule(0, { color: WHITE, width: w(2), widthMode, joint: "round" }, false);
+  wireCapsule(1, { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, joint: "bevel" }, true);
 }
 
 /** `index.gd`: screen-space widths, with the `*_s` solid columns. */
@@ -1459,29 +1522,46 @@ function indexMatrix(recorder: FrameRecorder): void {
 // solid `*_s` column that draws a `from_hsv` mesh plus the normal-aware
 // wireframe. Capsule deliberately has no solid column in the reference.
 //
-// Our generators expose one mesh with triangles and edges, so wireframe columns
-// draw the generated edges and solid columns draw the triangles plus the same
-// edges as the reference's `*_n` overlay. Known approximations, also recorded
-// in `docs/godot-debug-draw-parity.md`:
-// - `draw_sphere` takes independent y-axis latitude rings and z-axis meridian
-//   great circles, but the generator only exposes longitudes (`segments`) and
-//   latitudes (`rings`). The y-axis column maps to `rings` and the z-axis column
-//   scales `segments`; the topology is representative, not exact.
-// - `draw_cone`/`draw_cylinder` take separate base and side segment counts while
-//   the generator uses one `segments` value for both.
-// - Normal-aware columns pass a single representative normal instead of the
-//   per-vertex normals the reference computes, and dashed wireframes dash each
-//   edge independently instead of following the continuous loop.
+// The wireframe topology is the reference's, not a mesh's: `sphere` emits one latitude
+// ring per `y_axis_segment_count` step plus one meridian great circle per
+// `z_axis_segment_count` step, `capsule` emits two rings plus `side_segment_count` closed
+// silhouettes, `cone`/`cylinder` emit their rings plus `side_segment_count` side lines.
+// The generators for that live in `geometry-generators.ts`; this file only places them.
 // ---------------------------------------------------------------------------
 
-const SHAPE_NORMAL: Vec3 = [0, 1, 0];
+/**
+ * Draws a reference shape wireframe.
+ *
+ * The reference emits one `draw_line_loop` per ring and a `draw_line_list` for the side
+ * lines, so a closed path keeps its joints and its accumulated dash phase; drawing the
+ * same points as independent segments would restart the dash pattern per edge.
+ */
+function drawShapeWire(recorder: FrameRecorder, shape: ShapeWire, options: LineOptions, normals?: ShapeNormals): void {
+  shape.loops.forEach((loop, index) => {
+    // Reference `draw_line_loop_n`: each ring joins and dashes with the normals it carries,
+    // while a plain ring keeps the flat style (`normal` is undefined there).
+    const loopNormals = normals?.loops?.[index];
+    recorder.lineStrip(loop, loopNormals === undefined ? options : { ...options, normals: loopNormals }, true);
+  });
+  shape.lines.forEach(([a, b], index) => {
+    const lineNormal = normals?.lines?.[index];
+    recorder.line(a, b, lineNormal === undefined ? options : { ...options, normal: lineNormal });
+  });
+}
 
-function drawMeshEdges(recorder: FrameRecorder, mesh: MeshData, options: LineOptions): void {
-  for (const [a, b] of mesh.segments) recorder.line(a, b, options);
+/** Reference `_emit_sphere_s` emits a `SphereMesh` (64 radial segments, 32 rings). */
+function sphereSolidMesh(radius: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(sphere(radius, 64, 32), center, basis);
 }
 
 /** Only the cone/cylinder segment tables differ from the shared sphere values. */
 const SHAPE_SEGMENT_VALUES = [3, 4, 8, 16] as const;
+
+/** Per-loop and per-line normals for the reference `*_n` entry points. */
+type ShapeNormals = {
+  readonly loops?: readonly (readonly Vec3[])[];
+  readonly lines?: readonly Vec3[];
+};
 
 function shapeScene(recorder: FrameRecorder, id: string, context: SceneContext): void {
   if (id === "sphere") sphereShape(recorder, context);
@@ -1537,22 +1617,28 @@ function sphereTunnelBasis(row: number): Basis3 {
   return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
 }
 
-/** `draw_sphere(segments, y_axis_segments, z_axis_segments)` approximated by a UV sphere. */
-function sphereAxisMesh(radius: number, segmentCount: number, yAxis: number, zAxis: number): MeshData {
-  const rings = Math.max(2, yAxis);
-  const segments = zAxis === SPHERE_AXIS_SEGMENT_COUNT ? segmentCount : Math.max(6, zAxis * 24);
-  return sphere(radius, segments, rings);
+/** `draw_sphere`: latitude rings (`yAxis`) plus meridian great circles (`zAxis`). */
+function sphereWireAt(radius: number, segments: number, yAxis: number, zAxis: number, center: Vec3, basis: Basis3): ShapeWire {
+  return sphereWire(radius, segments, yAxis, zAxis, center, basis);
 }
 
-function sphereMeshAt(radius: number, segmentCount: number, yAxis: number, zAxis: number, center: Vec3, basis: Basis3): MeshData {
-  return transformMeshByBasis(sphereAxisMesh(radius, segmentCount, yAxis, zAxis), center, basis);
+/** `draw_sphere_n`: every ring shaded from the sphere centre (`_get_sphere_ring_normals`). */
+function sphereWireNormals(center: Vec3, shape: ShapeWire): ShapeNormals {
+  return { loops: shape.loops.map((loop) => sphereRingNormals(center, loop)) };
 }
 
 function sphereShape(recorder: FrameRecorder, context: SceneContext): void {
   const dashOffset = context.time * DASH_OFFSET_SPEED;
-  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
-  const base = (column: number, row: number, segments = SPHERE_SEGMENT_COUNT, yAxis = 2, zAxis = 2): MeshData =>
-    sphereMeshAt(sphereColumnRadius(column, row), segments, yAxis, zAxis, sphereCenter(column, row), IDENTITY_BASIS);
+  const wire = (shape: ShapeWire, options: LineOptions): void => drawShapeWire(recorder, shape, options);
+  const base = (column: number, row: number, segments = SPHERE_SEGMENT_COUNT, yAxis = SPHERE_AXIS_SEGMENT_COUNT, zAxis = SPHERE_AXIS_SEGMENT_COUNT): ShapeWire =>
+    sphereWireAt(sphereColumnRadius(column, row), segments, yAxis, zAxis, sphereCenter(column, row), IDENTITY_BASIS);
+  // `draw_sphere_n`: every ring (latitude ring and great circle alike) is shaded from the
+  // sphere centre, which is exactly what `_get_sphere_ring_normals` computes.
+  const wireNormal = (column: number, row: number, options: LineOptions, segments = SPHERE_SEGMENT_COUNT, yAxis = SPHERE_AXIS_SEGMENT_COUNT, zAxis = SPHERE_AXIS_SEGMENT_COUNT): void => {
+    const shape = base(column, row, segments, yAxis, zAxis);
+    const center = sphereCenter(column, row);
+    drawShapeWire(recorder, shape, options, { loops: shape.loops.map((loop) => sphereRingNormals(center, loop)) });
+  };
 
   // sphere(width)
   WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
@@ -1563,12 +1649,12 @@ function sphereShape(recorder: FrameRecorder, context: SceneContext): void {
   // sphere(y axis)
   SPHERE_Y_AXIS_SEGMENT_VALUES.forEach((yAxis, row) => wire(base(3, row, SPHERE_SEGMENT_COUNT, yAxis), { color: GOLD, width: SPHERE_BASE_LINE_WIDTH }));
   // sphere(z axis)
-  SPHERE_Z_AXIS_SEGMENT_VALUES.forEach((zAxis, row) => wire(base(4, row, SPHERE_SEGMENT_COUNT, 2, zAxis), { color: ORANGE_FULL, width: SPHERE_BASE_LINE_WIDTH }));
+  SPHERE_Z_AXIS_SEGMENT_VALUES.forEach((zAxis, row) => wire(base(4, row, SPHERE_SEGMENT_COUNT, SPHERE_AXIS_SEGMENT_COUNT, zAxis), { color: ORANGE_FULL, width: SPHERE_BASE_LINE_WIDTH }));
   // sphere(rotation)
   for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
     const scale = 1 - row * SPHERE_ROTATION_TUNNEL_SCALE_STEP;
-    const mesh = sphereMeshAt(SPHERE_ROTATION_TUNNEL_RADIUS * scale, SPHERE_SEGMENT_COUNT, 2, 2, sphereTunnelCenter(5, row, SPHERE_ROTATION_TUNNEL_Y, SPHERE_ROTATION_TUNNEL_DEPTH_STEP), sphereTunnelBasis(row));
-    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: SPHERE_BASE_LINE_WIDTH });
+    const shape = sphereWireAt(SPHERE_ROTATION_TUNNEL_RADIUS * scale, SPHERE_SEGMENT_COUNT, SPHERE_AXIS_SEGMENT_COUNT, SPHERE_AXIS_SEGMENT_COUNT, sphereTunnelCenter(5, row, SPHERE_ROTATION_TUNNEL_Y, SPHERE_ROTATION_TUNNEL_DEPTH_STEP), sphereTunnelBasis(row));
+    wire(shape, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: SPHERE_BASE_LINE_WIDTH });
   }
   // sphere(joint)
   JOINT_VALUES.forEach((joint, row) => wire(base(6, row, SPHERE_JOINT_SEGMENT_COUNT), { color: VIOLET, width: SPHERE_JOINT_LINE_WIDTH, joint }));
@@ -1578,20 +1664,23 @@ function sphereShape(recorder: FrameRecorder, context: SceneContext): void {
   JOINT_VALUES.forEach((joint, row) => wire(base(8, row, SPHERE_JOINT_SEGMENT_COUNT), { color: PINK, width: SPHERE_JOINT_LINE_WIDTH, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] }));
   // sphere_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    wire(base(9, row), { color: normalSampleColor(row), width: normalSampleWidth(row, SPHERE_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+    wireNormal(9, row, { color: normalSampleColor(row), width: normalSampleWidth(row, SPHERE_BASE_LINE_WIDTH), joint: "round" });
   }
   // sphere_n(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(10, row, SPHERE_JOINT_SEGMENT_COUNT), { color: TEAL, width: SPHERE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  JOINT_VALUES.forEach((joint, row) => wireNormal(10, row, { color: TEAL, width: SPHERE_JOINT_LINE_WIDTH, joint }, SPHERE_JOINT_SEGMENT_COUNT));
   // sphere_n_d(dash)
-  DASH_VALUES.forEach(([dash, space], row) => wire(base(11, row), { color: TEAL, width: SPHERE_BASE_LINE_WIDTH, normal: SHAPE_NORMAL, dash: [dash, space, fposmod(dashOffset, dash + space)], joint: "round" }));
+  DASH_VALUES.forEach(([dash, space], row) => wireNormal(11, row, { color: TEAL, width: SPHERE_BASE_LINE_WIDTH, dash: [dash, space, fposmod(dashOffset, dash + space)], joint: "round" }));
   // sphere_n_d(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(12, row, SPHERE_JOINT_SEGMENT_COUNT), { color: TEAL, width: SPHERE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] }));
-  // sphere_s(solid): the reference also overlays the normal-aware wireframe.
+  JOINT_VALUES.forEach((joint, row) => wireNormal(12, row, { color: TEAL, width: SPHERE_JOINT_LINE_WIDTH, joint, dash: [0.18, 0.1, fposmod(dashOffset, 0.28)] }, SPHERE_JOINT_SEGMENT_COUNT));
+  // sphere_s(solid): the reference draws the `SphereMesh` and overlays the wireframe.
   for (let row = 0; row < SPHERE_S_SAMPLE_COUNT; row++) {
     const scale = 1 - row * SPHERE_S_TUNNEL_SCALE_STEP;
-    const mesh = sphereMeshAt(SPHERE_S_TUNNEL_RADIUS * scale, SPHERE_SEGMENT_COUNT, 2, 2, sphereTunnelCenter(13, row, SPHERE_S_TUNNEL_Y, SPHERE_S_TUNNEL_DEPTH_STEP), sphereTunnelBasis(row));
-    recorder.mesh(mesh, { color: fromHsv(row / SPHERE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
-    wire(mesh, { color: fromHsv(row / SPHERE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: SPHERE_BASE_LINE_WIDTH });
+    const center = sphereTunnelCenter(13, row, SPHERE_S_TUNNEL_Y, SPHERE_S_TUNNEL_DEPTH_STEP);
+    const basis = sphereTunnelBasis(row);
+    const radius = SPHERE_S_TUNNEL_RADIUS * scale;
+    const shape = sphereWireAt(radius, SPHERE_SEGMENT_COUNT, SPHERE_AXIS_SEGMENT_COUNT, SPHERE_AXIS_SEGMENT_COUNT, center, basis);
+    recorder.mesh(sphereSolidMesh(radius, center, basis), { color: fromHsv(row / SPHERE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
+    drawShapeWire(recorder, shape, { color: fromHsv(row / SPHERE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: SPHERE_BASE_LINE_WIDTH }, sphereWireNormals(center, shape));
   }
 }
 
@@ -1603,6 +1692,10 @@ const CONE_RADIUS = 0.28;
 const CONE_HEIGHT = 0.7;
 const CONE_BASE_LINE_WIDTH = 2;
 const CONE_JOINT_LINE_WIDTH = 8;
+const CONE_SEGMENT_COUNT = 16;
+const CONE_SIDE_SEGMENT_COUNT = 8;
+const CONE_JOINT_SEGMENT_COUNT = 8;
+const CONE_JOINT_SIDE_SEGMENT_COUNT = 8;
 const CONE_HEIGHT_VALUES = [0.45, 0.65, 0.85, 1.05] as const;
 const CONE_ROTATION_TUNNEL_RADIUS = 0.34;
 const CONE_ROTATION_TUNNEL_HEIGHT = 0.82;
@@ -1649,14 +1742,35 @@ function coneTunnelBasis(row: number): Basis3 {
   return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
 }
 
-function coneMeshAt(radius: number, height: number, segments: number, center: Vec3, basis: Basis3): MeshData {
-  return transformMeshByBasis(cone(radius, height, Math.max(3, segments)), center, basis);
+function coneWireAt(radius: number, height: number, segments: number, sideSegments: number, center: Vec3, basis: Basis3): ShapeWire {
+  return coneWire(radius, height, segments, sideSegments, center, basis);
+}
+
+/** Reference `_emit_cone_s` emits a `CylinderMesh` (`top_radius = 0`). */
+function coneSolidMesh(radius: number, height: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(cone(radius, height, 64), center, basis);
+}
+
+/**
+ * `draw_cone_n`: the base ring uses `_get_circle_normals` on the cone's base basis, the side
+ * lines use `_get_cone_side_line_normals` (one tilted normal per line).
+ */
+function coneWireNormals(shape: ShapeWire, radius: number, height: number, sideSegments: number, basis: Basis3): ShapeNormals {
+  const ringNormals = circleNormals(shape.loops[0]?.length ?? 0, coneBaseBasis(basis));
+  return {
+    loops: shape.loops.map(() => ringNormals),
+    lines: coneSideLineNormals(radius, height, sideSegments, basis),
+  };
 }
 
 function coneShape(recorder: FrameRecorder): void {
-  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
-  const base = (column: number, row: number, segments = 16): MeshData =>
-    coneMeshAt(coneColumnRadius(column, row), coneColumnHeight(column, row), segments, coneCenter(column, row), IDENTITY_BASIS);
+  const wire = (shape: ShapeWire, options: LineOptions): void => drawShapeWire(recorder, shape, options);
+  const base = (column: number, row: number, segments = CONE_SEGMENT_COUNT, sideSegments = CONE_SIDE_SEGMENT_COUNT): ShapeWire =>
+    coneWireAt(coneColumnRadius(column, row), coneColumnHeight(column, row), segments, sideSegments, coneCenter(column, row), IDENTITY_BASIS);
+  const wireNormal = (column: number, row: number, options: LineOptions, segments = CONE_SEGMENT_COUNT, sideSegments = CONE_SIDE_SEGMENT_COUNT): void => {
+    const shape = base(column, row, segments, sideSegments);
+    drawShapeWire(recorder, shape, options, coneWireNormals(shape, coneColumnRadius(column, row), coneColumnHeight(column, row), sideSegments, IDENTITY_BASIS));
+  };
 
   // cone(width)
   WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
@@ -1667,27 +1781,31 @@ function coneShape(recorder: FrameRecorder): void {
   // cone(segments)
   SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(3, row, segments), { color: GOLD, width: CONE_BASE_LINE_WIDTH }));
   // cone(side segments)
-  SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(4, row, segments), { color: ORANGE_FULL, width: CONE_BASE_LINE_WIDTH }));
+  SHAPE_SEGMENT_VALUES.forEach((sideSegments, row) => wire(base(4, row, CONE_SEGMENT_COUNT, sideSegments), { color: ORANGE_FULL, width: CONE_BASE_LINE_WIDTH }));
   // cone(rotation)
   for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
     const scale = 1 - row * CONE_ROTATION_TUNNEL_SCALE_STEP;
-    const mesh = coneMeshAt(CONE_ROTATION_TUNNEL_RADIUS * scale, CONE_ROTATION_TUNNEL_HEIGHT * scale, 16, coneTunnelCenter(5, row, CONE_ROTATION_TUNNEL_Y, CONE_ROTATION_TUNNEL_DEPTH_STEP), coneTunnelBasis(row));
-    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CONE_BASE_LINE_WIDTH });
+    const shape = coneWireAt(CONE_ROTATION_TUNNEL_RADIUS * scale, CONE_ROTATION_TUNNEL_HEIGHT * scale, CONE_SEGMENT_COUNT, CONE_SIDE_SEGMENT_COUNT, coneTunnelCenter(5, row, CONE_ROTATION_TUNNEL_Y, CONE_ROTATION_TUNNEL_DEPTH_STEP), coneTunnelBasis(row));
+    wire(shape, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CONE_BASE_LINE_WIDTH });
   }
   // cone(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, 8), { color: VIOLET, width: CONE_JOINT_LINE_WIDTH, joint }));
+  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, CONE_JOINT_SEGMENT_COUNT, CONE_JOINT_SIDE_SEGMENT_COUNT), { color: VIOLET, width: CONE_JOINT_LINE_WIDTH, joint }));
   // cone_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    wire(base(7, row), { color: normalSampleColor(row), width: normalSampleWidth(row, CONE_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+    wireNormal(7, row, { color: normalSampleColor(row), width: normalSampleWidth(row, CONE_BASE_LINE_WIDTH), joint: "round" });
   }
   // cone_n(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, 8), { color: TEAL, width: CONE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  JOINT_VALUES.forEach((joint, row) => wireNormal(8, row, { color: TEAL, width: CONE_JOINT_LINE_WIDTH, joint }, CONE_JOINT_SEGMENT_COUNT, CONE_JOINT_SIDE_SEGMENT_COUNT));
   // cone_s(solid): the reference also overlays the normal-aware wireframe.
   for (let row = 0; row < CONE_S_SAMPLE_COUNT; row++) {
     const scale = 1 - row * CONE_S_TUNNEL_SCALE_STEP;
-    const mesh = coneMeshAt(CONE_S_TUNNEL_RADIUS * scale, CONE_S_TUNNEL_HEIGHT * scale, 16, coneTunnelCenter(9, row, CONE_S_TUNNEL_Y, CONE_S_TUNNEL_DEPTH_STEP), coneTunnelBasis(row));
-    recorder.mesh(mesh, { color: fromHsv(row / CONE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
-    wire(mesh, { color: fromHsv(row / CONE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: CONE_BASE_LINE_WIDTH });
+    const center = coneTunnelCenter(9, row, CONE_S_TUNNEL_Y, CONE_S_TUNNEL_DEPTH_STEP);
+    const basis = coneTunnelBasis(row);
+    const radius = CONE_S_TUNNEL_RADIUS * scale;
+    const height = CONE_S_TUNNEL_HEIGHT * scale;
+    const shape = coneWireAt(radius, height, CONE_SEGMENT_COUNT, CONE_SIDE_SEGMENT_COUNT, center, basis);
+    recorder.mesh(coneSolidMesh(radius, height, center, basis), { color: fromHsv(row / CONE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
+    drawShapeWire(recorder, shape, { color: fromHsv(row / CONE_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: CONE_BASE_LINE_WIDTH, joint: "round" }, coneWireNormals(shape, radius, height, CONE_SIDE_SEGMENT_COUNT, basis));
   }
 }
 
@@ -1699,6 +1817,10 @@ const CYLINDER_RADIUS = 0.28;
 const CYLINDER_HALF_HEIGHT = 0.35;
 const CYLINDER_BASE_LINE_WIDTH = 2;
 const CYLINDER_JOINT_LINE_WIDTH = 8;
+const CYLINDER_SEGMENT_COUNT = 16;
+const CYLINDER_SIDE_SEGMENT_COUNT = 8;
+const CYLINDER_JOINT_SEGMENT_COUNT = 8;
+const CYLINDER_JOINT_SIDE_SEGMENT_COUNT = 8;
 const CYLINDER_HALF_HEIGHT_VALUES = [0.225, 0.325, 0.425, 0.525] as const;
 const CYLINDER_ROTATION_TUNNEL_RADIUS = 0.34;
 const CYLINDER_ROTATION_TUNNEL_HALF_HEIGHT = 0.41;
@@ -1745,14 +1867,35 @@ function cylinderTunnelBasis(row: number): Basis3 {
   return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
 }
 
-function cylinderMeshAt(radius: number, halfHeight: number, segments: number, center: Vec3, basis: Basis3): MeshData {
-  return transformMeshByBasis(cylinder(radius, halfHeight, Math.max(3, segments)), center, basis);
+function cylinderWireAt(radius: number, halfHeight: number, segments: number, sideSegments: number, center: Vec3, basis: Basis3): ShapeWire {
+  return cylinderWire(radius, halfHeight, segments, sideSegments, center, basis);
+}
+
+/** Reference `_emit_cylinder_s` emits a `CylinderMesh`. */
+function cylinderSolidMesh(radius: number, halfHeight: number, center: Vec3, basis: Basis3): MeshData {
+  return transformMeshByBasis(cylinder(radius, halfHeight, 64), center, basis);
+}
+
+/**
+ * `draw_cylinder_n`: both rings use `_get_circle_normals` on the ring basis, the wall lines
+ * use `_get_cylinder_side_line_normals` (one radial normal per line).
+ */
+function cylinderWireNormals(shape: ShapeWire, radius: number, halfHeight: number, sideSegments: number, basis: Basis3): ShapeNormals {
+  const ringNormals = circleNormals(shape.loops[0]?.length ?? 0, coneBaseBasis(basis));
+  return {
+    loops: shape.loops.map(() => ringNormals),
+    lines: cylinderSideLineNormals(radius, halfHeight, sideSegments, basis),
+  };
 }
 
 function cylinderShape(recorder: FrameRecorder): void {
-  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
-  const base = (column: number, row: number, segments = 16): MeshData =>
-    cylinderMeshAt(cylinderColumnRadius(column, row), cylinderColumnHalfHeight(column, row), segments, cylinderCenter(column, row), IDENTITY_BASIS);
+  const wire = (shape: ShapeWire, options: LineOptions): void => drawShapeWire(recorder, shape, options);
+  const base = (column: number, row: number, segments = CYLINDER_SEGMENT_COUNT, sideSegments = CYLINDER_SIDE_SEGMENT_COUNT): ShapeWire =>
+    cylinderWireAt(cylinderColumnRadius(column, row), cylinderColumnHalfHeight(column, row), segments, sideSegments, cylinderCenter(column, row), IDENTITY_BASIS);
+  const wireNormal = (column: number, row: number, options: LineOptions, segments = CYLINDER_SEGMENT_COUNT, sideSegments = CYLINDER_SIDE_SEGMENT_COUNT): void => {
+    const shape = base(column, row, segments, sideSegments);
+    drawShapeWire(recorder, shape, options, cylinderWireNormals(shape, cylinderColumnRadius(column, row), cylinderColumnHalfHeight(column, row), sideSegments, IDENTITY_BASIS));
+  };
 
   // cylinder(width)
   WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
@@ -1763,27 +1906,31 @@ function cylinderShape(recorder: FrameRecorder): void {
   // cylinder(segments)
   SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(3, row, segments), { color: GOLD, width: CYLINDER_BASE_LINE_WIDTH }));
   // cylinder(side segments)
-  SHAPE_SEGMENT_VALUES.forEach((segments, row) => wire(base(4, row, segments), { color: ORANGE_FULL, width: CYLINDER_BASE_LINE_WIDTH }));
+  SHAPE_SEGMENT_VALUES.forEach((sideSegments, row) => wire(base(4, row, CYLINDER_SEGMENT_COUNT, sideSegments), { color: ORANGE_FULL, width: CYLINDER_BASE_LINE_WIDTH }));
   // cylinder(rotation)
   for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
     const scale = 1 - row * CYLINDER_ROTATION_TUNNEL_SCALE_STEP;
-    const mesh = cylinderMeshAt(CYLINDER_ROTATION_TUNNEL_RADIUS * scale, CYLINDER_ROTATION_TUNNEL_HALF_HEIGHT * scale, 16, cylinderTunnelCenter(5, row, CYLINDER_ROTATION_TUNNEL_Y, CYLINDER_ROTATION_TUNNEL_DEPTH_STEP), cylinderTunnelBasis(row));
-    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CYLINDER_BASE_LINE_WIDTH });
+    const shape = cylinderWireAt(CYLINDER_ROTATION_TUNNEL_RADIUS * scale, CYLINDER_ROTATION_TUNNEL_HALF_HEIGHT * scale, CYLINDER_SEGMENT_COUNT, CYLINDER_SIDE_SEGMENT_COUNT, cylinderTunnelCenter(5, row, CYLINDER_ROTATION_TUNNEL_Y, CYLINDER_ROTATION_TUNNEL_DEPTH_STEP), cylinderTunnelBasis(row));
+    wire(shape, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CYLINDER_BASE_LINE_WIDTH });
   }
   // cylinder(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, 8), { color: VIOLET, width: CYLINDER_JOINT_LINE_WIDTH, joint }));
+  JOINT_VALUES.forEach((joint, row) => wire(base(6, row, CYLINDER_JOINT_SEGMENT_COUNT, CYLINDER_JOINT_SIDE_SEGMENT_COUNT), { color: VIOLET, width: CYLINDER_JOINT_LINE_WIDTH, joint }));
   // cylinder_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    wire(base(7, row), { color: normalSampleColor(row), width: normalSampleWidth(row, CYLINDER_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+    wireNormal(7, row, { color: normalSampleColor(row), width: normalSampleWidth(row, CYLINDER_BASE_LINE_WIDTH), joint: "round" });
   }
   // cylinder_n(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, 8), { color: TEAL, width: CYLINDER_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  JOINT_VALUES.forEach((joint, row) => wireNormal(8, row, { color: TEAL, width: CYLINDER_JOINT_LINE_WIDTH, joint }, CYLINDER_JOINT_SEGMENT_COUNT, CYLINDER_JOINT_SIDE_SEGMENT_COUNT));
   // cylinder_s(solid): the reference also overlays the normal-aware wireframe.
   for (let row = 0; row < CYLINDER_S_SAMPLE_COUNT; row++) {
     const scale = 1 - row * CYLINDER_S_TUNNEL_SCALE_STEP;
-    const mesh = cylinderMeshAt(CYLINDER_S_TUNNEL_RADIUS * scale, CYLINDER_S_TUNNEL_HALF_HEIGHT * scale, 16, cylinderTunnelCenter(9, row, CYLINDER_S_TUNNEL_Y, CYLINDER_S_TUNNEL_DEPTH_STEP), cylinderTunnelBasis(row));
-    recorder.mesh(mesh, { color: fromHsv(row / CYLINDER_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
-    wire(mesh, { color: fromHsv(row / CYLINDER_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: CYLINDER_BASE_LINE_WIDTH });
+    const center = cylinderTunnelCenter(9, row, CYLINDER_S_TUNNEL_Y, CYLINDER_S_TUNNEL_DEPTH_STEP);
+    const basis = cylinderTunnelBasis(row);
+    const radius = CYLINDER_S_TUNNEL_RADIUS * scale;
+    const halfHeight = CYLINDER_S_TUNNEL_HALF_HEIGHT * scale;
+    const shape = cylinderWireAt(radius, halfHeight, CYLINDER_SEGMENT_COUNT, CYLINDER_SIDE_SEGMENT_COUNT, center, basis);
+    recorder.mesh(cylinderSolidMesh(radius, halfHeight, center, basis), { color: fromHsv(row / CYLINDER_S_SAMPLE_COUNT + 0.6, 0.7, 1, 0.35), solid: true });
+    drawShapeWire(recorder, shape, { color: fromHsv(row / CYLINDER_S_SAMPLE_COUNT + 0.6, 0.7, 1, 1), width: CYLINDER_BASE_LINE_WIDTH, joint: "round" }, cylinderWireNormals(shape, radius, halfHeight, CYLINDER_SIDE_SEGMENT_COUNT, basis));
   }
 }
 
@@ -1840,14 +1987,31 @@ function capsuleTunnelBasis(row: number): Basis3 {
   return rotateBasis(basis, [0, 1, 0], row * Math.PI * 0.08);
 }
 
-function capsuleMeshAt(radius: number, halfHeight: number, segments: number, sideSegments: number, center: Vec3, basis: Basis3): MeshData {
-  return transformMeshByBasis(capsule(radius, halfHeight, Math.max(3, segments), Math.max(2, sideSegments)), center, basis);
+function capsuleWireAt(radius: number, halfHeight: number, segments: number, sideSegments: number, center: Vec3, basis: Basis3): ShapeWire {
+  return capsuleWire(radius, halfHeight, segments, sideSegments, center, basis);
+}
+
+/**
+ * `draw_capsule_n`: cap rings use `_get_circle_normals` and the silhouettes
+ * `_get_capsule_side_outline_normals`. Both reduce to the same formula here -- an outline
+ * segment midpoint projected back onto the cap axis -- because a ring midpoint projects onto
+ * its own cap centre, so one helper covers every loop in the reference order.
+ */
+function capsuleWireNormals(shape: ShapeWire, halfHeight: number, center: Vec3, basis: Basis3): ShapeNormals {
+  const axis = normalizeVector(basis.y);
+  const bottomCenter = offsetAlong(center, axis, -halfHeight);
+  const topCenter = offsetAlong(center, axis, halfHeight);
+  return { loops: shape.loops.map((loop) => capsuleOutlineNormals(bottomCenter, topCenter, axis, loop)) };
 }
 
 function capsuleShape(recorder: FrameRecorder): void {
-  const wire = (mesh: MeshData, options: LineOptions): void => drawMeshEdges(recorder, mesh, options);
-  const base = (column: number, row: number, segments = CAPSULE_SEGMENT_COUNT, sideSegments = CAPSULE_SIDE_SEGMENT_COUNT): MeshData =>
-    capsuleMeshAt(capsuleColumnRadius(column, row), capsuleColumnHalfHeight(column, row), segments, sideSegments, capsuleCenter(column, row), IDENTITY_BASIS);
+  const wire = (shape: ShapeWire, options: LineOptions): void => drawShapeWire(recorder, shape, options);
+  const base = (column: number, row: number, segments = CAPSULE_SEGMENT_COUNT, sideSegments = CAPSULE_SIDE_SEGMENT_COUNT): ShapeWire =>
+    capsuleWireAt(capsuleColumnRadius(column, row), capsuleColumnHalfHeight(column, row), segments, sideSegments, capsuleCenter(column, row), IDENTITY_BASIS);
+  const wireNormal = (column: number, row: number, options: LineOptions, segments = CAPSULE_SEGMENT_COUNT, sideSegments = CAPSULE_SIDE_SEGMENT_COUNT): void => {
+    const shape = base(column, row, segments, sideSegments);
+    drawShapeWire(recorder, shape, options, capsuleWireNormals(shape, capsuleColumnHalfHeight(column, row), capsuleCenter(column, row), IDENTITY_BASIS));
+  };
 
   // capsule(width)
   WIDTH_VALUES.forEach((width, row) => wire(base(0, row), { color: WHITE, width }));
@@ -1862,17 +2026,17 @@ function capsuleShape(recorder: FrameRecorder): void {
   // capsule(rotation)
   for (let row = 0; row < ROTATION_SAMPLE_COUNT; row++) {
     const scale = 1 - row * CAPSULE_ROTATION_TUNNEL_SCALE_STEP;
-    const mesh = capsuleMeshAt(CAPSULE_ROTATION_TUNNEL_RADIUS * scale, CAPSULE_ROTATION_TUNNEL_HALF_HEIGHT * scale, CAPSULE_SEGMENT_COUNT, CAPSULE_SIDE_SEGMENT_COUNT, capsuleTunnelCenter(5, row, CAPSULE_ROTATION_TUNNEL_Y, CAPSULE_ROTATION_TUNNEL_DEPTH_STEP), capsuleTunnelBasis(row));
-    wire(mesh, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CAPSULE_BASE_LINE_WIDTH });
+    const shape = capsuleWireAt(CAPSULE_ROTATION_TUNNEL_RADIUS * scale, CAPSULE_ROTATION_TUNNEL_HALF_HEIGHT * scale, CAPSULE_SEGMENT_COUNT, CAPSULE_SIDE_SEGMENT_COUNT, capsuleTunnelCenter(5, row, CAPSULE_ROTATION_TUNNEL_Y, CAPSULE_ROTATION_TUNNEL_DEPTH_STEP), capsuleTunnelBasis(row));
+    wire(shape, { color: [0.95, 0.75, 0.25, 1 - row * 0.07], width: CAPSULE_BASE_LINE_WIDTH });
   }
   // capsule(joint)
   JOINT_VALUES.forEach((joint, row) => wire(base(6, row, CAPSULE_JOINT_SEGMENT_COUNT, CAPSULE_JOINT_SIDE_SEGMENT_COUNT), { color: VIOLET, width: CAPSULE_JOINT_LINE_WIDTH, joint }));
   // capsule_n
   for (let row = 0; row < NORMAL_SAMPLE_COUNT; row++) {
-    wire(base(7, row), { color: normalSampleColor(row), width: normalSampleWidth(row, CAPSULE_BASE_LINE_WIDTH), normal: SHAPE_NORMAL, joint: "round" });
+    wireNormal(7, row, { color: normalSampleColor(row), width: normalSampleWidth(row, CAPSULE_BASE_LINE_WIDTH), joint: "round" });
   }
   // capsule_n(joint)
-  JOINT_VALUES.forEach((joint, row) => wire(base(8, row, CAPSULE_JOINT_SEGMENT_COUNT, CAPSULE_JOINT_SIDE_SEGMENT_COUNT), { color: TEAL, width: CAPSULE_JOINT_LINE_WIDTH, normal: SHAPE_NORMAL, joint }));
+  JOINT_VALUES.forEach((joint, row) => wireNormal(8, row, { color: TEAL, width: CAPSULE_JOINT_LINE_WIDTH, joint }, CAPSULE_JOINT_SEGMENT_COUNT, CAPSULE_JOINT_SIDE_SEGMENT_COUNT));
 }
 
 export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {

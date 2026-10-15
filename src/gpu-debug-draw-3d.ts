@@ -50,6 +50,55 @@ fn clip_near_plane_t(a: vec4f, b: vec4f) -> f32 {
 `;
 }
 
+const normalFadeConstants = `
+const BACK_FADE_START: f32 = 1.74532925199;
+const BACK_FADE_TRANSITION: f32 = 0.34906585040;
+const NORMAL_BACK_FADE_ANGLE_MAX: f32 = 3.14159265359;
+const NORMAL_BACK_FADE_ANGLE_EPSILON: f32 = 0.0001;`;
+
+/**
+ * Normal-aware shading shared by `debug_normal_line_3d.gdshader` and
+ * `debug_normal_line_joint_3d_common.gdshaderinc`.
+ *
+ * `normal_fade` is the whole difference between the plain and `_n` pipelines: a stroke whose
+ * surface normal points away from the camera keeps only 20% of its brightness, fading back
+ * to full between `back_fade_start` (100°) and `back_fade_start + back_fade_transition` (20°)
+ * from the view direction. Both the angle constants and the `0.2` floor are the reference
+ * defaults, which every example scene keeps.
+ *
+ * `safe_normalize3` mirrors Godot's `Vector3.normalized()`, which returns a zero vector for
+ * a zero input instead of NaN; a zero normal then yields `facing_dot = 0`, i.e. full
+ * brightness, which is also what the reference does at the camera origin.
+ */
+const normalFadeHelpers = `
+${normalFadeConstants}
+
+fn safe_normalize3(value: vec3f) -> vec3f {
+  let lengthSquared = dot(value, value);
+  if (lengthSquared == 0.0) { return vec3f(0.0); }
+  return value * inverseSqrt(lengthSquared);
+}
+
+fn normal_fade(normal: vec3f, position: vec3f) -> f32 {
+  let viewDirection = safe_normalize3(-position);
+  let facingDot = dot(normal, viewDirection);
+  let fadeStartAngle = clamp(BACK_FADE_START, 0.0, NORMAL_BACK_FADE_ANGLE_MAX - NORMAL_BACK_FADE_ANGLE_EPSILON);
+  let fadeEndAngle = min(
+    fadeStartAngle + max(BACK_FADE_TRANSITION, NORMAL_BACK_FADE_ANGLE_EPSILON),
+    NORMAL_BACK_FADE_ANGLE_MAX
+  );
+  let fadeStartDot = cos(fadeStartAngle);
+  let fadeEndDot = cos(fadeEndAngle);
+  return mix(0.2, 1.0, smoothstep(fadeEndDot, fadeStartDot, facingDot));
+}
+
+/** Reference _resolve_normal: a missing normal falls back to +Z. */
+fn resolve_normal(normal: vec3f) -> vec3f {
+  if (dot(normal, normal) == 0.0) { return vec3f(0.0, 0.0, 1.0); }
+  return normalize(normal);
+}
+`;
+
 function pointShader(depthBias: number): string {
   return `
 struct Camera { viewProjection: mat4x4f, viewportSize: vec2f }
@@ -88,9 +137,10 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 
 function lineShader(depthBias: number): string {
   return `
-struct Camera { viewProjection: mat4x4f, viewportSize: vec2f }
+struct Camera { viewProjection: mat4x4f, view: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 ${depthBiasHelpers(depthBias)}
+${normalFadeHelpers}
 const CLIP_W_EPSILON: f32 = 0.0001;
 const SCREEN_EPSILON: f32 = 0.0001;
 
@@ -118,6 +168,13 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 
   var out: Out;
   out.color = mix(input.color, input.colorEnd, along);
+  // Normal-aware strokes fade when their surface normal faces away from the camera. Plain
+  // lines carry a zero normal and skip the fade, matching the two reference pipelines.
+  if (dot(input.normal, input.normal) > 0.0) {
+    let viewNormal = safe_normalize3((camera.view * vec4f(input.normal, 0.0)).xyz);
+    let viewCenter = (camera.view * vec4f(mix(input.start, input.end, 0.5), 1.0)).xyz;
+    out.color = vec4f(out.color.rgb * normal_fade(viewNormal, viewCenter), out.color.a);
+  }
   out.dash = input.dash;
   out.distance = along * pathLength + input.dash.z;
 
@@ -187,7 +244,7 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 `;
 }
 
-type Camera = { viewProjection: ArrayLike<number> };
+type Camera = { viewProjection: ArrayLike<number>; view: ArrayLike<number> };
 
 /**
  * Reference `round_joint_resolution` (3..8, default 8) and `miter_limit` (default 4.0) from
@@ -210,9 +267,10 @@ const JOINT_VERTEX_COUNT = ROUND_JOINT_RESOLUTION * 3;
  */
 function jointShader(depthBias: number): string {
   return `
-struct Camera { viewProjection: mat4x4f, viewportSize: vec2f }
+struct Camera { viewProjection: mat4x4f, view: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 ${depthBiasHelpers(depthBias)}
+${normalFadeHelpers}
 const CLIP_W_EPSILON: f32 = 0.0001;
 const SCREEN_EPSILON: f32 = 0.0001;
 const ROUND_RESOLUTION: i32 = ${ROUND_JOINT_RESOLUTION};
@@ -220,6 +278,37 @@ const MITER_LIMIT_VALUE: f32 = ${MITER_LIMIT.toFixed(1)};
 const JOINT_ROUND: u32 = 1u;
 const JOINT_BEVEL: u32 = 2u;
 const JOINT_MITER: u32 = 3u;
+
+/**
+ * Normal blend factors across a wedge, ported from round_normal_t / bevel_normal_t /
+ * miter_normal_t. The wedge interpolates the two path normals in the same order as the
+ * reference picks its wedge vertices, so a normal-aware joint shades like the segments it
+ * joins instead of like a flat patch.
+ */
+fn round_normal_t(vertexIndex: i32, resolution: i32) -> f32 {
+  let triangleIndex = vertexIndex / 3;
+  let inTriangleIndex = vertexIndex - triangleIndex * 3;
+  if (inTriangleIndex == 0) {
+    return (f32(triangleIndex) + 0.5) / f32(max(resolution, 1));
+  }
+  return (f32(triangleIndex) + f32(inTriangleIndex) - 1.0) / f32(max(resolution, 1));
+}
+
+fn bevel_normal_t(vertexIndex: i32) -> f32 {
+  let localIndex = vertexIndex % 3;
+  if (localIndex == 1) { return 1.0; }
+  if (localIndex == 2) { return 0.0; }
+  return 0.5;
+}
+
+fn miter_normal_t(vertexIndex: i32) -> f32 {
+  let localIndex = vertexIndex % 6;
+  if (localIndex == 1) { return 0.0; }
+  if (localIndex == 2 || localIndex == 4) { return 0.5; }
+  if (localIndex == 5) { return 1.0; }
+  if (localIndex == 3) { return 0.75; }
+  return 0.25;
+}
 
 // Reference joint-stage near-plane clip: unlike the line stage it keeps the raw
 // intersection parameter instead of clamping it into [0, 1].
@@ -331,6 +420,7 @@ struct In {
   @location(5) previous: vec3f, @location(6) center: vec3f, @location(7) next: vec3f,
   @location(8) color: vec4f, @location(9) width: f32, @location(10) flags: u32,
   @location(11) dash: vec3f, @location(12) joint: u32,
+  @location(13) previousNormal: vec3f, @location(14) nextNormal: vec3f,
 }
 struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @location(1) dash: vec3f }
 
@@ -380,20 +470,24 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
   let ab_norm = vec2f(-ab.y, ab.x);
   let cb_norm = vec2f(cb.y, -cb.x);
   var offset = vec2f(0.0, 0.0);
+  var normalT = 0.0;
   var rendered = false;
   if (input.joint == JOINT_ROUND) {
     if (index < ROUND_RESOLUTION * 3) {
       offset = round_offset(index, width, ab, ab_norm, cb_norm, cb);
+      normalT = round_normal_t(index, ROUND_RESOLUTION);
       rendered = true;
     }
   } else if (input.joint == JOINT_BEVEL) {
     if (index < 3) {
       offset = bevel_offset(index, width, ab, cb, ab_norm, cb_norm);
+      normalT = bevel_normal_t(index);
       rendered = true;
     }
   } else if (input.joint == JOINT_MITER) {
     if (index < 6) {
       offset = miter_offset(index, width, ab, cb, ab_norm, cb_norm);
+      normalT = miter_normal_t(index);
       rendered = true;
     }
   }
@@ -401,6 +495,15 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
     // Unused vertices of the shared fan mesh are parked behind the far plane.
     out.clip = vec4f(0.0, 0.0, 2.0, 1.0);
     return out;
+  }
+
+  // Normal-aware joints (_n(joint)): blend the two path normals across the wedge and apply
+  // the same back-face fade as the segments, which is the only difference from a plain joint.
+  if (dot(input.previousNormal, input.previousNormal) > 0.0 || dot(input.nextNormal, input.nextNormal) > 0.0) {
+    let blended = safe_normalize3(mix(resolve_normal(input.previousNormal), resolve_normal(input.nextNormal), clamp(normalT, 0.0, 1.0)));
+    let viewNormal = safe_normalize3((camera.view * vec4f(blended, 0.0)).xyz);
+    let viewPosition = (camera.view * vec4f(input.center, 1.0)).xyz;
+    out.color = vec4f(out.color.rgb * normal_fade(viewNormal, viewPosition), out.color.a);
   }
 
   let screen = screen_b + offset;
@@ -480,6 +583,8 @@ type JointCollection = InstanceCollection<{
   flags: "uint32";
   dash: "float32x3";
   joint: "uint32";
+  previousNormal: "float32x3";
+  nextNormal: "float32x3";
 }>;
 type LineCollection = InstanceCollection<{
   start: "float32x3";
@@ -519,7 +624,9 @@ function sameTriangle(a: TriangleCommand, b: TriangleCommand): boolean {
 function sameJoint(a: JointCommand, b: JointCommand): boolean {
   return sameVec3(a.previous, b.previous) && sameVec3(a.center, b.center) && sameVec3(a.next, b.next)
     && sameColor(a.color, b.color) && a.width === b.width && a.widthMode === b.widthMode && a.joint === b.joint
-    && a.dash?.[0] === b.dash?.[0] && a.dash?.[1] === b.dash?.[1] && a.dash?.[2] === b.dash?.[2];
+    && a.dash?.[0] === b.dash?.[0] && a.dash?.[1] === b.dash?.[1] && a.dash?.[2] === b.dash?.[2]
+    && (a.previousNormal === undefined ? b.previousNormal === undefined : b.previousNormal !== undefined && sameVec3(a.previousNormal, b.previousNormal))
+    && (a.nextNormal === undefined ? b.nextNormal === undefined : b.nextNormal !== undefined && sameVec3(a.nextNormal, b.nextNormal));
 }
 function trim(collection: InstanceCollection, ids: InstanceId[], count: number): boolean {
   let changed = false;
@@ -578,6 +685,8 @@ export class GpuDebugDraw3D {
   readonly #triangleIndirect: StorageBuffer;
   readonly #indirectCompute: Compute;
   #viewProjection: ArrayLike<number> = identity();
+  /** World-to-view matrix, needed by the reference back-face fade on normal-aware strokes. */
+  #view: ArrayLike<number> = identity();
   #pointCount = 0;
   #lineCount = 0;
   #triangleCount = 0;
@@ -602,7 +711,7 @@ export class GpuDebugDraw3D {
     this.#points = instances({ capacity: points, attributes: { point: "float32x3", color: "float32x4", size: "float32", flags: "uint32" } });
     this.#lines = instances({ capacity: lines, attributes: { start: "float32x3", end: "float32x3", color: "float32x4", colorEnd: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", normal: "float32x3", joint: "uint32" } });
     this.#triangles = instances({ capacity: triangles, attributes: { a: "float32x3", b: "float32x3", c: "float32x3", color: "float32x4" } });
-    this.#joints = instances({ capacity: joints, attributes: { previous: "float32x3", center: "float32x3", next: "float32x3", color: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", joint: "uint32" } });
+    this.#joints = instances({ capacity: joints, attributes: { previous: "float32x3", center: "float32x3", next: "float32x3", color: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", joint: "uint32", previousNormal: "float32x3", nextNormal: "float32x3" } });
     const pointMesh = zeroGeometry(gpu);
     const lineMesh = zeroGeometry(gpu);
     const triangleMesh = triangleGeometry(gpu);
@@ -674,6 +783,7 @@ export class GpuDebugDraw3D {
       indirectArgs(this.#jointIndirect, JOINT_VERTEX_COUNT, this.#jointCount);
     }
     this.#viewProjection = camera.viewProjection;
+    this.#view = camera.view;
   }
 
   updateIndirect(frame: Frame): void {
@@ -691,9 +801,10 @@ export class GpuDebugDraw3D {
 
   draw(pass: FramePass): void {
     const camera = { viewProjection: this.#viewProjection, viewportSize: pass.target.size };
+    const normalCamera = { viewProjection: this.#viewProjection, view: this.#view, viewportSize: pass.target.size };
     this.#pointDraw.set({ camera });
-    this.#lineDraw.set({ camera });
-    this.#jointDraw.set({ camera });
+    this.#lineDraw.set({ camera: normalCamera });
+    this.#jointDraw.set({ camera: normalCamera });
     this.#triangleDraw.set({ camera: { viewProjection: this.#viewProjection } });
     // Reference render order is line (priority 0) then joints (priority 1) then solids (2);
     // joints must blend after the segments they join. Solids go first here so they occupy
@@ -782,11 +893,13 @@ export class GpuDebugDraw3D {
       flags: command.widthMode === "world" ? 1 : 0,
       dash: command.dash ?? [0, 0, 0],
       joint: command.joint === "round" ? 1 : command.joint === "bevel" ? 2 : 3,
+      previousNormal: command.previousNormal ?? [0, 0, 0],
+      nextNormal: command.nextNormal ?? [0, 0, 0],
     });
   }
 
   #addJointId(index: number): InstanceId {
-    const id = this.#joints.add({ previous: [0, 0, 0], center: [0, 0, 0], next: [0, 0, 0], color: [0, 0, 0, 0], width: 0, flags: 0, dash: [0, 0, 0], joint: 0 });
+    const id = this.#joints.add({ previous: [0, 0, 0], center: [0, 0, 0], next: [0, 0, 0], color: [0, 0, 0, 0], width: 0, flags: 0, dash: [0, 0, 0], joint: 0, previousNormal: [0, 0, 0], nextNormal: [0, 0, 0] });
     world(this.#joints, id);
     this.#jointIds[index] = id;
     return id;

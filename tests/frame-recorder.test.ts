@@ -27,6 +27,20 @@ describe("FrameRecorder", () => {
     expect(frame.lines).toHaveLength(0);
   });
 
+  test("per-vertex normals follow the reference strip/loop arity", () => {
+    const frame = new FrameRecorder();
+    // `draw_line_strip_n` accepts one normal per *segment*.
+    frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { normals: [[1, 0, 0], [0, 1, 0]] });
+    expect(frame.lines.map((line) => line.normal)).toEqual([[1, 0, 0], [0, 1, 0]]);
+
+    const loop = new FrameRecorder();
+    expect(() => loop.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { normals: [[1, 0, 0], [0, 1, 0]] }, true))
+      .toThrow("at least 3 entries");
+    const short = new FrameRecorder();
+    expect(() => short.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { normals: [[1, 0, 0]] }))
+      .toThrow("at least 2 entries");
+  });
+
   test("seals the recorder", () => {
     const frame = new FrameRecorder();
     frame.seal();

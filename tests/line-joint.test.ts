@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { FrameRecorder } from "../src/frame-recorder.js";
+import { FrameRecorder, type Vec3 } from "../src/frame-recorder.js";
 
 test("open strips join interior vertices only", () => {
   const frame = new FrameRecorder();
@@ -58,4 +58,26 @@ test("joints inherit the resolved line style and layer filtering", () => {
   layered.lineStrip([[0, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "round", layer: 2 });
   expect(layered.commands(1).some((command) => command.kind === "joint")).toBe(false);
   expect(layered.commands(2).some((command) => command.kind === "joint")).toBe(true);
+});
+
+test("normal-aware loops shade each segment from its start vertex and blend at the seam", () => {
+  const frame = new FrameRecorder();
+  const normals: Vec3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, -1, 0]];
+  frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], { joint: "round", normals }, true);
+  // `_emit_normal_line_loop`: segment i uses normals[i], including the closing segment.
+  expect(frame.lines.map((line) => line.normal)).toEqual([normals[0], normals[1], normals[2], normals[3]]);
+  // `_emit_normal_joint(previous, center, next, normals[i - 1], normals[i])`, wrapping at the seam.
+  expect(frame.joints.map((joint) => [joint.previousNormal, joint.nextNormal])).toEqual([
+    [normals[3], normals[0]],
+    [normals[0], normals[1]],
+    [normals[1], normals[2]],
+    [normals[2], normals[3]],
+  ]);
+});
+
+test("plain joints carry no normals even when segments do", () => {
+  const frame = new FrameRecorder();
+  frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { normals: [[1, 0, 0], [0, 1, 0]] });
+  expect(frame.lines.map((line) => line.normal)).toEqual([[1, 0, 0], [0, 1, 0]]);
+  expect(frame.joints).toHaveLength(0);
 });
