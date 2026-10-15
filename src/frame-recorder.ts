@@ -13,6 +13,10 @@ export type PointOptions = {
   layer?: LayerMask;
 };
 
+export type LineJoint = "none" | "round" | "bevel" | "miter";
+/** Joint kinds the reference renders as geometry (`_is_rendered_line_joint`). */
+export type RenderedJoint = Exclude<LineJoint, "none">;
+
 export type LineOptions = {
   color?: Color;
   colorEnd?: Color;
@@ -20,7 +24,7 @@ export type LineOptions = {
   widthMode?: "screen" | "world";
   dash?: readonly [number, number, number];
   normal?: Vec3;
-  joint?: "none" | "round" | "bevel" | "miter";
+  joint?: LineJoint;
   layer?: LayerMask;
 };
 
@@ -44,7 +48,30 @@ export type LineCommand = {
   readonly widthMode: "screen" | "world";
   readonly dash?: readonly [number, number, number];
   readonly normal?: Vec3;
-  readonly joint?: "none" | "round" | "bevel" | "miter";
+  readonly joint?: LineJoint;
+  readonly layer: LayerMask;
+};
+
+/**
+ * One path vertex of a `lineStrip`/`lineLoop` that the reference turns into a joint
+ * instance (`_emit_joint`). The renderer rebuilds the round/bevel/miter wedge on the GPU
+ * from `previous`, `center`, and `next`, so no CPU-side expansion happens here.
+ */
+export type JointCommand = {
+  readonly kind: "joint";
+  readonly previous: Vec3;
+  readonly center: Vec3;
+  readonly next: Vec3;
+  readonly color: Color;
+  readonly width: number;
+  readonly widthMode: "screen" | "world";
+  /**
+   * Same `[visible, space, offset]` shape as `LineCommand.dash`, with the accumulated
+   * path distance of this vertex already folded into `offset` so the wedge keeps the
+   * dash phase of the segments that meet it.
+   */
+  readonly dash?: readonly [number, number, number];
+  readonly joint: RenderedJoint;
   readonly layer: LayerMask;
 };
 
@@ -53,7 +80,7 @@ export type ArrowOptions = LineOptions & {
   headAngle?: number;
 };
 
-export type FrameCommand = PointCommand | LineCommand | TriangleCommand;
+export type FrameCommand = PointCommand | LineCommand | JointCommand | TriangleCommand;
 
 export type TriangleCommand = {
   readonly kind: "triangle";
@@ -82,7 +109,7 @@ export type LineDefaults = {
   widthMode?: "screen" | "world";
   dash?: readonly [number, number, number];
   normal?: Vec3;
-  joint?: "none" | "round" | "bevel" | "miter";
+  joint?: LineJoint;
   layer?: LayerMask;
 };
 
@@ -142,7 +169,7 @@ function sizeModeValue(value: string, name: string): "screen" | "world" {
   return value;
 }
 
-function jointValue(value: string, name: string): "none" | "round" | "bevel" | "miter" {
+function jointValue(value: string, name: string): LineJoint {
   if (value !== "none" && value !== "round" && value !== "bevel" && value !== "miter") {
     throw new RangeError(`${name} must be "none", "round", "bevel", or "miter"`);
   }
@@ -163,7 +190,7 @@ export type ResolvedLineDefaults = {
   widthMode: "screen" | "world" | undefined;
   dash: readonly [number, number, number] | undefined;
   normal: Vec3 | undefined;
-  joint: "none" | "round" | "bevel" | "miter" | undefined;
+  joint: LineJoint | undefined;
   layer: LayerMask | undefined;
 };
 
@@ -207,6 +234,7 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
 export class FrameRecorder {
   readonly #points: PointCommand[] = [];
   readonly #lines: LineCommand[] = [];
+  readonly #joints: JointCommand[] = [];
   readonly #triangles: TriangleCommand[] = [];
   readonly #defaults: ResolvedFrameRecorderDefaults;
   #sealed = false;
@@ -298,45 +326,71 @@ export class FrameRecorder {
     // Dash distance must accumulate across the whole path, otherwise each segment
     // restarts the pattern and closed shapes render as a nearly continuous line.
     const dash = options.dash ?? this.#defaults.line.dash;
+    const vertexDistances: number[] = [0];
     let traveled = 0;
     const segment = (a: Vec3, b: Vec3): void => {
       if (dash === undefined) this.line(a, b, options);
       else this.line(a, b, { ...options, dash: [dash[0], dash[1], dash[2] + traveled] });
       traveled += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+      vertexDistances.push(traveled);
     };
     for (let i = 0; i + 1 < points.length; i++) segment(points[i]!, points[i + 1]!);
     if (closed && points.length > 1) segment(points[points.length - 1]!, points[0]!);
     const joint = options.joint ?? this.#defaults.line.joint;
-    if (joint === "round") {
-      const width = options.width ?? this.#defaults.line.width ?? 1;
-      const sizeMode = (options.widthMode ?? this.#defaults.line.widthMode ?? "screen") === "world" ? "world" : "screen";
-      const capColor = options.color ?? this.#defaults.line.color ?? this.#defaults.point.color;
-      const capLayer = options.layer ?? this.#defaults.line.layer ?? this.#defaults.point.layer;
+    // Reference `_emit_line_strip` / `_emit_line_loop`: an open strip only joins its
+    // interior vertices, while a loop also joins the two wrap-around seam vertices.
+    if (joint === "round" || joint === "bevel" || joint === "miter") {
+      const count = points.length;
       const first = closed ? 0 : 1;
-      const last = closed ? points.length : points.length - 1;
-      let jointDistance = 0;
-      for (let i = 0; i < last; i++) {
-        if (i > 0) {
-          const a = points[i - 1]!;
-          const b = points[i]!;
-          jointDistance += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
-        }
-        if (i < first) continue;
-        if (dash !== undefined && dash[0] + dash[1] > 0) {
-          const period = dash[0] + dash[1];
-          const phase = ((jointDistance + dash[2]) % period + period) % period;
-          if (phase > dash[0]) continue;
-        }
-        this.point(points[i]!, {
-          ...(capColor === undefined ? {} : { color: capColor }),
-          size: width,
-          sizeMode,
-          round: true,
-          ...(capLayer === undefined ? {} : { layer: capLayer }),
-        });
+      const last = closed ? (count > 2 ? count : 0) : count - 1;
+      for (let i = first; i < last; i++) {
+        this.#jointCommand(
+          points[(i - 1 + count) % count]!,
+          points[i]!,
+          points[(i + 1) % count]!,
+          joint,
+          options,
+          dash,
+          vertexDistances[i]!,
+        );
       }
     }
     return this;
+  }
+
+  /**
+   * Emits one joint instance for a path vertex. The reference skips degenerate wedges
+   * where the center coincides with a neighbour (`emit_joint`), and reuses the resolved
+   * line width/color/layer so segment and joint strokes cannot drift apart.
+   */
+  #jointCommand(
+    previous: Vec3,
+    center: Vec3,
+    next: Vec3,
+    joint: RenderedJoint,
+    options: LineOptions,
+    dash: readonly [number, number, number] | undefined,
+    distance: number,
+  ): void {
+    const resolvedPrevious = vec3(previous, "previous");
+    const resolvedCenter = vec3(center, "center");
+    const resolvedNext = vec3(next, "next");
+    const same = (a: Vec3, b: Vec3): boolean => a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+    if (same(resolvedPrevious, resolvedCenter) || same(resolvedCenter, resolvedNext)) return;
+    const width = finite(options.width ?? this.#defaults.line.width ?? 1, "width");
+    if (width <= 0) throw new RangeError("width must be greater than zero");
+    this.#joints.push({
+      kind: "joint",
+      previous: resolvedPrevious,
+      center: resolvedCenter,
+      next: resolvedNext,
+      color: color(options.color ?? this.#defaults.line.color),
+      width,
+      widthMode: options.widthMode ?? this.#defaults.line.widthMode ?? "screen",
+      joint,
+      layer: layer(options.layer ?? this.#defaults.line.layer),
+      ...(dash === undefined ? {} : { dash: [dash[0], dash[1], dash[2] + distance] }),
+    });
   }
 
   polyline(points: readonly Vec3[], options: LineOptions = {}, closed = false): this {
@@ -390,12 +444,16 @@ export class FrameRecorder {
     return this.#lines;
   }
 
+  get joints(): readonly JointCommand[] {
+    return this.#joints;
+  }
+
   commands(visibleLayers: LayerMask = 0xffff_ffff): readonly FrameCommand[] {
     this.assertOpen();
     if (!Number.isInteger(visibleLayers) || visibleLayers < 0) {
       throw new RangeError("visibleLayers must be a non-negative integer bitmask");
     }
-    return [...this.#points, ...this.#lines, ...this.#triangles].filter((command) => (command.layer & visibleLayers) !== 0);
+    return [...this.#points, ...this.#lines, ...this.#joints, ...this.#triangles].filter((command) => (command.layer & visibleLayers) !== 0);
   }
 
   seal(): void {

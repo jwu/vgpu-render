@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
-import type { DemoConfig, LineJoint, ProjectionMode } from "@/demo-config.js";
+import type { CameraPreset, DemoConfig, LineJoint, ProjectionMode } from "@/demo-config.js";
 import type { ControlHandlers } from "@/demo-hooks";
 import { backgroundHex, gridColorToHex } from "@/demo-hooks";
 
@@ -38,6 +38,13 @@ const JOINTS: readonly { value: LineJoint; label: string }[] = [
   { value: "round", label: "圆角 round" },
   { value: "bevel", label: "斜切 bevel" },
   { value: "miter", label: "尖角 miter" },
+];
+
+// Buttons rather than a select: the pose is an action (the camera keeps orbiting freely
+// afterwards), so there is no maintained "current preset" state to show.
+const CAMERA_PRESETS: readonly { value: CameraPreset; label: string }[] = [
+  { value: "default", label: "默认 gallery" },
+  { value: "reference", label: "原版实机 reference" },
 ];
 
 /** Chinese label with the reference parameter name as a secondary hint. */
@@ -489,6 +496,21 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
               ))}
             </SelectContent>
           </Select>
+        </ControlRow>
+        <ControlRow label="视角预设" name="camera">
+          <div className="flex gap-2">
+            {CAMERA_PRESETS.map((option) => (
+              <Button
+                key={option.value}
+                id={`camera-${option.value}`}
+                type="button"
+                variant="outline"
+                onClick={() => handlers.onCameraPresetChange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
         </ControlRow>
         <ControlRow label="拐角" name="joint">
           <Select

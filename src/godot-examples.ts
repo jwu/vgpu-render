@@ -14,9 +14,8 @@ export type GodotExample = {
 };
 
 // Columns whose Godot variants are only approximated by this vgpu port are flagged false so the
-// gallery never claims parity it does not have: round joins are real disc caps, while bevel/miter
-// joins remain plain segments.
-const approximated = /joint|outer/;
+// gallery never claims parity it does not have: grid boundary (`outer`) handling still differs.
+const approximated = /outer/;
 
 const column = (label: string, samples: readonly string[]): ExampleColumn => ({
   label,
@@ -39,7 +38,7 @@ const arrowHeadLength = ["head = 0.12", "head = 0.22", "head = 0.34", "head = 0.
 const arrowDash = ["0.10 / 0.10", "0.20 / 0.10", "0.40 / 0.15", "0.04 / 0.12"];
 const radius = ["0.18", "0.28", "0.38", "0.50"];
 const segments = ["8", "16", "32", "64"];
-const jointNote = "Screen-space round joins render as real disc caps; bevel/miter are drawn as plain segments.";
+const jointNote = "Round, bevel and miter joins are rebuilt in the vertex stage from the reference joint shaders.";
 
 const shapeWidth = ["w = 1.0", "w = 2.0", "w = 5.5", "w = 10.0"];
 const shapeRadius = ["r = 0.18", "r = 0.28", "r = 0.38", "r = 0.50"];

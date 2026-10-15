@@ -7,9 +7,10 @@ grid to TypeScript + WGSL.
 
 The current implementation is **partial parity**, not a complete migration. The
 Circle/Line runtime screenshot comparison in
-[`docs/visual-comparison.md`](docs/visual-comparison.md) identifies unresolved
-layout, dash, rotation, normal, joint, color, grid and label differences. Passing
-GPU smoke tests does not establish visual equivalence.
+[`docs/visual-comparison.md`](docs/visual-comparison.md) records the remaining
+layout, dash, rotation, normal-aware width, color, grid and label differences;
+round/bevel/miter line joins are built in the vertex stage like the reference.
+Passing GPU smoke tests does not establish visual equivalence.
 
 ## Usage
 
@@ -127,9 +128,12 @@ const debug = new DebugDraw3D({
 
 `src/demo-config.ts` contains independently validated camera/view configuration
 and injected storage helpers. Gallery controls support grid, opacity, animation,
-width multiplier, projection, background and reset; camera interaction is
-persisted. Screenshot mode uses a deterministic preset without localStorage:
-`/?compare=1&scene=circle`. Orthographic zoom changes the orthographic extent.
+width multiplier, projection, background, camera preset and reset; camera
+interaction is persisted. The camera preset switches between the gallery orbit
+pose and the reference scene pose (`examples/*.tscn` `FreeCamera`, also reachable
+as `/?scene=line&camera=reference`). Screenshot mode uses a deterministic preset
+without localStorage: `/?compare=1&scene=circle`. Orthographic zoom changes the
+orthographic extent.
 
 The gallery UI is built with **Base UI + shadcn (base-lyra preset) + Tailwind v4**
 in `src/components/`, and the imperative WebGPU side lives in `src/demo-engine.ts`.

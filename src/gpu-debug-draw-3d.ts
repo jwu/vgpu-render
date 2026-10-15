@@ -3,7 +3,7 @@ import { prepareShader } from "@vgpu/wgsl/prepare";
 
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
-import type { FrameCommand, PointCommand, LineCommand, TriangleCommand, Vec3 } from "./frame-recorder.js";
+import type { FrameCommand, PointCommand, LineCommand, JointCommand, TriangleCommand, Vec3 } from "./frame-recorder.js";
 
 /**
  * Reference scenes set `depth_bias = -0.001` on the addon before drawing. Keeping it as an
@@ -189,6 +189,237 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 
 type Camera = { viewProjection: ArrayLike<number> };
 
+/**
+ * Reference `round_joint_resolution` (3..8, default 8) and `miter_limit` (default 4.0) from
+ * `debug_draw_3d.gd`. Every reference scene keeps both at their defaults, so they are baked
+ * into the WGSL like `depth_bias` instead of turning into extra uniform fields.
+ */
+const ROUND_JOINT_RESOLUTION = 8;
+const MITER_LIMIT = 4;
+/** Round joints fan out one triangle per resolution step; bevel/miter need fewer vertices. */
+const JOINT_VERTEX_COUNT = ROUND_JOINT_RESOLUTION * 3;
+
+/**
+ * Port of `debug_line_joint_geometry_3d.gdshaderinc` plus the joint vertex/fragment stages.
+ *
+ * The reference renders a joint as its own instance per path vertex: it uploads
+ * `(previous, center, next)`, unrolls a tiny fan mesh whose `VERTEX.x` is the vertex index,
+ * and rebuilds the round/bevel/miter wedge in the vertex stage. Out-of-range vertices are
+ * parked behind the far plane, which is also how a single 24-vertex pipeline can draw all
+ * three joint kinds.
+ */
+function jointShader(depthBias: number): string {
+  return `
+struct Camera { viewProjection: mat4x4f, viewportSize: vec2f }
+@group(0) @binding(0) var<uniform> camera: Camera;
+${depthBiasHelpers(depthBias)}
+const CLIP_W_EPSILON: f32 = 0.0001;
+const SCREEN_EPSILON: f32 = 0.0001;
+const ROUND_RESOLUTION: i32 = ${ROUND_JOINT_RESOLUTION};
+const MITER_LIMIT_VALUE: f32 = ${MITER_LIMIT.toFixed(1)};
+const JOINT_ROUND: u32 = 1u;
+const JOINT_BEVEL: u32 = 2u;
+const JOINT_MITER: u32 = 3u;
+
+// Reference joint-stage near-plane clip: unlike the line stage it keeps the raw
+// intersection parameter instead of clamping it into [0, 1].
+fn clip_near_plane(a: vec4f, b: vec4f) -> vec4f {
+  if (a.z > a.w && b.z <= b.w) {
+    let distance_a = a.z - a.w;
+    let distance_b = b.z - b.w;
+    let t = distance_a / (distance_a - distance_b) + NEAR_CLIP_EPSILON;
+    return mix(a, b, t);
+  }
+  return a;
+}
+
+fn floored_mod(value: f32, period: f32) -> f32 {
+  return value - period * floor(value / period);
+}
+
+fn screen_from_clip(clip: vec4f) -> vec2f {
+  return camera.viewportSize * (0.5 * clip.xy / clip.w + 0.5);
+}
+
+// Reference safe_normalize: a degenerate screen direction collapses to zero.
+fn safe_normalize(value: vec2f) -> vec2f {
+  let length_sq = dot(value, value);
+  if (length_sq < SCREEN_EPSILON) {
+    return vec2f(0.0, 0.0);
+  }
+  return value * inverseSqrt(length_sq);
+}
+
+// Reference limit_vector: clamps the miter tip to max_length.
+fn limit_vector(value: vec2f, max_length: f32) -> vec2f {
+  let length_sq = dot(value, value);
+  let max_length_sq = max_length * max_length;
+  if (length_sq > max_length_sq && length_sq > SCREEN_EPSILON) {
+    return value * (max_length * inverseSqrt(length_sq));
+  }
+  return value;
+}
+
+// Reference round_offset: alternating centre/rim triangles covering the ab to cb wedge.
+fn round_offset(index: i32, width: f32, ab: vec2f, ab_norm: vec2f, cb_norm: vec2f, cb: vec2f) -> vec2f {
+  let triangle_index = index / 3;
+  let in_triangle_index = index - triangle_index * 3;
+  let radius = sign(f32(in_triangle_index)) * 0.5 * width;
+  let theta = acos(clamp(dot(ab_norm, cb_norm), -1.0, 1.0));
+  var sigma = sign(dot(ab_norm, cb));
+  if (sigma == 0.0) {
+    sigma = 1.0;
+  }
+  let angle = theta * f32(triangle_index + in_triangle_index - 1) / f32(max(ROUND_RESOLUTION, 1));
+  let position_x = sigma * radius * cos(angle);
+  let position_y = radius * sin(angle);
+  return position_x * ab_norm + position_y * ab;
+}
+
+// Reference bevel_offset: one triangle across the outer corners of both segments.
+fn bevel_offset(index: i32, width: f32, ab: vec2f, cb: vec2f, ab_norm: vec2f, cb_norm: vec2f) -> vec2f {
+  let local_index = index % 3;
+  let tangent = safe_normalize(ab - cb);
+  let normal = vec2f(-tangent.y, tangent.x);
+  var sigma = sign(dot(ab + cb, normal));
+  if (sigma == 0.0) {
+    sigma = 1.0;
+  }
+  let p0 = width * sigma * ab_norm;
+  let p1 = width * sigma * cb_norm;
+  if (local_index == 1) {
+    return 0.5 * p1;
+  }
+  if (local_index == 2) {
+    return 0.5 * p0;
+  }
+  return vec2f(0.0, 0.0);
+}
+
+// Reference miter_offset: two triangles reaching the clamped miter tip.
+fn miter_offset(index: i32, width: f32, ab: vec2f, cb: vec2f, ab_norm: vec2f, cb_norm: vec2f) -> vec2f {
+  let local_index = index % 6;
+  let tangent = safe_normalize(ab - cb);
+  let normal = vec2f(-tangent.y, tangent.x);
+  var sigma = sign(dot(ab + cb, normal));
+  if (sigma == 0.0) {
+    sigma = 1.0;
+  }
+  let denominator = dot(normal, ab_norm);
+  if (abs(denominator) < SCREEN_EPSILON) {
+    return bevel_offset(index, width, ab, cb, ab_norm, cb_norm);
+  }
+  let p0 = width * sigma * ab_norm;
+  let p1 = limit_vector(width * sigma * normal / denominator, width * max(MITER_LIMIT_VALUE, 1.0));
+  let p2 = width * sigma * cb_norm;
+  if (local_index == 1) {
+    return 0.5 * p0;
+  }
+  if (local_index == 2 || local_index == 4) {
+    return 0.5 * p1;
+  }
+  if (local_index == 5) {
+    return 0.5 * p2;
+  }
+  return vec2f(0.0, 0.0);
+}
+
+struct In {
+  @location(0) position: vec3f,
+  @location(1) world0: vec4f, @location(2) world1: vec4f,
+  @location(3) world2: vec4f, @location(4) world3: vec4f,
+  @location(5) previous: vec3f, @location(6) center: vec3f, @location(7) next: vec3f,
+  @location(8) color: vec4f, @location(9) width: f32, @location(10) flags: u32,
+  @location(11) dash: vec3f, @location(12) joint: u32,
+}
+struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @location(1) dash: vec3f }
+
+@vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
+  var out: Out;
+  out.color = input.color;
+  out.dash = input.dash;
+
+  let clip_a_raw = camera.viewProjection * vec4f(input.previous, 1.0);
+  let clip_b_raw = camera.viewProjection * vec4f(input.center, 1.0);
+  let clip_c_raw = camera.viewProjection * vec4f(input.next, 1.0);
+  if (clip_a_raw.w < CLIP_W_EPSILON && clip_b_raw.w < CLIP_W_EPSILON && clip_c_raw.w < CLIP_W_EPSILON) {
+    out.clip = vec4f(0.0, 0.0, 2.0, 1.0);
+    return out;
+  }
+
+  // Manual near-plane clipping, matching the reference: the wedge is rebuilt from the
+  // clipped neighbours so joints stay anchored when a segment crosses the near plane.
+  var clip_a = clip_near_plane(clip_a_raw, clip_c_raw);
+  var clip_b = clip_near_plane(clip_b_raw, clip_a);
+  var clip_c = clip_near_plane(clip_c_raw, clip_b);
+  clip_a = clip_near_plane(clip_a, clip_c);
+
+  let screen_a = screen_from_clip(clip_a);
+  let screen_b = screen_from_clip(clip_b);
+  let screen_c = screen_from_clip(clip_c);
+  let ab = safe_normalize(screen_b - screen_a);
+  let cb = safe_normalize(screen_b - screen_c);
+  if (dot(ab, ab) < SCREEN_EPSILON || dot(cb, cb) < SCREEN_EPSILON) {
+    out.clip = vec4f(0.0, 0.0, 2.0, 1.0);
+    return out;
+  }
+
+  var width = max(input.width, 0.0);
+  if (input.flags == 1u) {
+    // Reference resolve_joint_width measures one world unit along the camera's right axis
+    // and converts it to pixels: that equals the vertical projection term used by the line
+    // shader, so joint and segment widths stay identical.
+    width = width * camera.viewProjection[1][1] * camera.viewportSize.y * 0.5 / max(clip_b.w, 0.0001);
+  } else if (width > 0.0 && width < 1.0) {
+    // Reference thinness fade: sub-pixel strokes lose alpha instead of collapsing to a sliver.
+    out.color.a *= width;
+    width = 1.0;
+  }
+
+  let index = i32(vertex);
+  let ab_norm = vec2f(-ab.y, ab.x);
+  let cb_norm = vec2f(cb.y, -cb.x);
+  var offset = vec2f(0.0, 0.0);
+  var rendered = false;
+  if (input.joint == JOINT_ROUND) {
+    if (index < ROUND_RESOLUTION * 3) {
+      offset = round_offset(index, width, ab, ab_norm, cb_norm, cb);
+      rendered = true;
+    }
+  } else if (input.joint == JOINT_BEVEL) {
+    if (index < 3) {
+      offset = bevel_offset(index, width, ab, cb, ab_norm, cb_norm);
+      rendered = true;
+    }
+  } else if (input.joint == JOINT_MITER) {
+    if (index < 6) {
+      offset = miter_offset(index, width, ab, cb, ab_norm, cb_norm);
+      rendered = true;
+    }
+  }
+  if (!rendered) {
+    // Unused vertices of the shared fan mesh are parked behind the far plane.
+    out.clip = vec4f(0.0, 0.0, 2.0, 1.0);
+    return out;
+  }
+
+  let screen = screen_b + offset;
+  let ndc = screen / camera.viewportSize * 2.0 - 1.0;
+  out.clip = vec4f(ndc * clip_b.w, apply_depth_bias(clip_b), clip_b.w);
+  return out;
+}
+
+@fragment fn fs_main(input: Out) -> @location(0) vec4f {
+  // CPU folds the accumulated path distance and the dash offset into dash.z, so this is the
+  // on-path phase at the vertex, matching the phase the adjoining segments render with.
+  let visible = max(input.dash.x, 0.0);
+  let period = max(visible + max(input.dash.y, 0.0), 0.0001);
+  if (visible > 0.0 && floored_mod(input.dash.z, period) > visible) { discard; }
+  return input.color;
+}
+`;
+}
+
 const INDIRECT_SHADER = prepareShader(`
 struct Params { vertexCount: u32, instanceCount: u32 }
 @group(0) @binding(0) var<uniform> params: Params;
@@ -240,6 +471,16 @@ type PointCollection = InstanceCollection<{
   size: "float32";
   flags: "uint32";
 }>;
+type JointCollection = InstanceCollection<{
+  previous: "float32x3";
+  center: "float32x3";
+  next: "float32x3";
+  color: "float32x4";
+  width: "float32";
+  flags: "uint32";
+  dash: "float32x3";
+  joint: "uint32";
+}>;
 type LineCollection = InstanceCollection<{
   start: "float32x3";
   end: "float32x3";
@@ -275,6 +516,11 @@ function sameLine(a: LineCommand, b: LineCommand): boolean {
 function sameTriangle(a: TriangleCommand, b: TriangleCommand): boolean {
   return sameVec3(a.a, b.a) && sameVec3(a.b, b.b) && sameVec3(a.c, b.c) && sameColor(a.color, b.color);
 }
+function sameJoint(a: JointCommand, b: JointCommand): boolean {
+  return sameVec3(a.previous, b.previous) && sameVec3(a.center, b.center) && sameVec3(a.next, b.next)
+    && sameColor(a.color, b.color) && a.width === b.width && a.widthMode === b.widthMode && a.joint === b.joint
+    && a.dash?.[0] === b.dash?.[0] && a.dash?.[1] === b.dash?.[1] && a.dash?.[2] === b.dash?.[2];
+}
 function trim(collection: InstanceCollection, ids: InstanceId[], count: number): boolean {
   let changed = false;
   for (let i = ids.length - 1; i >= count; i--) {
@@ -296,6 +542,17 @@ function triangleGeometry(gpu: Gpu) {
   return geometry(gpu, {
     buffers: [{ attributes: { position: "float32x3" }, data: new Float32Array(9) }],
     vertexCount: 3,
+    topology: "triangle-list",
+  });
+}
+/**
+ * Joints are placed entirely from `@builtin(vertex_index)`, so the mesh only has to supply a
+ * vertex count: the reference does the same with a fan mesh whose `VERTEX.x` is the index.
+ */
+function jointGeometry(gpu: Gpu) {
+  return geometry(gpu, {
+    buffers: [{ attributes: { position: "float32x3" }, data: new Float32Array(JOINT_VERTEX_COUNT * 3) }],
+    vertexCount: JOINT_VERTEX_COUNT,
     topology: "triangle-list",
   });
 }
@@ -327,21 +584,33 @@ export class GpuDebugDraw3D {
   #pointDirty = true;
   #lineDirty = true;
   #triangleDirty = true;
+  readonly #joints: JointCollection;
+  readonly #jointIds: InstanceId[] = [];
+  readonly #jointCache: JointCommand[] = [];
+  readonly #jointBridge: InstanceGeometry;
+  readonly #jointDraw: Draw;
+  readonly #jointIndirect: StorageBuffer;
+  #jointCount = 0;
+  #jointDirty = true;
 
-  constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number; depthBias?: number } = {}) {
+  constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number; joints?: number; depthBias?: number } = {}) {
     const points = capacities.points ?? 4096;
     const lines = capacities.lines ?? 16384;
     const triangles = capacities.triangles ?? 8192;
+    const joints = capacities.joints ?? 8192;
     const depthBias = capacities.depthBias ?? DEFAULT_DEPTH_BIAS;
     this.#points = instances({ capacity: points, attributes: { point: "float32x3", color: "float32x4", size: "float32", flags: "uint32" } });
     this.#lines = instances({ capacity: lines, attributes: { start: "float32x3", end: "float32x3", color: "float32x4", colorEnd: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", normal: "float32x3", joint: "uint32" } });
     this.#triangles = instances({ capacity: triangles, attributes: { a: "float32x3", b: "float32x3", c: "float32x3", color: "float32x4" } });
+    this.#joints = instances({ capacity: joints, attributes: { previous: "float32x3", center: "float32x3", next: "float32x3", color: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", joint: "uint32" } });
     const pointMesh = zeroGeometry(gpu);
     const lineMesh = zeroGeometry(gpu);
     const triangleMesh = triangleGeometry(gpu);
+    const jointMesh = jointGeometry(gpu);
     this.#pointBridge = instanceGeometry(gpu, this.#points, { mesh: pointMesh });
     this.#lineBridge = instanceGeometry(gpu, this.#lines, { mesh: lineMesh });
     this.#triangleBridge = instanceGeometry(gpu, this.#triangles, { mesh: triangleMesh });
+    this.#jointBridge = instanceGeometry(gpu, this.#joints, { mesh: jointMesh });
     // Reference render modes: every line-like primitive uses `depth_draw_always` and rects
     // disable culling (`debug_rect_3d.gdshader`), so strokes and filled planes both test and
     // write depth and are two-sided. Closed solids use `cull_back` in the reference, but that
@@ -349,36 +618,45 @@ export class GpuDebugDraw3D {
     this.#pointDraw = draw(gpu, { shader: prepareShader(pointShader(depthBias)), geometry: this.#pointBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
     this.#lineDraw = draw(gpu, { shader: prepareShader(lineShader(depthBias)), geometry: this.#lineBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
     this.#triangleDraw = draw(gpu, { shader: prepareShader(triangleShader(depthBias)), geometry: this.#triangleBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
+    this.#jointDraw = draw(gpu, { shader: prepareShader(jointShader(depthBias)), geometry: this.#jointBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
     this.#pointIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
     this.#lineIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
     this.#triangleIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
+    this.#jointIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
     this.#indirectCompute = compute(gpu, INDIRECT_SHADER);
     indirectArgs(this.#pointIndirect, 6, 0);
     indirectArgs(this.#lineIndirect, 6, 0);
     indirectArgs(this.#triangleIndirect, 3, 0);
+    indirectArgs(this.#jointIndirect, JOINT_VERTEX_COUNT, 0);
   }
 
   prepare(commands: readonly FrameCommand[], camera: Camera): void {
     let pointCount = 0;
     let lineCount = 0;
     let triangleCount = 0;
+    let jointCount = 0;
     this.#pointDirty = false;
     this.#lineDirty = false;
     this.#triangleDirty = false;
+    this.#jointDirty = false;
     for (const command of commands) {
       if (command.kind === "point") this.addPoint(command, pointCount++);
       else if (command.kind === "triangle") this.addTriangle(command, triangleCount++);
+      else if (command.kind === "joint") this.addJoint(command, jointCount++);
       else this.addLine(command, lineCount++);
     }
     if (trim(this.#points, this.#pointIds, pointCount)) this.#pointDirty = true;
     if (trim(this.#lines, this.#lineIds, lineCount)) this.#lineDirty = true;
     if (trim(this.#triangles, this.#triangleIds, triangleCount)) this.#triangleDirty = true;
+    if (trim(this.#joints, this.#jointIds, jointCount)) this.#jointDirty = true;
     if (this.#pointCache.length !== pointCount) this.#pointDirty = true;
     if (this.#lineCache.length !== lineCount) this.#lineDirty = true;
     if (this.#triangleCache.length !== triangleCount) this.#triangleDirty = true;
+    if (this.#jointCache.length !== jointCount) this.#jointDirty = true;
     this.#pointCache.length = pointCount;
     this.#lineCache.length = lineCount;
     this.#triangleCache.length = triangleCount;
+    this.#jointCache.length = jointCount;
     if (this.#pointDirty) {
       this.#pointCount = this.#pointBridge.publish();
       indirectArgs(this.#pointIndirect, 6, this.#pointCount);
@@ -391,6 +669,10 @@ export class GpuDebugDraw3D {
       this.#triangleCount = this.#triangleBridge.publish();
       indirectArgs(this.#triangleIndirect, 3, this.#triangleCount);
     }
+    if (this.#jointDirty) {
+      this.#jointCount = this.#jointBridge.publish();
+      indirectArgs(this.#jointIndirect, JOINT_VERTEX_COUNT, this.#jointCount);
+    }
     this.#viewProjection = camera.viewProjection;
   }
 
@@ -402,6 +684,8 @@ export class GpuDebugDraw3D {
       pass.dispatch(this.#indirectCompute, 1);
       this.#indirectCompute.set({ params: { vertexCount: 3, instanceCount: this.#triangleCount }, args: this.#triangleIndirect });
       pass.dispatch(this.#indirectCompute, 1);
+      this.#indirectCompute.set({ params: { vertexCount: JOINT_VERTEX_COUNT, instanceCount: this.#jointCount }, args: this.#jointIndirect });
+      pass.dispatch(this.#indirectCompute, 1);
     });
   }
 
@@ -409,22 +693,27 @@ export class GpuDebugDraw3D {
     const camera = { viewProjection: this.#viewProjection, viewportSize: pass.target.size };
     this.#pointDraw.set({ camera });
     this.#lineDraw.set({ camera });
+    this.#jointDraw.set({ camera });
     this.#triangleDraw.set({ camera: { viewProjection: this.#viewProjection } });
-    // Reference render order: lines (priority 0), joints (1), then solids/rects (2).
-    // Solids go first here so they occupy their final depth slot before the strokes draw.
+    // Reference render order is line (priority 0) then joints (priority 1) then solids (2);
+    // joints must blend after the segments they join. Solids go first here so they occupy
+    // their final depth slot before the strokes draw.
     if (this.#triangleCount > 0) pass.draw(this.#triangleDraw, { indirect: this.#triangleIndirect });
     if (this.#pointCount > 0) pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
     if (this.#lineCount > 0) pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });
+    if (this.#jointCount > 0) pass.draw(this.#jointDraw, { indirect: this.#jointIndirect });
   }
 
   destroy(): void {
     this.#pointDraw.dispose();
     this.#lineDraw.dispose();
     this.#triangleDraw.dispose();
+    this.#jointDraw.dispose();
     this.#indirectCompute.dispose();
     this.#pointBridge.destroy();
     this.#lineBridge.destroy();
     this.#triangleBridge.destroy();
+    this.#jointBridge.destroy();
   }
 
   private addTriangle(command: TriangleCommand, index: number): void {
@@ -475,6 +764,31 @@ export class GpuDebugDraw3D {
     const id = this.#lines.add({ start: [0, 0, 0], end: [0, 0, 0], color: [0, 0, 0, 0], colorEnd: [0, 0, 0, 0], width: 0, flags: 0, dash: [0, 0, 0], normal: [0, 0, 0], joint: 0 });
     world(this.#lines, id);
     this.#lineIds[index] = id;
+    return id;
+  }
+
+  private addJoint(command: JointCommand, index: number): void {
+    const previous = this.#jointCache[index];
+    this.#jointCache[index] = command;
+    if (previous !== undefined && sameJoint(previous, command)) return;
+    this.#jointDirty = true;
+    const id = this.#jointIds[index] ?? this.#addJointId(index);
+    this.#joints.set(id, {
+      previous: command.previous,
+      center: command.center,
+      next: command.next,
+      color: command.color,
+      width: command.width,
+      flags: command.widthMode === "world" ? 1 : 0,
+      dash: command.dash ?? [0, 0, 0],
+      joint: command.joint === "round" ? 1 : command.joint === "bevel" ? 2 : 3,
+    });
+  }
+
+  #addJointId(index: number): InstanceId {
+    const id = this.#joints.add({ previous: [0, 0, 0], center: [0, 0, 0], next: [0, 0, 0], color: [0, 0, 0, 0], width: 0, flags: 0, dash: [0, 0, 0], joint: 0 });
+    world(this.#joints, id);
+    this.#jointIds[index] = id;
     return id;
   }
 }

@@ -70,14 +70,19 @@ describe("FrameRecorder default styles", () => {
     expect(frame.points[1]!.layer).toBe(1);
   });
 
-  test("round joint caps inherit the resolved line style", () => {
+  test("line joints inherit the resolved line style", () => {
     const frame = new FrameRecorder({ line: { color: [0.5, 0.5, 0.5, 1], width: 3, layer: 8 } });
     frame.lineStrip([[0, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "round" });
-    const caps = frame.points.filter((point): point is PointCommand => point.size === 3);
-    expect(caps.length).toBeGreaterThan(0);
-    expect(caps[0]!.color).toEqual([0.5, 0.5, 0.5, 1]);
-    expect(caps[0]!.size).toBe(3);
-    expect(caps[0]!.layer).toBe(8);
+    expect(frame.points).toHaveLength(0);
+    expect(frame.joints).toHaveLength(1);
+    const joint = frame.joints[0]!;
+    expect(joint.center).toEqual([1, 0, 0]);
+    expect(joint.previous).toEqual([0, 0, 0]);
+    expect(joint.next).toEqual([2, 0, 0]);
+    expect(joint.joint).toBe("round");
+    expect(joint.color).toEqual([0.5, 0.5, 0.5, 1]);
+    expect(joint.width).toBe(3);
+    expect(joint.layer).toBe(8);
   });
 
   test("applies line defaults to derived primitives", () => {

@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import type { DemoConfig, DemoGridConfig, LineJoint, ProjectionMode } from "./demo-config.js";
+import type { CameraPreset, DemoConfig, DemoGridConfig, LineJoint, ProjectionMode } from "./demo-config.js";
 import { backgroundToHex, type DemoEngine } from "./demo-engine.js";
 import type { GodotExample } from "./godot-examples.js";
 import { GODOT_EXAMPLES } from "./godot-examples.js";
@@ -33,6 +33,7 @@ export type ControlHandlers = {
   readonly onGridOpacityChange: (value: number) => void;
   readonly onProjectionChange: (value: ProjectionMode) => void;
   readonly onLineJointChange: (value: LineJoint) => void;
+  readonly onCameraPresetChange: (value: CameraPreset) => void;
   readonly onBackgroundChange: (value: string) => void;
   readonly onGridOptionsChange: (patch: Partial<DemoGridConfig>) => void;
   readonly onGridLineColorChange: (target: "thin" | "thick", hex: string) => void;
@@ -49,6 +50,7 @@ export function useControlHandlers(engine: DemoEngine): ControlHandlers {
       onGridOpacityChange: (value: number) => engine.setGridOpacity(value),
       onProjectionChange: (value: ProjectionMode) => engine.setProjection(value),
       onLineJointChange: (value: LineJoint) => engine.setLineJoint(value),
+      onCameraPresetChange: (value: CameraPreset) => engine.setCameraPreset(value),
       onBackgroundChange: (value: string) => engine.setBackgroundHex(value),
       onGridOptionsChange: (patch: Partial<DemoGridConfig>) => engine.setGridOptions(patch),
       onGridLineColorChange: (target: "thin" | "thick", hex: string) => engine.setGridLineColor(target, hex),

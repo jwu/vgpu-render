@@ -40,10 +40,15 @@ test("closed and inherited dashed paths accumulate phase without mutating defaul
   expect(recorder.lines[3]!.dash).toEqual(dash);
 });
 
-test("round caps do not fill a vertex inside a dash gap", () => {
+test("dash gaps keep their joint command and defer the phase to the GPU", () => {
   const recorder = new FrameRecorder();
   recorder.lineStrip([[0, 0, 0], [0.15, 0, 0], [0.3, 0, 0]], { joint: "round", dash: [0.1, 0.2, 0] });
+  // The wedge is emitted for every joined vertex; whether it survives the phase test is
+  // decided per fragment on the GPU, exactly like the reference joint shader.
   expect(recorder.points).toHaveLength(0);
+  expect(recorder.joints).toHaveLength(1);
+  expect(recorder.joints[0]!.center).toEqual([0.15, 0, 0]);
+  expect(recorder.joints[0]!.dash).toEqual([0.1, 0.2, 0.15]);
 });
 
 test("round GPU points discard corners while preserving square point behavior", async () => {

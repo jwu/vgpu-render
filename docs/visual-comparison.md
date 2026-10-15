@@ -168,8 +168,7 @@ bun scripts/capture-vgpu.ts circle line
 
 | 优先级 | 问题 | 说明 |
 | --- | --- | --- |
-| P0 | bevel/miter 接头缺失 | 只有 round 是真实圆盘封口，bevel/miter 仍是普通线段 |
-| P0 | world-space 线宽侧向近似 | 参考用 3D 视角侧向 `cross(view_b - view_a, -view_position)`；vgpu 用屏幕空间近似，导致 `world_space_width` 饱和像素偏多（172%） |
+| P0 | world-space 线宽侧向近似 | 参考用 3D 视角侧向 `cross(view_b - view_a, -view_position)`；vgpu 用屏幕空间近似，导致 `world_space_width` 饱和像素偏多（172%）。接头宽度的数值换算已与参考一致，侧向方向仍是同一近似 |
 | P1 | `curve` 采样与 tolerance | 参考用 `tessellate_even_length`，vgpu 用固定 `ceil(0.5/tol)` 细分，顶点数不同（形状一致），饱和像素少 14% |
 | P1 | `sphere(y axis)` / `sphere(z axis)` 列 | 参考分别控制纬线环与经线大圆；vgpu 只有 `segments`/`rings` 两个参数，映射为近似 |
 | P1 | `cone`/`cylinder` 的 base/side 分段 | 参考是两个独立参数，vgpu 只有一个 `segments` |
@@ -178,6 +177,41 @@ bun scripts/capture-vgpu.ts circle line
 | P1 | AA 不同 | 未统一 MSAA/边缘模式 |
 | P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
 | P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `recorder.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
+
+## 第六轮：round/bevel/miter 接头忠实移植
+
+原先的接头是「线段 + 顶点圆盘」补丁：`round` 在每个路径顶点补一个屏幕空间圆盘，`bevel`/`miter`
+完全没有几何，角落只会留下缺角。移植后与参考的 `debug_joint_renderer_3d.gd` +
+`debug_line_joint_{round,bevel,miter}_3d.gdshader` 对齐：
+
+- 每个被连接的路径顶点生成一条 joint 命令（`previous`/`center`/`next` + 颜色/宽度/宽度模式/dash/图层）。
+  strip 只连接内部顶点，loop 额外连接两个环接顶点（含接缝），与 `_emit_line_strip` /
+  `_emit_line_loop` 一致；`previous == center` 或 `center == next` 的退化顶点跳过。
+- GPU 侧用一个 24 顶点的共享扇网格配合 `@builtin(vertex_index)` 重建楔形：`round_offset`、
+  `bevel_offset`、`miter_offset` 逐行移植，包含 `sigma` 镜像、`limit_vector` 的 `miter_limit`、
+  `round_resolution = 8`、近平面裁剪与 `depth_bias`。越界顶点停在远平面外，因此一套管线即可画出
+  三种接头。渲染顺序为线段（优先级 0）之后、实体之前（优先级 1）。
+- dash 相位与线段共用同一累计弧长：`joint.dash[2] = dash 偏移 + 顶点累计弧长`，片元按相位丢弃，
+  空档内的接头不再残留孤立圆点。
+- 线宽倍率（gallery 面板的 `lineWidthScale`）现在同时作用于线段与接头。此前只缩放 `line` 命令，
+  缩小时接头保持原尺寸，拐角因此出现比线宽大得多的圆形凸点。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 命令规则单测 | `tests/line-joint.test.ts`：strip/loop 的连接顶点集合、退化顶点跳过、dash 相位、样式继承与图层过滤 |
+| GPU 形状测试 | `tests/line-joint.gpu.test.ts`：90° 外角上 round 独有的弧内点、bevel 独有区域、miter 独有尖点区域，以及 dash 空档内顶点区域的零覆盖 |
+| 基线截图对比 | 1920×1080、`SCREENSHOT_DEMO_CONFIG` 相机，对比 `artifacts/visual-baseline/godot-line.png`：MAE 0.03 → **0.026**，≤3 像素 99.97%，>40 像素 0.016%，饱和掩码 bbox 逐像素一致 |
+| 饱和像素覆盖 | Line 场景饱和像素 **3786 → 4251**，为 Godot 的 **100.1%**（第五轮为 89.2%）；此前缺失的覆盖主要来自 bevel/miter 没有几何 |
+| 原版实机视角对比 | `eye=(3,3,3)`、FOV 75°、两边同一 `scene.position = (-10, 0, 1.5)` 平移（Godot 侧用 `/tmp/vgpu-parity-godot/capture-near.gd`，不改上游）：图元内部像素（两侧都饱和、距边缘 ≥ 2px，6479 px）**MAE 0.04、>40 的像素 0**；橙色 `loop(joint)` 与紫色 `strip_d(joint)` 的饱和 bbox 完全重叠。剩余差异全在边缘 AA（Godot MSAA vs vgpu 无 AA）、grid 与 3D 标签 |
+| 回归 | `bun run typecheck`、`bun run build`、`bun test`（16 个文件、111 个测试）全部通过 |
+
+以上截图都输出到 `/tmp/vgpu-joint-check` 与 `/tmp/vgpu-near`，未修改 `artifacts/visual-baseline/`。
+
+仍未对齐：normal-aware 接头（`debug_normal_line_joint_*` 需要逐顶点法向，`_n(joint)` 列仍走普通接头）、
+`round_joint_resolution` / `miter_limit` 的可配置性（目前固定为参考默认值），以及 world-space 宽度的
+侧向近似。
 
 ## 第一轮：初始观察（使用压缩布局，部分已修复）
 
@@ -199,11 +233,15 @@ http://127.0.0.1:5174/?compare=1&scene=circle
 http://127.0.0.1:5174/?compare=1&scene=line
 ```
 
+非对比模式可以用 `?camera=reference`（或面板「视角预设 · camera」的两个按钮）把 gallery 切到参考场景自己的
+`FreeCamera` 姿态（`examples/line.tscn`：位置 `(3,3,3)`、`initial_distance = 5.196`、FOV 75°、看向原点），
+方便直接和 Godot 实机画面逐项比对。对比模式固定在截图预设，URL 不会覆盖它的相机。
+
 截图前等待 `document.documentElement.dataset.renderReady === "true"`，设置 1920×1080/DPR=1。截图预设来自 `src/demo-config.ts`，不读取本地持久配置；对比模式禁用鼠标修改相机。正交仅作为显式 `&projection=orthographic` 诊断选项，不是默认 Godot 基线。
 
 ## 后续修复次序
 
-1. 实现 round/bevel/miter 的真实接头几何，统一 alpha 叠加与 AA 条件。
+1. ~~实现 round/bevel/miter 的真实接头几何~~ 已完成（第六轮）；下一步统一 alpha 叠加与 AA 条件，并移植 normal-aware 接头。
 2. 统一 dash 周期与屏幕空间 dash shader，消除剩余 11% 覆盖差。
 3. ~~单独对齐 infinite grid shader（颜色、距离层级、淡出）。~~ 已完成，含色彩空间（线性 target + sRGB present）。
 4. 把 box/实体图元的 width/dash/normal 参数真正传递到 `FrameRecorder`。

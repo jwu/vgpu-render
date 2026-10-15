@@ -17,8 +17,10 @@ import {
   DEFAULT_DEMO_CONFIG,
   loadDemoConfig,
   parseDemoConfig,
+  REFERENCE_DEMO_CONFIG,
   saveDemoConfig,
   SCREENSHOT_DEMO_CONFIG,
+  type CameraPreset,
   type DemoConfig,
   type DemoGridConfig,
   type LineJoint,
@@ -81,6 +83,9 @@ export function resolveInitialConfig(compareMode: boolean, params: URLSearchPara
   const base = compareMode ? cloneDemoConfig(SCREENSHOT_DEMO_CONFIG) : loadDemoConfig(storage ?? null);
   if (params.get("projection") === "orthographic") base.camera.projection = "orthographic";
   if (params.get("grid") === "0") base.view.showGrid = false;
+  // The capture preset owns the camera in compare mode so paired screenshots stay
+  // deterministic; the reference pose is an interactive-gallery override only.
+  if (!compareMode && params.get("camera") === "reference") base.camera = cloneDemoConfig(REFERENCE_DEMO_CONFIG).camera;
   return base;
 }
 
@@ -200,6 +205,17 @@ export class DemoEngine {
     });
   }
 
+  /**
+   * Switches the orbit pose between the gallery default and the pose the reference
+   * examples run with (`examples/*.tscn` `FreeCamera`). Free orbiting afterwards leaves
+   * the preset in place as a starting point rather than tracking the change.
+   */
+  setCameraPreset(preset: CameraPreset): void {
+    this.update(() => {
+      this.config.camera = cloneDemoConfig(preset === "reference" ? REFERENCE_DEMO_CONFIG : DEFAULT_DEMO_CONFIG).camera;
+    });
+  }
+
   /** Sets the background from a `#rrggbb` color input value. */
   setBackgroundHex(hex: string): void {
     const rgb = hexToRgb(hex);
@@ -248,7 +264,7 @@ export class DemoEngine {
     const present = effect(gpu, PRESENT_SHADER, { set: { sceneTexture: scene, sceneSampler: sampler(gpu) } });
     output.onResize(({ width, height }) => scene.resize([width, height]));
 
-    const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536 });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536, joints: 65536 });
     const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
     const grid = new InfiniteGrid3D(gpu, this.gridOptions());
 
@@ -286,8 +302,11 @@ export class DemoEngine {
       const recorder = debug.beginFrame();
       buildScene(this.selected.id, recorder, this.time, this.config.view.lineJoint);
       const raw = debug.finishFrame(recorder);
+      // The width scale must cover joints as well: they are the same stroke as the segments
+      // they join, so scaling only `line` commands would leave the wedges at full size.
+      const scale = this.config.view.lineWidthScale;
       const commands: readonly FrameCommand[] = raw.map((command) =>
-        command.kind === "line" ? { ...command, width: command.width * this.config.view.lineWidthScale } : command,
+        command.kind === "line" || command.kind === "joint" ? { ...command, width: command.width * scale } : command,
       );
 
       renderer.prepare(commands, { viewProjection: this.viewProjection });

@@ -8,6 +8,8 @@
 
 export type ProjectionMode = "perspective" | "orthographic";
 export type LineJoint = "none" | "round" | "bevel" | "miter";
+/** Named camera poses the gallery can switch to. */
+export type CameraPreset = "default" | "reference";
 
 export type DemoCameraConfig = {
   yaw: number;
@@ -134,6 +136,34 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     background: [...GODOT_CLEAR_COLOR],
   },
   grid: defaultGridConfig(),
+};
+
+/**
+ * Camera matching the reference scene camera itself: `examples/line.tscn` places `FreeCamera`
+ * at (3, 3, 3) with `initial_distance = 5.196` and the engine-default 75° vertical FOV,
+ * looking at the origin. `yaw = PI/4` and `pitch = asin(1 / sqrt(3))` are the orbit angles
+ * that reproduce that eye position at `distance = sqrt(27)`, so the gallery can be switched
+ * to the pose the reference examples actually run with — as opposed to the far capture preset.
+ */
+export const REFERENCE_CAMERA: DemoCameraConfig = {
+  yaw: Math.PI / 4,
+  pitch: Math.asin(1 / Math.sqrt(3)),
+  distance: Math.sqrt(27),
+  target: [0, 0, 0],
+  fov: (75 * Math.PI) / 180,
+  near: 0.05,
+  far: 100,
+  orthographicHeight: 7,
+  projection: "perspective",
+};
+
+/** Default view/grid settings with the reference scene camera. */
+export const REFERENCE_DEMO_CONFIG: DemoConfig = {
+  ...cloneDemoConfig(DEFAULT_DEMO_CONFIG),
+  camera: {
+    ...REFERENCE_CAMERA,
+    target: [REFERENCE_CAMERA.target[0], REFERENCE_CAMERA.target[1], REFERENCE_CAMERA.target[2]],
+  },
 };
 
 /**
