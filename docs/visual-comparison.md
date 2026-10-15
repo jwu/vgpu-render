@@ -213,6 +213,29 @@ bun scripts/capture-vgpu.ts circle line
 `round_joint_resolution` / `miter_limit` 的可配置性（目前固定为参考默认值），以及 world-space 宽度的
 侧向近似。
 
+## 第七轮：曲线控制点标记
+
+参考 `curve.gd` 的 construction 区（`straight` / `smooth` / `flat handles` / `broken` /
+`one-sided` / `y curve` / `closed`）在每条曲线旁还会画出 Bezier 控制点标记，此前 vgpu 完全省略：
+
+- `_draw_curve_control_points`：每个锚点一个品红圈（半径 0.045、宽 2、16 段、ROUND）。
+- `_draw_curve_control_handle`：每个非零 `in`/`out` 手柄一条黄色线（宽 1、alpha 0.85）加上手柄尖端的
+  黄色圈（半径 0.032、宽 2、16 段）；`is_zero_approx` 的手柄跳过。
+- 标记朝向来自 `_get_curve_marker_rotation`：它交换 basis 的 Y/Z 两列，把圆的局部 XY 平面转到世界
+  XZ 平面，所以标记是水平环，而不是立在曲线自身平面里。
+
+7 条 construction 曲线合计 21 个锚点、24 个非零手柄。
+
+### 验证
+
+| 项 | 结果 |
+| --- | --- |
+| 单测 | `tests/reference-scenes.test.ts`：锚点圈 21×16 段、手柄圈 24×16 段、手柄线 24 条、环的水平朝向与手柄长度 |
+| 截图对比 | 用 `capture.gd` 的同一相机对比 `curve` 场景：MAE 0.043，≤3 像素 99.94%，>40 像素 0.032% |
+| 饱和像素覆盖 | `curve` 饱和像素达到 Godot 的 **98.8%**（第五轮记录为 86.1%），饱和 bbox 完全一致 |
+
+截图输出到 `/tmp/vgpu-curve-check`，未修改 `artifacts/visual-baseline/`。
+
 ## 第一轮：初始观察（使用压缩布局，部分已修复）
 
 | 优先级 | 问题 | 证据 / 原因 |

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { FrameRecorder, type LineCommand, type TriangleCommand } from "../src/frame-recorder.js";
+import { FrameRecorder, type LineCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
 import { buildScene, CIRCLE_REFERENCE, LINE_REFERENCE } from "../src/godot-scenes.js";
 
 function commandsFor(id: string): readonly (LineCommand | TriangleCommand | { kind: "point" })[] {
@@ -56,6 +56,31 @@ describe("Circle reference scene", () => {
     const dashed = linesOf("circle").filter((line) => line.dash !== undefined && line.color[1] > 0.4 && line.color[1] < 0.5);
     expect(dashed.length).toBeGreaterThan(0);
     expect(dashed[0]!.dash![0]).toBeGreaterThan(0);
+  });
+});
+
+describe("Curve reference scene", () => {
+  test("draws the construction band with the reference anchor and control markers", () => {
+    const lines = linesOf("curve");
+    const anchors = lines.filter((line) => near(line.color, [1, 0.25, 0.85, 1]) && line.width === 2);
+    const controlRings = lines.filter((line) => near(line.color, [1, 0.75, 0.15, 1]) && line.width === 2);
+    const controlEdges = lines.filter((line) => near(line.color, [1, 0.75, 0.15, 0.85]) && line.width === 1);
+    // 16 segments per closed marker ring; across the 7 construction curves there are 21
+    // Bezier anchors and 24 non-zero in/out handles (`_draw_curve_control_points`).
+    expect(anchors).toHaveLength(21 * 16);
+    expect(controlRings).toHaveLength(24 * 16);
+    expect(controlEdges).toHaveLength(24);
+    // `_get_curve_marker_rotation` swaps the basis columns, so every ring is a horizontal
+    // (XZ-plane) circle around its anchor instead of standing up in the curve's own plane.
+    for (const line of [...anchors, ...controlRings]) expect(line.start[1]).toBeCloseTo(line.end[1], 9);
+    // The straight curve has three handle-less anchors; the first sits at local (-0.5, 0, 0.18),
+    // which the scene translation (-10, 0, 1.5) moves to (-10, 0.1, 1.23).
+    const anchorCenter: Vec3 = [-10, 0.1, 1.23];
+    const onFirstRing = anchors.filter((line) => Math.abs(Math.hypot(line.start[0] - anchorCenter[0], line.start[2] - anchorCenter[2]) - 0.045) < 1e-4);
+    expect(onFirstRing.length).toBeGreaterThan(0);
+    // Handle edges keep the reference handle lengths (`smoothSymmetricCurve` uses |(0.28, 0, -0.35)|).
+    const edges = controlEdges.map((line) => Math.hypot(line.end[0] - line.start[0], line.end[1] - line.start[1], line.end[2] - line.start[2]));
+    expect(edges.filter((length) => Math.abs(length - Math.hypot(0.28, 0.35)) < 1e-6).length).toBeGreaterThan(0);
   });
 });
 

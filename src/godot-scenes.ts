@@ -798,8 +798,7 @@ function translateMesh(mesh: MeshData, position: Vec3): MeshData {
 //
 // The 3D curves are CubicBezier `Curve3D`s. `FrameRecorder.curve` only accepts a
 // center + euler rotation, so the reference `Basis` transforms are baked into each
-// curve's control points before recording. The reference also draws anchor/control
-// point markers per construction curve; those are omitted here.
+// curve's control points before recording.
 // ---------------------------------------------------------------------------
 
 const CURVE_LAYOUT = createLayout(SCENE_LAYOUTS.curve, SCENE_LAYOUTS.curve.baseY);
@@ -815,6 +814,20 @@ const CURVE_TUNNEL_TWIST_STEP = Math.PI * 0.12;
 const CURVE_SHAPE_VALUES: readonly number[] = [0.25, 0.65, 1, 1.35];
 const CURVE_TOLERANCE_VALUES: readonly number[] = [0.04, 0.08, 0.16, 0.32];
 const CURVE_CONSTRUCTION_COLOR: Color = [0.86, 0.94, 1, 1];
+// `_draw_curve_control_points` marker constants from `curve.gd`.
+const CURVE_ANCHOR_POINT_RADIUS = 0.045;
+const CURVE_CONTROL_POINT_RADIUS = 0.032;
+const CURVE_CONTROL_POINT_EDGE_WIDTH = 1;
+const CURVE_CONTROL_POINT_SEGMENTS = 16;
+const CURVE_ANCHOR_POINT_COLOR: Color = [1, 0.25, 0.85, 1];
+const CURVE_CONTROL_POINT_COLOR: Color = [1, 0.75, 0.15, 1];
+const CURVE_CONTROL_EDGE_COLOR: Color = [1, 0.75, 0.15, 0.85];
+/**
+ * `_get_curve_marker_rotation` for the identity construction transform: it swaps the Y and Z
+ * basis columns (`Basis(x, z, y)`), which turns the circle's local XY plane into the world XZ
+ * plane, so every marker is a horizontal ring around a point of the flat construction curve.
+ */
+const CURVE_MARKER_BASIS: CircleBasis = { x: [1, 0, 0], y: [0, 0, 1], z: [0, 1, 0] };
 
 // `_create_*_curve` constructors, ported point-for-point (handles are relative offsets).
 function straightCurve(): Curve3D {
@@ -942,13 +955,50 @@ function placeCurve(
   recorder.curve(scaleCurve(shape, scale, basis), { ...options, transform: { center } });
 }
 
+/** Godot `Vector3.is_zero_approx`: every component under `CMP_EPSILON`. */
+function isZeroApprox(value: Vec3): boolean {
+  return Math.abs(value[0]) < 1e-5 && Math.abs(value[1]) < 1e-5 && Math.abs(value[2]) < 1e-5;
+}
+
+function addVec3(a: Vec3, b: Vec3): Vec3 {
+  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+}
+
+/**
+ * Reference `_draw_curve_control_points` / `_draw_curve_control_handle`: for every Bezier
+ * point of a construction curve, draw the incoming and outgoing handles as yellow edges with a
+ * yellow ring at the tip, then the pink anchor ring on top. `localCenter` is untranslated
+ * because `basisCirclePoints` applies the scene translation itself.
+ */
+function drawCurveControlPoints(recorder: FrameRecorder, shape: Curve3D, localCenter: Vec3): void {
+  const ring = (local: Vec3, radius: number, color: Color): void => {
+    recorder.lineStrip(
+      basisCirclePoints(local, radius, CURVE_CONTROL_POINT_SEGMENTS, CURVE_MARKER_BASIS),
+      { color, width: CURVE_BASE_LINE_WIDTH, joint: "round" },
+      true,
+    );
+  };
+  for (const point of shape.points) {
+    const anchor = addVec3(localCenter, point.position);
+    for (const handle of [point.in, point.out]) {
+      if (handle === undefined || isZeroApprox(handle)) continue;
+      const tip = addVec3(anchor, handle);
+      recorder.line(referenceOffset(anchor), referenceOffset(tip), { color: CURVE_CONTROL_EDGE_COLOR, width: CURVE_CONTROL_POINT_EDGE_WIDTH });
+      ring(tip, CURVE_CONTROL_POINT_RADIUS, CURVE_CONTROL_POINT_COLOR);
+    }
+    ring(anchor, CURVE_ANCHOR_POINT_RADIUS, CURVE_ANCHOR_POINT_COLOR);
+  }
+}
+
 function curveMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const dashOffset = fposmod(context.time * DASH_OFFSET_SPEED, 10);
 
-  // Construction band at CONSTRUCTION_SAMPLE_Z; anchor/control markers are omitted.
+  // Construction band at CONSTRUCTION_SAMPLE_Z, including the reference control-point markers.
   CURVE_CONSTRUCTION.forEach((shape, index) => {
-    const center = referenceOffset([CURVE_LAYOUT.columnX(index), CURVE_Y, CONSTRUCTION_SAMPLE_Z]);
+    const localCenter: Vec3 = [CURVE_LAYOUT.columnX(index), CURVE_Y, CONSTRUCTION_SAMPLE_Z];
+    const center = referenceOffset(localCenter);
     recorder.curve(shape, { color: CURVE_CONSTRUCTION_COLOR, width: CURVE_BASE_LINE_WIDTH, tolerance: CURVE_TOLERANCE_LENGTH, joint: "round", transform: { center } });
+    drawCurveControlPoints(recorder, shape, localCenter);
   });
 
   // curve(width)

@@ -10,7 +10,8 @@ The current port is **partial parity**. The live Circle/Line comparison in
 rotation, dashes, normal samples, solid color/alpha, grid and missing labels.
 Since then the Circle and Line scenes were ported faithfully from the reference
 sources, and their primitive bounding boxes now align within 1-2 px of the Godot
-screenshots; the grid and the round/bevel/miter line joints are ported, while AA,
+screenshots; the grid, the round/bevel/miter line joints and the curve control-point
+markers are ported, while AA,
 labels, normal-aware joints and the remaining scenes are still incomplete.
 `demo.gd` is absent from the manifest. The current 15 entries
 render geometry, but that is not proof of scene or visual equivalence. GPU scene
@@ -47,6 +48,8 @@ locks those coordinates and parameters. The remaining scenes still use a compres
 - Polyline/loop topology; round/bevel/miter joints are rebuilt in the vertex stage
   from the reference joint renderer and shaders (one instance per joined vertex,
   a shared fan mesh, `round_joint_resolution = 8`, `miter_limit = 4.0`).
+- `curve` construction band: anchor and control-point markers ported from
+  `_draw_curve_control_points` (pink anchor rings, yellow handle edges and rings).
 - Triangle instances for transient solid meshes.
 - Procedural helpers: `ray`, `arrow`, `axes`, `grid`, `circle`, `arc`, `curve`,
   `mesh`, `triangle`.
@@ -77,7 +80,12 @@ still draw plain joints.
 - **Arrow head geometry**: head length and angle are now wired into `FrameRecorder.arrow()` and the scene matrix.
 - **Grid outer edges**: `grid()` now supports `none`, `x`, `z`, and `xz` boundary modes.
 - **Normal orientation**: normal-aware lines compute the width axis from `cross(direction, normal)` projected to screen; degenerate cases fall back to the screen-space perpendicular.
-- **Curve construction points**: control handles are not drawn as separate markers; only the sampled curve geometry is rendered.
+- **Curve construction points**: the construction band draws the reference anchor rings
+  (pink, radius 0.045) plus the yellow handle edges and rings for every non-zero `in`/`out`
+  control point, with `_get_curve_marker_rotation` swapping the basis columns so the rings lie
+  in the XZ plane. Curve *sampling* still differs: the reference uses `tessellate_even_length`
+  while this port subdivides with a fixed step count, so vertex counts differ even though the
+  shape matches.
 
 Anything flagged `implemented: false` in `src/godot-examples.ts` is shown with a
 `·` marker in the gallery.
