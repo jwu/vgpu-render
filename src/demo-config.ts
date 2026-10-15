@@ -82,6 +82,15 @@ export const GODOT_CLEAR_COLOR: readonly [number, number, number, number] = [0.1
 export const REFERENCE_THIN_LINE_COLOR: readonly [number, number, number, number] = [0.42, 0.42, 0.42, 0.45];
 export const REFERENCE_THICK_LINE_COLOR: readonly [number, number, number, number] = [0.62, 0.62, 0.62, 0.65];
 
+/**
+ * Grid colors every reference scene overrides on its `EndlessGrid3D` node
+ * (`examples/*.tscn`), which differ from the addon export defaults above. The comparison
+ * preset uses them so the grid matches the reference captures rather than the addon
+ * defaults.
+ */
+export const SCENE_THIN_LINE_COLOR: readonly [number, number, number, number] = [0.33847278, 0.33847293, 0.33847287, 0.5019608];
+export const SCENE_THICK_LINE_COLOR: readonly [number, number, number, number] = [0.46034712, 0.46034718, 0.460347, 0.7019608];
+
 /** Deep-copies the reference grid defaults for each preset. */
 export function defaultGridConfig(): DemoGridConfig {
   return {
@@ -153,7 +162,12 @@ export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
     lineJoint: "round",
     background: [...GODOT_CLEAR_COLOR],
   },
-  grid: defaultGridConfig(),
+  grid: {
+    ...defaultGridConfig(),
+    // Every reference scene overrides these two colors in its `.tscn`.
+    thinLineColor: [...SCENE_THIN_LINE_COLOR],
+    thickLineColor: [...SCENE_THICK_LINE_COLOR],
+  },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

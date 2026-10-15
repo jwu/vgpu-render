@@ -6,10 +6,12 @@
  * state participates in the animation loop.
  */
 
-import { frame, init, surface } from "vgpu";
+import { effect, frame, init, sampler, surface, target } from "vgpu";
+import { prepareShader } from "@vgpu/wgsl/prepare";
 import { DebugDraw3D, GpuDebugDraw3D, InfiniteGrid3D, type FrameCommand, type InfiniteGridOptions, type Vec3 } from "./index.js";
 import { GODOT_EXAMPLES, type GodotExample } from "./godot-examples.js";
 import { buildScene } from "./godot-scenes.js";
+import { linearClearColor } from "./color-space.js";
 import {
   cloneDemoConfig,
   DEFAULT_DEMO_CONFIG,
@@ -47,6 +49,32 @@ const FPS_SPEED = 8;
 const LOOK_SENSITIVITY = 0.008;
 const PAN_SENSITIVITY = 0.0015;
 const FPS_KEYS = ["w", "a", "s", "d", "q", "e"];
+
+/**
+ * Presentation shader for the linear scene pass.
+ *
+ * Debug geometry blends in the linear working space on an `rgba16float` target. This is the
+ * final encode step: it writes the linear values back to the sRGB-encoded canvas, which is the
+ * same "linear blend, encode on output" contract Godot's `blend_mix` and Bevy's
+ * `add_srgb_suffix` swapchain view provide. Only RGB is encoded; alpha passes through.
+ */
+const PRESENT_SHADER = prepareShader(`
+@group(0) @binding(0) var sceneTexture: texture_2d<f32>;
+@group(0) @binding(1) var sceneSampler: sampler;
+
+fn encode_srgb(value: vec3f) -> vec3f {
+  let low = value * 12.92;
+  let high = 1.055 * pow(max(value, vec3f(0.0)), vec3f(1.0 / 2.4)) - 0.055;
+  return select(high, low, value <= vec3f(0.0031308));
+}
+
+@fragment fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
+  let dims = vec2f(textureDimensions(sceneTexture));
+  let uv = position.xy / dims;
+  let scene = textureSample(sceneTexture, sceneSampler, uv);
+  return vec4f(encode_srgb(scene.rgb), scene.a);
+}
+`);
 
 /** Resolves the initial config from URL params, cloning shared presets. */
 export function resolveInitialConfig(compareMode: boolean, params: URLSearchParams, storage?: Storage): DemoConfig {
@@ -206,11 +234,19 @@ export class DemoEngine {
     let gpu: Awaited<ReturnType<typeof init>>;
     try {
       gpu = await init();
-      output = surface(gpu, canvas, { depth: true, msaa: 4 });
+      output = surface(gpu, canvas);
     } catch (error) {
       this.setError(`error: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
+
+    // Linear working-space target, mirroring bevy's `Rgba16Float` view target: debug colors
+    // arrive already decoded, alpha blending happens in linear light, and the present pass
+    // below re-encodes once. Rendering straight to the canvas cannot do this, because
+    // Chromium rejects an `-srgb` canvas format.
+    const scene = target(gpu, { size: output.size, format: "rgba16float", depth: true, msaa: 4 });
+    const present = effect(gpu, PRESENT_SHADER, { set: { sceneTexture: scene, sceneSampler: sampler(gpu) } });
+    output.onResize(({ width, height }) => scene.resize([width, height]));
 
     const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536 });
     const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
@@ -274,10 +310,12 @@ export class DemoEngine {
 
       frame(gpu, (f) => {
         renderer.updateIndirect(f);
-        f.pass({ target: output, clear: this.config.view.background, clearDepth: 1 }, (pass) => {
+        // The clear color is an sRGB-authored value, so it decodes like every other color.
+        f.pass({ target: scene, clear: linearClearColor(this.config.view.background), clearDepth: 1 }, (pass) => {
           if (this.config.view.showGrid) grid.draw(pass);
           renderer.draw(pass);
         });
+        f.pass({ target: output }, (pass) => pass.draw(present));
       });
 
       const nextCounts = `${commands.length} 条命令 · ${this.selected.columns.length} 列`;

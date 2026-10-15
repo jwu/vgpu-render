@@ -16,8 +16,10 @@
  * it scales the two reference line alphas instead of replacing them.
  */
 
+
 import { draw, geometry, type Draw, type FramePass, type Gpu } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
+import { linearGridColor } from "./color-space.js";
 
 const GRID_SHADER = prepareShader(`
 struct GridUniforms {
@@ -432,8 +434,8 @@ export class InfiniteGrid3D {
     const lod = gridLodState(this.#camera, options);
     const powers = lodPowers(options);
     const grazing = grazingFactors(options);
-    const [thinR, thinG, thinB, thinA] = options.thinLineColor;
-    const [thickR, thickG, thickB, thickA] = options.thickLineColor;
+    const thinAlpha = options.thinLineColor[3] * this.#opacity;
+    const thickAlpha = options.thickLineColor[3] * this.#opacity;
 
     this.#draw.set({
       grid: {
@@ -460,8 +462,8 @@ export class InfiniteGrid3D {
           options.enableStippleDiscard ? 1 : 0,
         ],
         optionsB: [options.enableLodCenterFade ? 1 : 0, 0, 0, 0],
-        thinLineColor: [thinR, thinG, thinB, thinA * this.#opacity],
-        thickLineColor: [thickR, thickG, thickB, thickA * this.#opacity],
+        thinLineColor: linearGridColor(options.thinLineColor, thinAlpha),
+        thickLineColor: linearGridColor(options.thickLineColor, thickAlpha),
       },
     });
     pass.draw(this.#draw);

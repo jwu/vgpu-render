@@ -5,9 +5,56 @@ import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
 import type { FrameCommand, PointCommand, LineCommand, TriangleCommand, Vec3 } from "./frame-recorder.js";
 
-const POINT_SHADER = `
+/**
+ * Reference scenes set `depth_bias = -0.001` on the addon before drawing. Keeping it as an
+ * option (and baking it into the WGSL) means the shader can match the reference exactly
+ * without adding a fourth uniform field that would break the shared camera layout.
+ */
+export const DEFAULT_DEPTH_BIAS = -0.001;
+
+/**
+ * Shared WGSL for depth handling, ported from `debug_line_3d_common.gdshaderinc`.
+ *
+ * `apply_depth_bias` keeps the reference's exponential form so a `-0.001` bias behaves
+ * like Godot's and Bevy's (`depth * exp2(-bias * log2(clip.w / depth))`). `depth_bias`
+ * is baked into the source instead of a uniform: the reference sets it once per scene
+ * and it keeps the camera uniform layout identical across all three pipelines.
+ */
+const DEPTH_BIAS_EPSILON = 0.000488;
+const NEAR_CLIP_EPSILON = 0.000488;
+
+function depthBiasHelpers(depthBias: number): string {
+  return `
+const DEPTH_BIAS: f32 = ${depthBias};
+const DEPTH_BIAS_EPSILON: f32 = ${DEPTH_BIAS_EPSILON};
+const NEAR_CLIP_EPSILON: f32 = ${NEAR_CLIP_EPSILON};
+
+fn apply_depth_bias(clip: vec4f) -> f32 {
+  let bias = clamp(DEPTH_BIAS, -1.0, 1.0);
+  if (bias >= 0.0) {
+    return clip.z * (1.0 - bias);
+  }
+  let safe_depth = max(clip.z, DEPTH_BIAS_EPSILON);
+  let depth_ratio = max(clip.w / safe_depth - DEPTH_BIAS_EPSILON, DEPTH_BIAS_EPSILON);
+  return clip.z * exp2(-bias * log2(depth_ratio));
+}
+
+fn clip_near_plane_t(a: vec4f, b: vec4f) -> f32 {
+  if (a.z > a.w && b.z <= b.w) {
+    let distance_a = a.z - a.w;
+    let distance_b = b.z - b.w;
+    return clamp(distance_a / (distance_a - distance_b) + NEAR_CLIP_EPSILON, 0.0, 1.0);
+  }
+  return 0.0;
+}
+`;
+}
+
+function pointShader(depthBias: number): string {
+  return `
 struct Camera { viewProjection: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
+${depthBiasHelpers(depthBias)}
 struct In {
   @location(0) position: vec3f,
   @location(1) world0: vec4f, @location(2) world1: vec4f,
@@ -21,12 +68,12 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
   let clip = camera.viewProjection * vec4f(input.point, 1.0);
   var size = input.size;
   if ((input.flags & 1u) != 0u) {
-    let projectionScale = length(vec3f(camera.viewProjection[0][1], camera.viewProjection[1][1], camera.viewProjection[2][1]));
-    size *= projectionScale * camera.viewportSize.y * 0.5 / max(clip.w, 0.0001);
+    // World-space size uses the vertical projection term, not the combined axis length.
+    size *= camera.viewProjection[1][1] * camera.viewportSize.y * 0.5 / max(clip.w, 0.0001);
   }
   let offset = corners[vertex] * size / camera.viewportSize * clip.w;
   var out: Out;
-  out.clip = clip + vec4f(offset, 0.0, 0.0);
+  out.clip = vec4f(clip.xy + offset, apply_depth_bias(clip), clip.w);
   out.color = input.color;
   out.uv = corners[vertex];
   out.roundShape = f32(input.flags & 2u);
@@ -37,10 +84,20 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
   return input.color;
 }
 `;
+}
 
-const LINE_SHADER = `
+function lineShader(depthBias: number): string {
+  return `
 struct Camera { viewProjection: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
+${depthBiasHelpers(depthBias)}
+const CLIP_W_EPSILON: f32 = 0.0001;
+const SCREEN_EPSILON: f32 = 0.0001;
+
+/** Floored modulo, matching GLSL. WGSL's % truncates and would shift negative dash phases. */
+fn floored_mod(value: f32, period: f32) -> f32 {
+  return value - period * floor(value / period);
+}
 struct In {
   @location(0) position: vec3f,
   @location(1) world0: vec4f, @location(2) world1: vec4f,
@@ -52,45 +109,83 @@ struct In {
   @location(12) normal: vec3f, @location(13) joint: u32,
 }
 struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @location(1) dash: vec3f, @location(2) distance: f32 }
+
 @vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
-  let corners = array<vec2f, 6>(vec2f(-1,0), vec2f(1,0), vec2f(-1,1), vec2f(-1,1), vec2f(1,0), vec2f(1,1));
-  let a = camera.viewProjection * vec4f(input.start, 1.0);
-  let b = camera.viewProjection * vec4f(input.end, 1.0);
-  let t = corners[vertex].y;
-  let center = mix(a, b, t);
-  let delta = ((b.xy / max(b.w, 0.0001)) - (a.xy / max(a.w, 0.0001))) * camera.viewportSize;
-  let baseDir = delta / max(length(delta), 0.0001);
-  var axis = vec2f(-baseDir.y, baseDir.x);
-  if (length(input.normal) > 0.0001) {
-    let dir = normalize(input.end - input.start);
-    let flat = cross(dir, normalize(input.normal));
-    if (length(flat) > 0.0001) {
-      let mid = mix(input.start, input.end, t);
-      let p0 = camera.viewProjection * vec4f(mid, 1.0);
-      let p1 = camera.viewProjection * vec4f(mid + normalize(flat) * 0.001, 1.0);
-      let delta2 = ((p1.xy / max(p1.w, 0.0001)) - (p0.xy / max(p0.w, 0.0001))) * camera.viewportSize;
-      if (length(delta2) > 0.00001) { axis = normalize(delta2); }
-    }
-  }
-  var pixelWidth = input.width;
-  if (input.flags == 1u) {
-    let scale = camera.viewProjection[1][1] * camera.viewportSize.y * 0.5 / max(center.w, 0.0001);
-    pixelWidth = input.width * scale;
-  }
-  let side = axis * corners[vertex].x * pixelWidth / camera.viewportSize * center.w;
+  let corners = array<vec2f, 6>(vec2f(-0.5,0), vec2f(0.5,0), vec2f(-0.5,1), vec2f(-0.5,1), vec2f(0.5,0), vec2f(0.5,1));
+  let side = corners[vertex].x;
+  let along = corners[vertex].y;
+  let pathLength = length(input.end - input.start);
+
   var out: Out;
-  out.clip = center + vec4f(side, 0.0, 0.0);
-  out.color = mix(input.color, input.colorEnd, t);
+  out.color = mix(input.color, input.colorEnd, along);
   out.dash = input.dash;
-  out.distance = t * length(input.end - input.start) + input.dash.z;
+  out.distance = along * pathLength + input.dash.z;
+
+  let clipARaw = camera.viewProjection * vec4f(input.start, 1.0);
+  let clipBRaw = camera.viewProjection * vec4f(input.end, 1.0);
+  if (clipARaw.w < CLIP_W_EPSILON && clipBRaw.w < CLIP_W_EPSILON) {
+    out.clip = vec4f(0.0, 0.0, 2.0, 1.0);
+    return out;
+  }
+
+  // Manual near-plane clipping, matching the reference and bevy: the perspective divide
+  // below would otherwise mirror geometry that crosses behind the camera.
+  var clipA = clipARaw;
+  var clipB = clipBRaw;
+  var distanceA = 0.0;
+  var distanceB = pathLength;
+  var t = clip_near_plane_t(clipA, clipB);
+  if (t > 0.0) {
+    clipA = mix(clipA, clipB, t);
+    distanceA = mix(distanceA, distanceB, t);
+  }
+  t = clip_near_plane_t(clipB, clipA);
+  if (t > 0.0) {
+    clipB = mix(clipB, clipA, t);
+    distanceB = mix(distanceB, distanceA, t);
+  }
+  out.distance = mix(distanceA, distanceB, along) + input.dash.z;
+
+  let screenA = camera.viewportSize * (0.5 * clipA.xy / clipA.w + 0.5);
+  let screenB = camera.viewportSize * (0.5 * clipB.xy / clipB.w + 0.5);
+  let screenDelta = screenB - screenA;
+  if (dot(screenDelta, screenDelta) < SCREEN_EPSILON) {
+    out.clip = vec4f(0.0, 0.0, 2.0, 1.0);
+    return out;
+  }
+
+  var pixelWidth = max(input.width, 0.0);
+  if (input.flags == 1u) {
+    // World-space width scales by the vertical projection term at this clip depth.
+    pixelWidth = input.width * camera.viewProjection[1][1] * camera.viewportSize.y * 0.5
+      / max(mix(clipA, clipB, along).w, 0.0001);
+  }
+  // Reference thinness fade: a sub-pixel line loses alpha instead of collapsing to a sliver.
+  if (pixelWidth > 0.0 && pixelWidth < 1.0) {
+    out.color.a *= pixelWidth;
+    pixelWidth = 1.0;
+  }
+
+  let yBasis = normalize(screenDelta);
+  let xBasis = vec2f(-yBasis.y, yBasis.x);
+  let clip = mix(clipA, clipB, along);
+  let screen = mix(screenA, screenB, along) + xBasis * side * pixelWidth;
+  let ndc = screen / camera.viewportSize * 2.0 - 1.0;
+  out.clip = vec4f(ndc * clip.w, apply_depth_bias(clip), clip.w);
   return out;
 }
+
 @fragment fn fs_main(input: Out) -> @location(0) vec4f {
-  let period = input.dash.x + input.dash.y;
-  if (period > 0.0 && input.dash.x > 0.0 && fract(input.distance / period) > input.dash.x / period) { discard; }
+  // The CPU side accumulates the dash offset and the arc length of earlier segments
+  // into dash.z, so distance is already the absolute on-path phase and must not have
+  // dash.z subtracted again here.
+  let visible = max(input.dash.x, 0.0);
+  let period = max(visible + max(input.dash.y, 0.0), 0.0001);
+  if (visible > 0.0 && floored_mod(input.distance, period) > visible) { discard; }
   return input.color;
 }
 `;
+}
 
 type Camera = { viewProjection: ArrayLike<number> };
 
@@ -107,9 +202,11 @@ fn cs_main() {
 }
 `);
 
-const TRIANGLE_SHADER = `
+function triangleShader(depthBias: number): string {
+  return `
 struct Camera { viewProjection: mat4x4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
+${depthBiasHelpers(depthBias)}
 struct In {
   @location(0) position: vec3f,
   @location(1) world0: vec4f, @location(2) world1: vec4f,
@@ -121,13 +218,15 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f }
 @vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
   var p = input.a;
   if (vertex == 1u) { p = input.b; } else if (vertex == 2u) { p = input.c; }
+  let clip = camera.viewProjection * vec4f(p, 1.0);
   var out: Out;
-  out.clip = camera.viewProjection * vec4f(p, 1.0);
+  out.clip = vec4f(clip.xy, apply_depth_bias(clip), clip.w);
   out.color = input.color;
   return out;
 }
 @fragment fn fs_main(input: Out) -> @location(0) vec4f { return input.color; }
 `;
+}
 
 type TriangleCollection = InstanceCollection<{
   a: "float32x3";
@@ -229,10 +328,11 @@ export class GpuDebugDraw3D {
   #lineDirty = true;
   #triangleDirty = true;
 
-  constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number } = {}) {
+  constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number; depthBias?: number } = {}) {
     const points = capacities.points ?? 4096;
     const lines = capacities.lines ?? 16384;
     const triangles = capacities.triangles ?? 8192;
+    const depthBias = capacities.depthBias ?? DEFAULT_DEPTH_BIAS;
     this.#points = instances({ capacity: points, attributes: { point: "float32x3", color: "float32x4", size: "float32", flags: "uint32" } });
     this.#lines = instances({ capacity: lines, attributes: { start: "float32x3", end: "float32x3", color: "float32x4", colorEnd: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", normal: "float32x3", joint: "uint32" } });
     this.#triangles = instances({ capacity: triangles, attributes: { a: "float32x3", b: "float32x3", c: "float32x3", color: "float32x4" } });
@@ -242,9 +342,13 @@ export class GpuDebugDraw3D {
     this.#pointBridge = instanceGeometry(gpu, this.#points, { mesh: pointMesh });
     this.#lineBridge = instanceGeometry(gpu, this.#lines, { mesh: lineMesh });
     this.#triangleBridge = instanceGeometry(gpu, this.#triangles, { mesh: triangleMesh });
-    this.#pointDraw = draw(gpu, { shader: prepareShader(POINT_SHADER), geometry: this.#pointBridge.geometry, instances: 0, blend: "alpha", depth: { write: false, compare: "less-equal" } });
-    this.#lineDraw = draw(gpu, { shader: prepareShader(LINE_SHADER), geometry: this.#lineBridge.geometry, instances: 0, blend: "alpha", depth: { write: false, compare: "less-equal" } });
-    this.#triangleDraw = draw(gpu, { shader: prepareShader(TRIANGLE_SHADER), geometry: this.#triangleBridge.geometry, instances: 0, blend: "alpha", depth: { write: true, compare: "less-equal" } });
+    // Reference render modes: every line-like primitive uses `depth_draw_always` and rects
+    // disable culling (`debug_rect_3d.gdshader`), so strokes and filled planes both test and
+    // write depth and are two-sided. Closed solids use `cull_back` in the reference, but that
+    // needs a separate pipeline per cull mode; classifying them is tracked as follow-up work.
+    this.#pointDraw = draw(gpu, { shader: prepareShader(pointShader(depthBias)), geometry: this.#pointBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
+    this.#lineDraw = draw(gpu, { shader: prepareShader(lineShader(depthBias)), geometry: this.#lineBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
+    this.#triangleDraw = draw(gpu, { shader: prepareShader(triangleShader(depthBias)), geometry: this.#triangleBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth: { write: true, compare: "less-equal" } });
     this.#pointIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
     this.#lineIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
     this.#triangleIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
@@ -306,6 +410,8 @@ export class GpuDebugDraw3D {
     this.#pointDraw.set({ camera });
     this.#lineDraw.set({ camera });
     this.#triangleDraw.set({ camera: { viewProjection: this.#viewProjection } });
+    // Reference render order: lines (priority 0), joints (1), then solids/rects (2).
+    // Solids go first here so they occupy their final depth slot before the strokes draw.
     if (this.#triangleCount > 0) pass.draw(this.#triangleDraw, { indirect: this.#triangleIndirect });
     if (this.#pointCount > 0) pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
     if (this.#lineCount > 0) pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });

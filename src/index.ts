@@ -1,5 +1,6 @@
 export * from "./debug-draw-3d.js";
 export * from "./frame-recorder.js";
+export * from "./color-space.js";
 export * from "./curve.js";
 export * from "./geometry-generators.js";
 export * from "./gpu-debug-draw-3d.js";
