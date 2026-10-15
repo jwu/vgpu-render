@@ -243,18 +243,6 @@ export const LINE_REFERENCE = {
   loop: referenceLoopPoints,
 } as const;
 
-type Row = (recorder: FrameRecorder, position: Vec3, index: number) => void;
-
-function matrix(recorder: FrameRecorder, columns: readonly (readonly Row[])[], rows: number): void {
-  const total = columns.length;
-  for (let c = 0; c < total; c++) {
-    const rowsForColumn = columns[c]!;
-    for (let r = 0; r < rowsForColumn.length; r++) {
-      rowsForColumn[r]!(recorder, slot(c, r, total, rows), r);
-    }
-  }
-}
-
 function lineMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const dashOffset = context.time * 0.35;
 
@@ -267,50 +255,112 @@ function lineMatrix(recorder: FrameRecorder, context: SceneContext): void {
   NORMAL_LINE_VALUES.forEach((normal, row) => recorder.line(lineStart(6, row), lineEnd(6, row), { color: TEAL, width: LINE_BASE_WIDTH, normal }));
 }
 
-function arrowMatrix(recorder: FrameRecorder, context: SceneContext): void {
+function arrowMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+  const columnCount = 7;
+  const rowCount = 4;
   const dirs = [-Math.PI * 0.35, -Math.PI * 0.12, Math.PI * 0.12, Math.PI * 0.35];
-  const headLengths = [0.12, 0.22, 0.34, 0.46];
   const headAngles = [Math.PI / 9, Math.PI / 6, Math.PI / 4, Math.PI * 0.42];
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.arrow([p[0] - 0.5, 0, p[2]], [0.9, 0, 0], { color: WHITE, width })),
-    dirs.map((angle) => (r, p) => r.arrow([p[0] - 0.5, 0, p[2]], [Math.cos(angle) * 0.9, 0, Math.sin(angle) * 0.9], { color: CYAN, width: 2 })),
-    headAngles.map((angle) => (r, p) => r.arrow([p[0] - 0.5, 0, p[2]], [0.9, 0, 0], { color: LIME, width: 2, headAngle: angle })),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(transformPoints([[-0.5, 0, 0.22], [-0.12, 0, -0.22], [0.16, 0, 0.22], [0.5, 0, -0.22]], p, [0, 0, 0]), { color: VIOLET, width: 8, joint }, false)),
-    NORMAL_VALUES.map((normal) => (r, p) => r.arrow([p[0] - 0.4, 0, p[2]], [0.8, 0.2, 0], { color: TEAL, width: 4, normal })),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(transformPoints([[-0.5, 0, 0.1], [0, 0, -0.2], [0.5, 0, 0.1]], p, [0, 0, 0]), { color: GOLD, width: 6, joint }, false)),
-    WIDTH_VALUES.map((width) => (r, p) => r.arrow([p[0] - 0.55, 0, p[2]], [1.1, 0, 0], { color: LIME, width })),
-  ];
-  matrix(recorder, columns, 4);
+
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.arrow([p[0] - 0.5, 0, p[2]], [0.9, 0, 0], { color: WHITE, width });
+  });
+  dirs.forEach((angle, row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.arrow([p[0] - 0.5, 0, p[2]], [Math.cos(angle) * 0.9, 0, Math.sin(angle) * 0.9], { color: CYAN, width: 2 });
+  });
+  headAngles.forEach((headAngle, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.arrow([p[0] - 0.5, 0, p[2]], [0.9, 0, 0], { color: LIME, width: 2, headAngle });
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.lineStrip(transformPoints([[-0.5, 0, 0.22], [-0.12, 0, -0.22], [0.16, 0, 0.22], [0.5, 0, -0.22]], p, [0, 0, 0]), { color: VIOLET, width: 8, joint }, false);
+  });
+  NORMAL_VALUES.forEach((normal, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.arrow([p[0] - 0.4, 0, p[2]], [0.8, 0.2, 0], { color: TEAL, width: 4, normal });
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.lineStrip(transformPoints([[-0.5, 0, 0.1], [0, 0, -0.2], [0.5, 0, 0.1]], p, [0, 0, 0]), { color: GOLD, width: 6, joint }, false);
+  });
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.arrow([p[0] - 0.55, 0, p[2]], [1.1, 0, 0], { color: LIME, width });
+  });
 }
 
 function axesMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+  const columnCount = 6;
+  const rowCount = 8;
   const lengths = [0.35, 0.55, 0.75, 1];
-  const columns: Row[][] = [
-    lengths.map((length) => (r, p) => r.axes([p[0], 0, p[2]], length, 2)),
-    WIDTH_VALUES.map((width) => (r, p) => r.axes([p[0], 0, p[2]], 0.5, width)),
-    ROTATIONS.map((angle) => (r, p) => r.axes([p[0], 0, p[2]], 0.4, 2)),
-    lengths.map((length) => (r, p) => r.axes([p[0], 0, p[2]], length, 2)),
-    WIDTH_VALUES.map((width) => (r, p) => r.axes([p[0], 0, p[2]], 0.5, width)),
-    ROTATIONS.map((angle) => (r, p) => r.axes([p[0], 0, p[2]], 0.4, 2)),
-  ];
-  matrix(recorder, columns, 8);
+
+  lengths.forEach((length, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.axes([p[0], 0, p[2]], length, 2);
+  });
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.axes([p[0], 0, p[2]], 0.5, width);
+  });
+  ROTATIONS.forEach((_angle, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.axes([p[0], 0, p[2]], 0.4, 2);
+  });
+  lengths.forEach((length, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.axes([p[0], 0, p[2]], length, 2);
+  });
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.axes([p[0], 0, p[2]], 0.5, width);
+  });
+  ROTATIONS.forEach((_angle, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.axes([p[0], 0, p[2]], 0.4, 2);
+  });
 }
 
 function gridMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+  const columnCount = 8;
+  const rowCount = 4;
   const cells: readonly (readonly [number, number])[] = [[4, 4], [6, 4], [10, 3], [3, 8]];
   const spacings: readonly (readonly [number, number])[] = [[0.2, 0.2], [0.28, 0.28], [0.42, 0.22], [0.55, 0.28]];
   const skews: readonly (readonly [number, number])[] = [[0, 0], [0.5, 0], [-0.5, 0], [0.5, -0.5]];
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.grid([p[0], 0, p[2]], [3, 3], [0.25, 0.25], { color: WHITE, width })),
-    cells.map((cell) => (r, p) => r.grid([p[0], 0, p[2]], cell, [0.22, 0.22], { color: CYAN, width: 2 })),
-    spacings.map((spacing) => (r, p) => r.grid([p[0], 0, p[2]], [3, 3], spacing, { color: LIME, width: 2 })),
-    skews.map((skew) => (r, p) => r.grid([p[0], 0, p[2]], [4, 4], [0.22, 0.22], { color: ORANGE, width: 2, skew })),
-    [0, 1, 2, 3].map((outer) => (r, p) => r.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: VIOLET, width: 2 + outer })),
-    ROTATIONS.slice(0, 4).map((angle) => (r, p) => r.grid([p[0], 0, p[2]], cells[1]!, spacings[1]!, { color: GOLD, width: 2, rotation: [0, angle, 0], outer: angle === 0 ? "none" : "xz" })),
-    [0, 1, 2, 3].map((row) => (r, p) => r.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: [0.4, 0.6 + row * 0.1, 1, 1], width: 2 })),
-    [0, 1, 2, 3].map((row) => (r, p) => r.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: TEAL, width: 2 })),
-  ];
-  matrix(recorder, columns, 4);
+
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], [3, 3], [0.25, 0.25], { color: WHITE, width });
+  });
+  cells.forEach((cell, row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], cell, [0.22, 0.22], { color: CYAN, width: 2 });
+  });
+  spacings.forEach((spacing, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], [3, 3], spacing, { color: LIME, width: 2 });
+  });
+  skews.forEach((skew, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], [4, 4], [0.22, 0.22], { color: ORANGE, width: 2, skew });
+  });
+  [0, 1, 2, 3].forEach((outer, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: VIOLET, width: 2 + outer });
+  });
+  ROTATIONS.slice(0, 4).forEach((angle, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], cells[1]!, spacings[1]!, { color: GOLD, width: 2, rotation: [0, angle, 0], outer: angle === 0 ? "none" : "xz" });
+  });
+  [0, 1, 2, 3].forEach((value, row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: [0.4, 0.6 + value * 0.1, 1, 1], width: 2 });
+  });
+  [0, 1, 2, 3].forEach((_value, row) => {
+    const p = slot(7, row, columnCount, rowCount);
+    recorder.grid([p[0], 0, p[2]], [3, 3], [0.24, 0.24], { color: TEAL, width: 2 });
+  });
 }
 
 function translateMesh(mesh: MeshData, position: Vec3): MeshData {
@@ -325,19 +375,42 @@ const BASE_CURVE = curve([
 ]);
 
 function curveMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.curve(BASE_CURVE, { color: WHITE, width, tolerance: 0.08, transform: { center: p } })),
-    SHAPES.map((scale) => (r, p) => r.curve(scaleCurve(scale), { color: CYAN, width: 2, tolerance: 0.08, transform: { center: p } })),
-    ROTATIONS.map((angle) => (r, p) => r.curve(BASE_CURVE, { color: LIME, width: 2, tolerance: 0.08, transform: { center: p, rotation: [0, angle, 0] } })),
-    TOLERANCES.map((tolerance) => (r, p) => r.curve(BASE_CURVE, { color: GOLD, width: 2, tolerance, transform: { center: p } })),
-    [0, 1, 2, 3].map((index) => (r, p) => (index === 0
-      ? r.curve(BASE_CURVE, { color: TEAL, width: 2, tolerance: 0.08, transform: { center: p } })
-      : r.curve(scaleClosed(0.75 + (index - 1) * 0.25), { color: TEAL, width: 2, tolerance: 0.08, joint: "round", transform: { center: p } }))),
-    JOINT_VALUES.map((joint) => (r, p) => r.curve(cornerCurve(), { color: VIOLET, width: 5, tolerance: 0.16, joint, transform: { center: p } })),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.curve(BASE_CURVE, { color: ORANGE, width: 2, dash: [dash, space, context.time * 0.6], tolerance: 0.08, transform: { center: p } })),
-    JOINT_VALUES.map((joint) => (r, p) => r.curve(cornerCurve(), { color: RED, width: 5, dash: [0.18, 0.1, context.time * 0.6], tolerance: 0.16, joint, transform: { center: p } })),
-  ];
-  matrix(recorder, columns, 8);
+  const columnCount = 8;
+  const rowCount = 8;
+
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.curve(BASE_CURVE, { color: WHITE, width, tolerance: 0.08, transform: { center: p } });
+  });
+  SHAPES.forEach((scale, row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.curve(scaleCurve(scale), { color: CYAN, width: 2, tolerance: 0.08, transform: { center: p } });
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.curve(BASE_CURVE, { color: LIME, width: 2, tolerance: 0.08, transform: { center: p, rotation: [0, angle, 0] } });
+  });
+  TOLERANCES.forEach((tolerance, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.curve(BASE_CURVE, { color: GOLD, width: 2, tolerance, transform: { center: p } });
+  });
+  [0, 1, 2, 3].forEach((index, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    if (index === 0) recorder.curve(BASE_CURVE, { color: TEAL, width: 2, tolerance: 0.08, transform: { center: p } });
+    else recorder.curve(scaleClosed(0.75 + (index - 1) * 0.25), { color: TEAL, width: 2, tolerance: 0.08, joint: "round", transform: { center: p } });
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.curve(cornerCurve(), { color: VIOLET, width: 5, tolerance: 0.16, joint, transform: { center: p } });
+  });
+  DASH_VALUES.forEach(([dash, space], row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.curve(BASE_CURVE, { color: ORANGE, width: 2, dash: [dash, space, context.time * 0.6], tolerance: 0.08, transform: { center: p } });
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(7, row, columnCount, rowCount);
+    recorder.curve(cornerCurve(), { color: RED, width: 5, dash: [0.18, 0.1, context.time * 0.6], tolerance: 0.16, joint, transform: { center: p } });
+  });
 }
 
 function scaleCurve(scale: number): Curve3D {
@@ -408,52 +481,136 @@ function normalOf(index: number): Vec3 { return NORMAL_VALUES[index % NORMAL_VAL
 function offset(points: readonly Vec3[], p: Vec3): Vec3[] { return points.map((q) => [q[0] + p[0], q[1] + p[1], q[2] + p[2]]); }
 
 function arcMatrix(recorder: FrameRecorder, context: SceneContext): void {
+  const columnCount = 11;
+  const rowCount = 4;
   const angles = [Math.PI / 2, Math.PI, Math.PI * 1.5, Math.PI * 2];
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: WHITE, width }, false)),
-    RADII.map((radius) => (r, p) => r.lineStrip(offset(arcPoints(radius, Math.PI * 1.5, 48), p), { color: CYAN, width: 2 }, false)),
-    angles.map((angle) => (r, p) => r.lineStrip(offset(arcPoints(0.35, angle, 48), p), { color: LIME, width: 2 }, false)),
-    SEGMENTS.map((segments) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, segments), p), { color: ORANGE, width: 2, joint: "round" }, false)),
-    ROTATIONS.map((angle) => (r, p) => r.lineStrip(transformPoints(arcPoints(0.35, Math.PI * 1.5, 32), p, [0, angle, 0]), { color: GOLD, width: 2 }, false)),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: VIOLET, width: 8, joint }, false)),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 48), p), { color: GOLD, width: 2, dash: [dash, space, context.time * 0.35] }, false)),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: RED, width: 8, joint, dash: [0.18, 0.1, context.time * 0.35] }, false)),
-    NORMAL_VALUES.map((normal) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: TEAL, width: 4, normal }, false)),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: TEAL, width: 4, normal: normalOf(0), dash: [dash, space, context.time * 0.35] }, false)),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: TEAL, width: 6, normal: normalOf(1), joint }, false)),
-  ];
-  matrix(recorder, columns, 4);
+
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: WHITE, width }, false);
+  });
+  RADII.forEach((radius, row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(radius, Math.PI * 1.5, 48), p), { color: CYAN, width: 2 }, false);
+  });
+  angles.forEach((angle, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, angle, 48), p), { color: LIME, width: 2 }, false);
+  });
+  SEGMENTS.forEach((segments, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, segments), p), { color: ORANGE, width: 2, joint: "round" }, false);
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.lineStrip(transformPoints(arcPoints(0.35, Math.PI * 1.5, 32), p, [0, angle, 0]), { color: GOLD, width: 2 }, false);
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: VIOLET, width: 8, joint }, false);
+  });
+  DASH_VALUES.forEach(([dash, space], row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 48), p), { color: GOLD, width: 2, dash: [dash, space, context.time * 0.35] }, false);
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(7, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: RED, width: 8, joint, dash: [0.18, 0.1, context.time * 0.35] }, false);
+  });
+  NORMAL_VALUES.forEach((normal, row) => {
+    const p = slot(8, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: TEAL, width: 4, normal }, false);
+  });
+  DASH_VALUES.forEach(([dash, space], row) => {
+    const p = slot(9, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 32), p), { color: TEAL, width: 4, normal: normalOf(0), dash: [dash, space, context.time * 0.35] }, false);
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(10, row, columnCount, rowCount);
+    recorder.lineStrip(offset(arcPoints(0.35, Math.PI * 1.5, 6), p), { color: TEAL, width: 6, normal: normalOf(1), joint }, false);
+  });
 }
 
 function rectMatrix(recorder: FrameRecorder, context: SceneContext): void {
+  const columnCount = 10;
+  const rowCount = 8;
   const sizes: readonly (readonly [number, number])[] = [[0.5, 0.4], [0.8, 0.4], [0.5, 0.7], [0.55, 0.55]];
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: WHITE, width }, true)),
-    sizes.map(([w, h]) => (r, p) => r.lineStrip(offset(rectPoints(w, h), p), { color: CYAN, width: 2 }, true)),
-    ROTATIONS.map((angle) => (r, p) => r.lineStrip(transformPoints(rectPoints(0.6, 0.4), p, [0, angle, 0]), { color: LIME, width: 2 }, true)),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: ORANGE, width: 8, joint }, true)),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: VIOLET, width: 2, dash: [dash, space, context.time * 0.35] }, true)),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: GOLD, width: 8, joint, dash: [0.18, 0.1, context.time * 0.35] }, true)),
-    NORMAL_VALUES.map((normal) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 4, normal }, true)),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 4, normal: normalOf(0), dash: [dash, space, context.time * 0.35] }, true)),
-    JOINT_VALUES.map((joint) => (r, p) => r.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 6, normal: normalOf(1), joint }, true)),
-    ROTATIONS.map((angle) => (r, p) => r.mesh(translateMesh(rect([0.7, 0.5], [0, 0, 0], [0, angle, 0]), p), { color: GOLD, solid: true })),
-  ];
-  matrix(recorder, columns, 8);
+
+  WIDTH_VALUES.forEach((width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: WHITE, width }, true);
+  });
+  sizes.forEach(([w, h], row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(w, h), p), { color: CYAN, width: 2 }, true);
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.lineStrip(transformPoints(rectPoints(0.6, 0.4), p, [0, angle, 0]), { color: LIME, width: 2 }, true);
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: ORANGE, width: 8, joint }, true);
+  });
+  DASH_VALUES.forEach(([dash, space], row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: VIOLET, width: 2, dash: [dash, space, context.time * 0.35] }, true);
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: GOLD, width: 8, joint, dash: [0.18, 0.1, context.time * 0.35] }, true);
+  });
+  NORMAL_VALUES.forEach((normal, row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 4, normal }, true);
+  });
+  DASH_VALUES.forEach(([dash, space], row) => {
+    const p = slot(7, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 4, normal: normalOf(0), dash: [dash, space, context.time * 0.35] }, true);
+  });
+  JOINT_VALUES.forEach((joint, row) => {
+    const p = slot(8, row, columnCount, rowCount);
+    recorder.lineStrip(offset(rectPoints(0.6, 0.4), p), { color: TEAL, width: 6, normal: normalOf(1), joint }, true);
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(9, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(rect([0.7, 0.5], [0, 0, 0], [0, angle, 0]), p), { color: GOLD, solid: true });
+  });
 }
 
 function boxMatrix(recorder: FrameRecorder, _context: SceneContext): void {
+  const columnCount = 7;
+  const rowCount = 8;
   const sizes: readonly Vec3[] = [[0.5, 0.4, 0.4], [0.8, 0.4, 0.4], [0.5, 0.6, 0.4], [0.5, 0.4, 0.6]];
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: WHITE })),
-    sizes.map((size) => (r, p) => r.mesh(translateMesh(box(size), p), { color: CYAN })),
-    ROTATIONS.map((angle) => (r, p) => r.mesh(translateMesh(box([0.5, 0.4, 0.4], [0, 0, 0], [0, angle, 0]), p), { color: LIME })),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: VIOLET })),
-    NORMAL_VALUES.map((normal) => (r, p) => r.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: TEAL })),
-    DASH_VALUES.map(([dash, space]) => (r, p) => r.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: GOLD })),
-    ROTATIONS.map((angle) => (r, p) => r.mesh(translateMesh(box([0.6, 0.5, 0.5], [0, 0, 0], [0, angle, 0]), p), { color: GOLD, solid: true })),
-  ];
-  matrix(recorder, columns, 8);
+
+  WIDTH_VALUES.forEach((_width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: WHITE });
+  });
+  sizes.forEach((size, row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box(size), p), { color: CYAN });
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4], [0, 0, 0], [0, angle, 0]), p), { color: LIME });
+  });
+  DASH_VALUES.forEach((_dash, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: VIOLET });
+  });
+  NORMAL_VALUES.forEach((_normal, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: TEAL });
+  });
+  DASH_VALUES.forEach((_dash, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box([0.5, 0.4, 0.4]), p), { color: GOLD });
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(box([0.6, 0.5, 0.5], [0, 0, 0], [0, angle, 0]), p), { color: GOLD, solid: true });
+  });
 }
 
 function overviewMatrix(recorder: FrameRecorder, context: SceneContext): void {
@@ -498,6 +655,8 @@ function overviewMatrix(recorder: FrameRecorder, context: SceneContext): void {
 }
 
 function shapeScene(recorder: FrameRecorder, id: string, _context: SceneContext): void {
+  const columnCount = 7;
+  const rowCount = 8;
   const base: Record<string, MeshData> = {
     sphere: sphere(0.24, 24, 12),
     cone: cone(0.24, 0.46, 24),
@@ -506,17 +665,35 @@ function shapeScene(recorder: FrameRecorder, id: string, _context: SceneContext)
   };
   const mesh = base[id]!;
   const radii: readonly (readonly [number, number])[] = [[0.18, 0.18], [0.26, 0.26], [0.34, 0.34], [0.44, 0.44]];
-  const columns: Row[][] = [
-    WIDTH_VALUES.map((width) => (r, p) => r.mesh(translateMesh(mesh, p), { color: WHITE })),
-    radii.map(([a, b]) => (r, p) => r.mesh(translateMesh(scaleMesh(mesh, 0.6 + a), p), { color: CYAN })),
-    SEGMENTS.map((segments) => (r, p) => r.mesh(translateMesh(sphere(0.24, segments, Math.max(4, segments / 2)), p), { color: LIME })),
-    ROTATIONS.map((angle) => (r, p) => r.mesh(translateMesh(rotateMesh(mesh, [0, angle, 0]), p), { color: ORANGE })),
-    JOINT_VALUES.map((joint) => (r, p) => r.mesh(translateMesh(mesh, p), { color: VIOLET })),
-    NORMAL_VALUES.map((normal) => (r, p) => r.mesh(translateMesh(mesh, p), { color: TEAL })),
-    ROTATIONS.map((angle) => (r, p) => r.mesh(translateMesh(rotateMesh(mesh, [0, angle, 0]), p), { color: GOLD, solid: true })),
-  ];
-  void radii;
-  matrix(recorder, columns, 8);
+
+  WIDTH_VALUES.forEach((_width, row) => {
+    const p = slot(0, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(mesh, p), { color: WHITE });
+  });
+  radii.forEach(([radius], row) => {
+    const p = slot(1, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(scaleMesh(mesh, 0.6 + radius), p), { color: CYAN });
+  });
+  SEGMENTS.forEach((segments, row) => {
+    const p = slot(2, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(sphere(0.24, segments, Math.max(4, segments / 2)), p), { color: LIME });
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(3, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(rotateMesh(mesh, [0, angle, 0]), p), { color: ORANGE });
+  });
+  JOINT_VALUES.forEach((_joint, row) => {
+    const p = slot(4, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(mesh, p), { color: VIOLET });
+  });
+  NORMAL_VALUES.forEach((_normal, row) => {
+    const p = slot(5, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(mesh, p), { color: TEAL });
+  });
+  ROTATIONS.forEach((angle, row) => {
+    const p = slot(6, row, columnCount, rowCount);
+    recorder.mesh(translateMesh(rotateMesh(mesh, [0, angle, 0]), p), { color: GOLD, solid: true });
+  });
 }
 
 function rotateMesh(mesh: MeshData, rotation: readonly [number, number, number]): MeshData {
