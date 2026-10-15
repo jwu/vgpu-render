@@ -3,6 +3,10 @@
  *
  * All controls are controlled components driven by the engine snapshot, so the
  * sidebar always reflects the persisted config (including URL overrides).
+ *
+ * Labels lead with Chinese UI text and keep the reference parameter name
+ * (`infinite_grid_3d.gd` snake_case) as a secondary monospace hint, so the panel
+ * stays readable while still mapping one to one onto the ported addon property.
  */
 
 import type { ReactNode } from "react";
@@ -25,30 +29,41 @@ import type { ControlHandlers } from "@/demo-hooks";
 import { backgroundHex, gridColorToHex } from "@/demo-hooks";
 
 const PROJECTIONS: readonly { value: ProjectionMode; label: string }[] = [
-  { value: "perspective", label: "perspective" },
-  { value: "orthographic", label: "orthographic" },
+  { value: "perspective", label: "透视 perspective" },
+  { value: "orthographic", label: "正交 orthographic" },
 ];
 
 const JOINTS: readonly { value: LineJoint; label: string }[] = [
-  { value: "none", label: "none" },
-  { value: "round", label: "round" },
-  { value: "bevel", label: "bevel" },
-  { value: "miter", label: "miter" },
+  { value: "none", label: "不处理 none" },
+  { value: "round", label: "圆角 round" },
+  { value: "bevel", label: "斜切 bevel" },
+  { value: "miter", label: "尖角 miter" },
 ];
+
+/** Chinese label with the reference parameter name as a secondary hint. */
+function ControlLabel({ label, name }: { readonly label: string; readonly name?: string | undefined }) {
+  return (
+    <span className="control-label">
+      <span>{label}</span>
+      {name === undefined ? null : <span className="control-name">{name}</span>}
+    </span>
+  );
+}
 
 type ControlRowProps = {
   readonly label: string;
-  readonly value?: string;
+  readonly name?: string | undefined;
+  readonly value?: string | undefined;
   readonly children: ReactNode;
 };
 
-function ControlRow({ label, value, children }: ControlRowProps) {
+function ControlRow({ label, name, value, children }: ControlRowProps) {
   return (
-    <div className="grid gap-2">
-      <Label className="justify-between">
-        <span className="text-muted-foreground">{label}</span>
+    <div className="control-row">
+      <Label className="control-head">
+        <ControlLabel label={label} name={name} />
         {value === undefined ? null : (
-          <span className="font-mono text-muted-foreground tabular-nums">{value}</span>
+          <span className="control-value font-mono tabular-nums">{value}</span>
         )}
       </Label>
       {children}
@@ -59,6 +74,7 @@ function ControlRow({ label, value, children }: ControlRowProps) {
 type SliderInputRowProps = {
   readonly id: string;
   readonly label: string;
+  readonly name?: string | undefined;
   readonly min: number;
   readonly max: number;
   readonly step: number;
@@ -74,7 +90,7 @@ type SliderInputRowProps = {
  * (empty input, a lone `-`, `1.`) stay editable; the draft is dropped on blur
  * or Enter, falling back to the engine value.
  */
-function SliderInputRow({ id, label, min, max, step, value, onValueChange, format }: SliderInputRowProps) {
+function SliderInputRow({ id, label, name, min, max, step, value, onValueChange, format }: SliderInputRowProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const display = draft ?? trimNumber(value);
 
@@ -90,7 +106,7 @@ function SliderInputRow({ id, label, min, max, step, value, onValueChange, forma
   };
 
   return (
-    <ControlRow label={label} value={format(value)}>
+    <ControlRow label={label} name={name} value={format(value)}>
       <Slider
         id={id}
         min={min}
@@ -110,7 +126,7 @@ function SliderInputRow({ id, label, min, max, step, value, onValueChange, forma
         max={max}
         step={step}
         value={display}
-        aria-label={`${label} value`}
+        aria-label={`${label} 数值`}
         onChange={(event) => setDraft(event.currentTarget.value)}
         onBlur={(event) => commit(event.currentTarget.value)}
         onKeyDown={(event) => {
@@ -130,9 +146,10 @@ function SliderInputRow({ id, label, min, max, step, value, onValueChange, forma
 }
 
 /** Number-only row for wide-range values a slider cannot express well. */
-function NumberRow({ id, label, min, max, step, value, integer, onValueChange }: {
+function NumberRow({ id, label, name, min, max, step, value, integer, onValueChange }: {
   readonly id: string;
   readonly label: string;
+  readonly name?: string | undefined;
   readonly min: number;
   readonly max: number;
   readonly step: number;
@@ -152,7 +169,7 @@ function NumberRow({ id, label, min, max, step, value, integer, onValueChange }:
   };
 
   return (
-    <ControlRow label={label}>
+    <ControlRow label={label} name={name}>
       <Input
         id={id}
         type="number"
@@ -161,7 +178,7 @@ function NumberRow({ id, label, min, max, step, value, integer, onValueChange }:
         max={max}
         step={step}
         value={display}
-        aria-label={`${label} value`}
+        aria-label={`${label} 数值`}
         onChange={(event) => setDraft(event.currentTarget.value)}
         onBlur={(event) => commit(event.currentTarget.value)}
         onKeyDown={(event) => {
@@ -179,6 +196,7 @@ function trimNumber(value: number): string {
 
 type ToggleRowProps = {
   readonly label: string;
+  readonly name?: string | undefined;
   readonly checked: boolean;
   readonly onCheckedChange: (checked: boolean) => void;
 };
@@ -189,12 +207,34 @@ type ToggleRowProps = {
  * label keeps the click target correct, and `aria-label` names the visible
  * checkbox instead of the `aria-hidden` input.
  */
-function ToggleRow({ label, checked, onCheckedChange }: ToggleRowProps) {
+function ToggleRow({ label, name, checked, onCheckedChange }: ToggleRowProps) {
   return (
-    <Label className="justify-between">
-      <span className="text-muted-foreground">{label}</span>
+    <Label className="control-head control-head-toggle">
+      <ControlLabel label={label} name={name} />
       <Checkbox checked={checked} onCheckedChange={onCheckedChange} aria-label={label} />
     </Label>
+  );
+}
+
+/** Color row: swatch input without an outline, plus the hex readout. */
+function ColorRow({ id, label, name, value, onValueChange }: {
+  readonly id: string;
+  readonly label: string;
+  readonly name?: string | undefined;
+  readonly value: string;
+  readonly onValueChange: (hex: string) => void;
+}) {
+  return (
+    <ControlRow label={label} name={name} value={value}>
+      <Input
+        id={id}
+        type="color"
+        className="color-input h-7 w-full cursor-pointer"
+        value={value}
+        aria-label={label}
+        onChange={(event) => onValueChange(event.currentTarget.value)}
+      />
+    </ControlRow>
   );
 }
 
@@ -206,7 +246,8 @@ export type DemoControlsProps = {
 /**
  * Grid section. Every field maps one to one onto a reference addon property
  * (`infinite_grid_3d.gd`), so the panel doubles as documentation of the ported
- * parameter set. Labels keep the reference snake_case names.
+ * parameter set. Labels lead with Chinese and keep the reference snake_case
+ * name as a hint.
  */
 function GridControls({ config, handlers }: DemoControlsProps) {
   const grid = config.grid;
@@ -214,10 +255,11 @@ function GridControls({ config, handlers }: DemoControlsProps) {
   return (
     <>
       <Separator />
-      <div className="eyebrow">infinite grid</div>
+      <div className="eyebrow">无限网格 · infinite grid</div>
       <NumberRow
         id="grid-size"
-        label="grid_size"
+        label="网格范围"
+        name="grid_size"
         min={1}
         max={20000}
         step={100}
@@ -226,7 +268,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <NumberRow
         id="grid-cell-size"
-        label="cell_size"
+        label="单元尺寸"
+        name="cell_size"
         min={0.0001}
         max={1000}
         step={0.1}
@@ -235,7 +278,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <SliderInputRow
         id="grid-line-width"
-        label="line_width_pixels"
+        label="网格线宽"
+        name="line_width_pixels"
         min={0.25}
         max={6}
         step={0.25}
@@ -245,7 +289,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <NumberRow
         id="grid-lod-finer"
-        label="lod_finer_levels"
+        label="精细层级数"
+        name="lod_finer_levels"
         min={0}
         max={12}
         step={1}
@@ -255,7 +300,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <NumberRow
         id="grid-lod-total"
-        label="lod_total_levels"
+        label="总层级数"
+        name="lod_total_levels"
         min={3}
         max={24}
         step={1}
@@ -265,7 +311,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <NumberRow
         id="grid-center-fade-lines"
-        label="lod_center_fade_line_count"
+        label="中心淡出线条数"
+        name="lod_center_fade_line_count"
         min={1}
         max={4096}
         step={2}
@@ -274,7 +321,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <SliderInputRow
         id="grid-edge-start"
-        label="edge_fade_start_ratio"
+        label="边缘淡出起点"
+        name="edge_fade_start_ratio"
         min={0}
         max={1}
         step={0.05}
@@ -284,7 +332,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <SliderInputRow
         id="grid-edge-end"
-        label="edge_fade_end_ratio"
+        label="边缘淡出终点"
+        name="edge_fade_end_ratio"
         min={0}
         max={1}
         step={0.05}
@@ -293,13 +342,15 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         format={(value) => value.toFixed(2)}
       />
       <ToggleRow
-        label="enable_grazing_opacity"
+        label="掠射淡出"
+        name="enable_grazing_opacity"
         checked={grid.enableGrazingOpacity}
         onCheckedChange={(checked) => patch({ enableGrazingOpacity: checked })}
       />
       <SliderInputRow
         id="grid-grazing-start"
-        label="grazing_fade_start"
+        label="掠射淡出起点"
+        name="grazing_fade_start"
         min={0}
         max={90}
         step={0.5}
@@ -309,7 +360,8 @@ function GridControls({ config, handlers }: DemoControlsProps) {
       />
       <SliderInputRow
         id="grid-grazing-end"
-        label="grazing_fade_end"
+        label="掠射淡出终点"
+        name="grazing_fade_end"
         min={0}
         max={90}
         step={0.5}
@@ -318,32 +370,34 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         format={(value) => `${value.toFixed(1)}°`}
       />
       <ToggleRow
-        label="enable_lod_center_fade"
+        label="中心淡出"
+        name="enable_lod_center_fade"
         checked={grid.enableLodCenterFade}
         onCheckedChange={(checked) => patch({ enableLodCenterFade: checked })}
       />
       <ToggleRow
-        label="enable_stipple_discard"
+        label="点刻剔除"
+        name="enable_stipple_discard"
         checked={grid.enableStippleDiscard}
         onCheckedChange={(checked) => patch({ enableStippleDiscard: checked })}
       />
       <ToggleRow
-        label="debug_lod_colors"
+        label="LOD 调试配色"
+        name="debug_lod_colors"
         checked={grid.debugLodColors}
         onCheckedChange={(checked) => patch({ debugLodColors: checked })}
       />
-      <ControlRow label="thin_line_color" value={gridColorToHex(grid.thinLineColor)}>
-        <Input
-          id="grid-thin-color"
-          type="color"
-          className="h-7 w-full cursor-pointer p-1"
-          value={gridColorToHex(grid.thinLineColor)}
-          onChange={(event) => handlers.onGridLineColorChange("thin", event.currentTarget.value)}
-        />
-      </ControlRow>
+      <ColorRow
+        id="grid-thin-color"
+        label="细线颜色"
+        name="thin_line_color"
+        value={gridColorToHex(grid.thinLineColor)}
+        onValueChange={(hex) => handlers.onGridLineColorChange("thin", hex)}
+      />
       <SliderInputRow
         id="grid-thin-alpha"
-        label="thin_line_color alpha"
+        label="细线透明度"
+        name="thin_line_color alpha"
         min={0}
         max={1}
         step={0.05}
@@ -351,18 +405,17 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         onValueChange={(value) => patch({ thinLineColor: [grid.thinLineColor[0], grid.thinLineColor[1], grid.thinLineColor[2], value] })}
         format={(value) => value.toFixed(2)}
       />
-      <ControlRow label="thick_line_color" value={gridColorToHex(grid.thickLineColor)}>
-        <Input
-          id="grid-thick-color"
-          type="color"
-          className="h-7 w-full cursor-pointer p-1"
-          value={gridColorToHex(grid.thickLineColor)}
-          onChange={(event) => handlers.onGridLineColorChange("thick", event.currentTarget.value)}
-        />
-      </ControlRow>
+      <ColorRow
+        id="grid-thick-color"
+        label="粗线颜色"
+        name="thick_line_color"
+        value={gridColorToHex(grid.thickLineColor)}
+        onValueChange={(hex) => handlers.onGridLineColorChange("thick", hex)}
+      />
       <SliderInputRow
         id="grid-thick-alpha"
-        label="thick_line_color alpha"
+        label="粗线透明度"
+        name="thick_line_color alpha"
         min={0}
         max={1}
         step={0.05}
@@ -376,25 +429,28 @@ function GridControls({ config, handlers }: DemoControlsProps) {
 
 export function DemoControls({ config, handlers }: DemoControlsProps) {
   return (
-    <aside className="sidebar sidebar-controls" aria-label="Render controls">
+    <aside className="sidebar sidebar-controls" aria-label="渲染控制">
       <header className="sidebar-header">
-        <div className="eyebrow">render controls</div>
-        <h2>Display</h2>
+        <div className="eyebrow">渲染控制 · render controls</div>
+        <h2>显示</h2>
       </header>
       <div className="control-list">
         <ToggleRow
-          label="animate"
+          label="动画"
+          name="animate"
           checked={config.view.animate}
           onCheckedChange={handlers.onAnimateChange}
         />
         <ToggleRow
-          label="grid"
+          label="显示网格"
+          name="grid"
           checked={config.view.showGrid}
           onCheckedChange={handlers.onShowGridChange}
         />
         <SliderInputRow
           id="line-width-scale"
-          label="line width"
+          label="线宽倍率"
+          name="line width"
           min={0.25}
           max={3}
           step={0.05}
@@ -404,7 +460,8 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
         />
         <SliderInputRow
           id="grid-opacity"
-          label="grid opacity"
+          label="网格不透明度"
+          name="grid opacity"
           min={0}
           max={1}
           step={0.05}
@@ -412,13 +469,17 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
           onValueChange={handlers.onGridOpacityChange}
           format={(value) => value.toFixed(2)}
         />
-        <ControlRow label="projection">
+        <ControlRow label="投影" name="projection">
           <Select
             value={config.camera.projection}
             onValueChange={(value) => handlers.onProjectionChange(value as ProjectionMode)}
           >
             <SelectTrigger id="projection" className="w-full">
-              <SelectValue />
+              {/* Without an explicit formatter Base UI prints the raw value
+               * (`perspective`); map it back to the localized option label. */}
+              <SelectValue>
+                {(value: ProjectionMode) => PROJECTIONS.find((option) => option.value === value)?.label ?? value}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {PROJECTIONS.map((option) => (
@@ -429,13 +490,15 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
             </SelectContent>
           </Select>
         </ControlRow>
-        <ControlRow label="joint">
+        <ControlRow label="拐角" name="joint">
           <Select
             value={config.view.lineJoint}
             onValueChange={(value) => handlers.onLineJointChange(value as LineJoint)}
           >
             <SelectTrigger id="line-joint" className="w-full">
-              <SelectValue />
+              <SelectValue>
+                {(value: LineJoint) => JOINTS.find((option) => option.value === value)?.label ?? value}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {JOINTS.map((option) => (
@@ -446,18 +509,16 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
             </SelectContent>
           </Select>
         </ControlRow>
-        <ControlRow label="background" value={backgroundHex(config)}>
-          <Input
-            id="background"
-            type="color"
-            className="h-7 w-full cursor-pointer p-1"
-            value={backgroundHex(config)}
-            onChange={(event) => handlers.onBackgroundChange(event.currentTarget.value)}
-          />
-        </ControlRow>
+        <ColorRow
+          id="background"
+          label="背景色"
+          name="background"
+          value={backgroundHex(config)}
+          onValueChange={handlers.onBackgroundChange}
+        />
         <GridControls config={config} handlers={handlers} />
         <Button id="reset-config" type="button" variant="outline" onClick={handlers.onReset}>
-          reset
+          恢复默认
         </Button>
       </div>
     </aside>

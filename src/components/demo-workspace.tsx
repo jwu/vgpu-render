@@ -47,10 +47,10 @@ export function DemoWorkspace({ snapshot, canvasRef }: DemoWorkspaceProps) {
   const description = selected.notes ? `${selected.description} — ${selected.notes}` : selected.description;
 
   return (
-    <section className="workspace" aria-label="Example preview">
+    <section className="workspace" aria-label="示例预览">
       <header className="workspace-header">
         <div>
-          <div className="eyebrow">interactive example</div>
+          <div className="eyebrow">交互示例 · interactive example</div>
           <h1 id="example-title">{selected.title}</h1>
         </div>
         <div className="status-group">
@@ -69,13 +69,13 @@ export function DemoWorkspace({ snapshot, canvasRef }: DemoWorkspaceProps) {
         <div className="details-heading">
           <div>
             <div id="example-family" className="eyebrow">
-              source preview
+              源码预览 · source preview
             </div>
             <span id="counts" className="counts">
               {counts}
             </span>
           </div>
-          <span className="hint">drag orbit · scroll zoom</span>
+          <span className="hint">拖拽旋转 · 滚轮缩放</span>
         </div>
         <Separator />
         <SourcePreview exampleId={selected.id} />

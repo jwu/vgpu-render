@@ -63,7 +63,7 @@ export class DemoEngine {
   private config: DemoConfig;
   private selected: GodotExample;
   private status: EngineStatus = "requesting";
-  private statusDetail = "requesting WebGPU";
+  private statusDetail = "正在请求 WebGPU";
   private counts = "";
 
   private readonly listeners = new Set<(snapshot: DemoSnapshot) => void>();
@@ -217,7 +217,7 @@ export class DemoEngine {
     const grid = new InfiniteGrid3D(gpu, this.gridOptions());
 
     this.status = "ready";
-    this.statusDetail = "WebGPU ready · partial parity";
+    this.statusDetail = "WebGPU 就绪 · 部分对齐";
     document.documentElement.dataset.renderReady = "true";
     this.emit();
 
@@ -280,7 +280,7 @@ export class DemoEngine {
         });
       });
 
-      const nextCounts = `${commands.length} commands · ${this.selected.columns.length} columns`;
+      const nextCounts = `${commands.length} 条命令 · ${this.selected.columns.length} 列`;
       if (nextCounts !== this.counts) {
         this.counts = nextCounts;
         this.emit();

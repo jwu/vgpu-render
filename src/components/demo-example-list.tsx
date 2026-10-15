@@ -18,11 +18,11 @@ export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleL
     <aside className="sidebar sidebar-examples">
       <header className="sidebar-header">
         <div className="brand">
-          vgpu-render <span>examples</span>
+          vgpu-render <span>示例</span>
         </div>
-        <div className="eyebrow">3D debug draw pipeline</div>
+        <div className="eyebrow">3D 调试绘制管线</div>
       </header>
-      <nav id="example-list" className="example-list" aria-label="Examples">
+      <nav id="example-list" className="example-list" aria-label="示例列表">
         {examples.map((example) => {
           const active = example.id === selectedId;
           return (

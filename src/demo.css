@@ -95,8 +95,7 @@ canvas {
   color: var(--muted-foreground);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .sidebar-header .eyebrow {
   margin-top: 9px;
@@ -104,9 +103,49 @@ canvas {
 
 .control-list {
   display: grid;
-  gap: 16px;
+  gap: 26px;
   align-content: start;
-  padding: 18px 16px;
+  padding: 22px 16px 26px;
+}
+/* One control: label row plus its control, spaced tighter than the gap that
+ * separates two controls. */
+.control-row {
+  display: grid;
+  gap: 9px;
+}
+.control-head {
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+}
+.control-head-toggle {
+  align-items: center;
+}
+.control-label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--foreground);
+  line-height: 1.35;
+}
+.control-name {
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+.control-value {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+/* Color swatches render as a bare block: the native input chrome would add a
+ * second outline around the swatch itself. */
+.color-input {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .example-list {
