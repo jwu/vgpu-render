@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sourceForExample, tokenizeSource } from "../src/demo-source.js";
 
 const SCENE_SOURCE = `// header comment
-function overviewMatrix(recorder: FrameRecorder, context: SceneContext): void {
+function apiMatrix(recorder: FrameRecorder, context: SceneContext): void {
   const labels = ["line", "ray"];
   recorder.line("line", [0, 0, 0], [1, 1, 1], { width: 2, joint: "round" });
 }
@@ -21,7 +21,7 @@ describe("sourceForExample", () => {
     const source = sourceForExample("circle", SCENE_SOURCE);
     expect(source.startsWith("function circleMatrix(")).toBe(true);
     expect(source).toContain("circleBasis");
-    expect(source).not.toContain("overviewMatrix");
+    expect(source).not.toContain("apiMatrix");
     expect(source).not.toContain("shapeScene");
   });
 
@@ -31,8 +31,8 @@ describe("sourceForExample", () => {
     }
   });
 
-  it("falls back to overviewMatrix for unknown ids", () => {
-    expect(sourceForExample("does-not-exist", SCENE_SOURCE).startsWith("function overviewMatrix(")).toBe(true);
+  it("falls back to the matrix function for unknown ids", () => {
+    expect(sourceForExample("does-not-exist", SCENE_SOURCE).startsWith("function apiMatrix(")).toBe(true);
   });
 
   it("returns an empty string when the function is absent", () => {

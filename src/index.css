@@ -81,6 +81,9 @@
     --sidebar-accent-foreground: oklch(0.205 0 0);
     --sidebar-border: oklch(0.922 0 0);
     --sidebar-ring: oklch(0.708 0 0);
+    /* Scrollbar thumb derived from the scheme's foreground: `scrollbar-color` needs a color,
+     * and `currentColor` would ignore the muted weight a thumb should have. */
+    --scrollbar-thumb: color-mix(in oklab, var(--foreground) 20%, transparent);
 }
 
 .dark {
@@ -126,5 +129,10 @@
     }
   html {
     @apply font-sans;
+    /* Frameless scrollbars: thin, with a transparent track, so a bar reads as a floating
+     * thumb instead of a bordered box with end buttons. Both properties inherit, so the page,
+     * the example list and the code preview all pick them up. */
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
     }
 }

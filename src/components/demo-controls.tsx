@@ -498,7 +498,9 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
           </Select>
         </ControlRow>
         <ControlRow label="视角预设" name="camera">
-          <div className="flex gap-2">
+          {/* The buttons keep their own widths (`Button` is `shrink-0`), so the row wraps in the
+           * 224px sidebar instead of pushing the page wider than the viewport. */}
+          <div className="flex flex-wrap gap-2">
             {CAMERA_PRESETS.map((option) => (
               <Button
                 key={option.value}

@@ -53,7 +53,7 @@ export function tokenizeSource(source: string): readonly SourceToken[] {
 }
 
 const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
-  index: "overviewMatrix",
+  index: "apiMatrix",
   line: "lineMatrix",
   arrow: "arrowMatrix",
   axes: "axesMatrix",
@@ -75,7 +75,7 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
  * preview matches the direct recorder code in `godot-scenes.ts`.
  */
 export function sourceForExample(id: string, sceneSource: string): string {
-  const name = SCENE_FUNCTIONS[id] ?? "overviewMatrix";
+  const name = SCENE_FUNCTIONS[id] ?? "apiMatrix";
   const start = sceneSource.search(new RegExp(`^function ${name}\\(`, "m"));
   if (start < 0) return "";
   const next = sceneSource.slice(start + 1).search(/^function /m);
