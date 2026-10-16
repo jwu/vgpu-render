@@ -8,7 +8,7 @@
 
 import { effect, frame, init, sampler, surface, target } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
-import { DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid3D, type FrameCommand, type InfiniteGridOptions, type Vec3 } from "./index.js";
+import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, type FrameCommand, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
 import { GODOT_EXAMPLES, type GodotExample } from "./godot-examples.js";
 import { buildScene } from "./godot-scenes.js";
 import { linearClearColor } from "./color-space.js";
@@ -334,7 +334,13 @@ export class DemoEngine {
     const present = effect(gpu, PRESENT_SHADER, { set: { sceneTexture: scene, sceneSampler: sampler(gpu) } });
     output.onResize(({ width, height }) => scene.resize([width, height]));
 
-    const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536, joints: 65536 });
+    // The bundled font is inlined, so registering it with the document is the only setup step.
+    // A failure is not fatal: Canvas2D falls back to another face and the scene still renders.
+    const params = new URLSearchParams(location.search);
+    const textSources = await createTextSources(params);
+    // The page has to hold every glyph the scene drew at its own raster scale, and 4x rasterisation
+    // costs sixteen times the area of 1x.
+    const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536, joints: 65536, text: { sources: textSources, atlasSize: 1024 } });
     const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
     const grid = new InfiniteGrid3D(gpu, this.gridOptions());
 
@@ -829,6 +835,66 @@ export class DemoEngine {
   };
 }
 
+/**
+ * Registers the glyph sources the gallery can draw text with.
+ *
+ * The whole set is always registered, so the comparison scene can put every encoding next to every
+ * raster scale. Nothing is rasterised until a block actually names a source, and a source that is
+ * never named never builds an atlas. `?text=<name>` narrows the set to one.
+ */
+async function createTextSources(params: URLSearchParams): Promise<TextSources> {
+  const only = params.get("text");
+  if (only !== null) return { [only]: await createTextSource(only) };
+
+  await registerFont();
+  const baked = new BakedMsdfRasterizer();
+  await baked.load();
+  // First, because blocks that name no source use it, and it is the best default: no runtime encoder,
+  // no `opentype.js`, and corners the single-channel field would round off.
+  return {
+    baked,
+    bitmap: new CanvasGlyphRasterizer({ encoding: "bitmap" }),
+    bitmap4x: new CanvasGlyphRasterizer({ encoding: "bitmap", rasterScale: 4 }),
+    sdf: new CanvasGlyphRasterizer({ encoding: "sdf" }),
+    sdf4x: new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 }),
+    msdf: new OutlineGlyphRasterizer(),
+  };
+}
+
+async function createTextSource(name: string): Promise<TextFontSource> {
+  switch (name) {
+    case "bitmap":
+      await registerFont();
+      return new CanvasGlyphRasterizer({ encoding: "bitmap" });
+    case "bitmap4x":
+      await registerFont();
+      return new CanvasGlyphRasterizer({ encoding: "bitmap", rasterScale: 4 });
+    case "sdf":
+      await registerFont();
+      return new CanvasGlyphRasterizer({ encoding: "sdf" });
+    case "sdf4x":
+      await registerFont();
+      return new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 });
+    case "msdf":
+      return new OutlineGlyphRasterizer();
+    case "baked":
+    default: {
+      const font = new BakedMsdfRasterizer();
+      await font.load();
+      return font;
+    }
+  }
+}
+
+async function registerFont(): Promise<void> {
+  try {
+    await loadDefaultFont();
+  } catch (error) {
+    // Not fatal: Canvas2D falls back to another face and the scene still renders.
+    console.warn("the bundled text font could not be registered", error);
+  }
+}
+
 function perspective(fov: number, aspect: number, near: number, far: number): Float32Array {
   const f = 1 / Math.tan(fov / 2);
   return new Float32Array([
@@ -848,11 +914,31 @@ function orthographic(height: number, aspect: number, near: number, far: number)
   ]);
 }
 
+/** Advance of the bundled monospaced font, as a fraction of the font size. */
+const TEXT_ADVANCE_RATIO = 0.6;
+
 /** Every point a command touches, for measuring a scene's bounds. */
 function commandPoints(command: FrameCommand): readonly Vec3[] {
   if (command.kind === "point") return [command.position];
   if (command.kind === "line") return [command.start, command.end];
   if (command.kind === "triangle") return [command.a, command.b, command.c];
+  if (command.kind === "text") {
+    // Screen text is not part of the world bounds at all. World text contributes the corners of
+    // its block: the glyphs are only laid out at draw time, so the estimate here uses the
+    // monospaced advance the bundled font is built on rather than asking a measurer.
+    if (command.space === "screen") return [];
+    const advances = command.spans.reduce((total, span) => total + span.text.length * span.fontSize, 0);
+    const lines = 1 + command.spans.reduce((total, span) => total + (span.text.match(/\n/g)?.length ?? 0), 0);
+    const width = advances * TEXT_ADVANCE_RATIO * command.pixelSize;
+    const height = lines * command.lineHeight * command.pixelSize;
+    const corners: Vec3[] = [];
+    for (const x of [-width / 2, width / 2]) {
+      for (const y of [-height / 2, height / 2]) {
+        corners.push([command.position[0] + x, command.position[1] + y, command.position[2]]);
+      }
+    }
+    return corners;
+  }
   return [command.previous, command.center, command.next];
 }
 

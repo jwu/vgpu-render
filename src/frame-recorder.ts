@@ -1,5 +1,7 @@
 import { sampleCurve, type Curve3D, type CurveTransform } from "./curve.js";
 import { gridLines } from "./geometry-generators.js";
+import { DEFAULT_FONT_FAMILY } from "./text-font.js";
+import { resolveTextAnchor, type TextAnchor, type TextJustify, type TextLineBreak } from "./text-layout.js";
 
 export type Vec3 = readonly [number, number, number];
 export type Color = readonly [number, number, number, number];
@@ -96,7 +98,7 @@ export type ArrowOptions = LineOptions & {
   headAngle?: number;
 };
 
-export type FrameCommand = PointCommand | LineCommand | JointCommand | TriangleCommand;
+export type FrameCommand = PointCommand | LineCommand | JointCommand | TriangleCommand | TextCommand;
 
 export type TriangleCommand = {
   readonly kind: "triangle";
@@ -104,6 +106,88 @@ export type TriangleCommand = {
   readonly b: Vec3;
   readonly c: Vec3;
   readonly color: Color;
+  readonly layer: LayerMask;
+};
+
+/**
+ * Where a text block is placed, mirroring bevy's split between world-space `Text2d` and the
+ * screen-space UI `Text`:
+ *
+ * - `world-plane` puts the block on a fixed local XY plane at a world position, so it
+ *   foreshortens with the camera like the reference `Label3D`.
+ * - `world-billboard` keeps that plane facing the camera at all times.
+ * - `screen` places the block at a **top-left origin pixel position** (`position.z` is
+ *   ignored) at a fixed pixel size, independent of projection and depth.
+ */
+export type TextSpace = "world-plane" | "world-billboard" | "screen";
+
+/** One section of a text block, the equivalent of a bevy `TextSpan`. */
+export type TextSpanOptions = {
+  readonly text: string;
+  readonly color?: Color;
+  readonly fontSize?: number;
+  readonly fontFamily?: string;
+};
+
+export type TextOptions = {
+  color?: Color;
+  /**
+   * Block font size in pixels. It is both the layout unit and the glyph atlas' rasterisation
+   * size, exactly as in the reference `Label3D.font_size`; the two world spaces scale it by
+   * `pixelSize`, and `screen` uses it directly.
+   */
+  fontSize?: number;
+  /**
+   * World units per font pixel in the two world spaces, the reference `Label3D.pixel_size`.
+   * Ignored by `screen`, which is already in pixels. Raise `fontSize` and lower this together
+   * to keep a block's world size while gaining rasterisation detail.
+   */
+  pixelSize?: number;
+  fontFamily?: string;
+  /** Resolved line height; defaults to `1.2 × fontSize` (bevy's `LineHeight` default). */
+  lineHeight?: number;
+  letterSpacing?: number;
+  justify?: TextJustify;
+  lineBreak?: TextLineBreak;
+  /** `TextBounds`: maximum width and height before wrapping/truncating. `Infinity` is unbounded. */
+  bounds?: readonly [number, number];
+  anchor?: TextAnchor;
+  space?: TextSpace;
+  /**
+   * Which registered glyph source draws this block: its encoding and raster scale. Blocks that name
+   * nothing use the first source, so a frame can mix a sharp pass and a cheap pass.
+   */
+  source?: string;
+  /** Whether geometry in front of the block occludes it. Defaults to `true`, like bevy's `Text2d`. */
+  depthTest?: boolean;
+  layer?: LayerMask;
+};
+
+/** A span after the block defaults have been folded in, so the renderer never re-resolves them. */
+export type ResolvedTextSpan = {
+  readonly text: string;
+  readonly color: Color;
+  readonly fontSize: number;
+  readonly fontFamily: string;
+};
+
+export type TextCommand = {
+  readonly kind: "text";
+  readonly position: Vec3;
+  readonly spans: readonly ResolvedTextSpan[];
+  readonly color: Color;
+  readonly fontSize: number;
+  readonly pixelSize: number;
+  readonly fontFamily: string;
+  readonly lineHeight: number;
+  readonly letterSpacing: number;
+  readonly justify: TextJustify;
+  readonly lineBreak: TextLineBreak;
+  readonly bounds?: readonly [number, number];
+  readonly anchor: TextAnchor;
+  readonly space: TextSpace;
+  readonly source?: string;
+  readonly depthTest: boolean;
   readonly layer: LayerMask;
 };
 
@@ -129,13 +213,36 @@ export type LineDefaults = {
   layer?: LayerMask;
 };
 
+export type TextDefaults = {
+  color?: Color;
+  fontSize?: number;
+  pixelSize?: number;
+  fontFamily?: string;
+  lineHeight?: number;
+  letterSpacing?: number;
+  justify?: TextJustify;
+  lineBreak?: TextLineBreak;
+  anchor?: TextAnchor;
+  space?: TextSpace;
+  source?: string;
+  depthTest?: boolean;
+  layer?: LayerMask;
+};
+
 export type FrameRecorderDefaults = {
   point?: PointDefaults;
   line?: LineDefaults;
+  text?: TextDefaults;
 };
 
 export const DEFAULT_COLOR: Color = [1, 1, 1, 1];
 export const DEFAULT_LAYER = 1;
+/** Default block font size in pixels; the world spaces scale it by `DEFAULT_TEXT_PIXEL_SIZE`. */
+export const DEFAULT_TEXT_SIZE = 16;
+/** Default world units per font pixel, i.e. a 0.32 world-unit glyph at the default size. */
+export const DEFAULT_TEXT_PIXEL_SIZE = 0.02;
+/** bevy's `LineHeight` default is `RelativeToFont(1.2)`. */
+export const DEFAULT_LINE_HEIGHT_RATIO = 1.2;
 
 function finite(value: number, name: string): number {
   if (!Number.isFinite(value)) {
@@ -192,6 +299,62 @@ function jointValue(value: string, name: string): LineJoint {
   return value;
 }
 
+const TEXT_JUSTIFY: readonly TextJustify[] = ["left", "center", "right", "justified", "start", "end"];
+const TEXT_LINE_BREAK: readonly TextLineBreak[] = ["word", "character", "word-or-character", "none"];
+const TEXT_SPACES: readonly TextSpace[] = ["world-plane", "world-billboard", "screen"];
+
+function textJustifyValue(value: string, name: string): TextJustify {
+  if (!(TEXT_JUSTIFY as readonly string[]).includes(value)) {
+    throw new RangeError(`${name} must be one of ${TEXT_JUSTIFY.join(", ")}`);
+  }
+  return value as TextJustify;
+}
+
+function textLineBreakValue(value: string, name: string): TextLineBreak {
+  if (!(TEXT_LINE_BREAK as readonly string[]).includes(value)) {
+    throw new RangeError(`${name} must be one of ${TEXT_LINE_BREAK.join(", ")}`);
+  }
+  return value as TextLineBreak;
+}
+
+function textSpaceValue(value: string, name: string): TextSpace {
+  if (!(TEXT_SPACES as readonly string[]).includes(value)) {
+    throw new RangeError(`${name} must be one of ${TEXT_SPACES.join(", ")}`);
+  }
+  return value as TextSpace;
+}
+
+function textBounds(value: readonly [number, number], name: string): readonly [number, number] {
+  if (value.length !== 2) throw new RangeError(`${name} must contain two values`);
+  if (!(value[0] > 0) || !(value[1] > 0)) throw new RangeError(`${name} values must be greater than zero`);
+  return value;
+}
+
+/**
+ * Folds the block defaults into every span so the renderer resolves a style once per span and
+ * never has to guess what an omitted field meant.
+ */
+function resolveTextSpans(
+  text: string | readonly TextSpanOptions[],
+  options: TextOptions,
+  defaults: ResolvedTextDefaults,
+  baseFontSize: number,
+  baseFontFamily: string,
+): readonly ResolvedTextSpan[] {
+  const input: readonly TextSpanOptions[] = typeof text === "string" ? [{ text }] : text;
+  const baseColor = color(options.color ?? defaults.color);
+  return input.map((span) => {
+    const fontSize = span.fontSize ?? baseFontSize;
+    if (!Number.isFinite(fontSize) || fontSize <= 0) throw new RangeError("span fontSize must be greater than zero");
+    return {
+      text: span.text,
+      color: span.color === undefined ? baseColor : color(span.color),
+      fontSize,
+      fontFamily: span.fontFamily ?? baseFontFamily,
+    };
+  });
+}
+
 export type ResolvedPointDefaults = {
   color: Color | undefined;
   size: number | undefined;
@@ -210,15 +373,33 @@ export type ResolvedLineDefaults = {
   layer: LayerMask | undefined;
 };
 
+export type ResolvedTextDefaults = {
+  color: Color | undefined;
+  fontSize: number | undefined;
+  pixelSize: number | undefined;
+  fontFamily: string | undefined;
+  lineHeight: number | undefined;
+  letterSpacing: number | undefined;
+  justify: TextJustify | undefined;
+  lineBreak: TextLineBreak | undefined;
+  anchor: TextAnchor | undefined;
+  space: TextSpace | undefined;
+  source: string | undefined;
+  depthTest: boolean | undefined;
+  layer: LayerMask | undefined;
+};
+
 export type ResolvedFrameRecorderDefaults = {
   point: ResolvedPointDefaults;
   line: ResolvedLineDefaults;
+  text: ResolvedTextDefaults;
 };
 
 /** Validates and resolves style defaults so invalid values fail at construction time. */
 export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {}): ResolvedFrameRecorderDefaults {
   const point = defaults.point ?? {};
   const line = defaults.line ?? {};
+  const text = defaults.text ?? {};
   const pointSize = point.size === undefined ? undefined : finite(point.size, "default point size");
   if (pointSize !== undefined && pointSize <= 0) {
     throw new RangeError("default point size must be greater than zero");
@@ -227,6 +408,20 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
   if (lineWidth !== undefined && lineWidth <= 0) {
     throw new RangeError("default line width must be greater than zero");
   }
+  const textSize = text.fontSize === undefined ? undefined : finite(text.fontSize, "default text fontSize");
+  if (textSize !== undefined && textSize <= 0) {
+    throw new RangeError("default text fontSize must be greater than zero");
+  }
+  const textPixelSize = text.pixelSize === undefined ? undefined : finite(text.pixelSize, "default text pixelSize");
+  if (textPixelSize !== undefined && textPixelSize <= 0) {
+    throw new RangeError("default text pixelSize must be greater than zero");
+  }
+  const textLineHeight = text.lineHeight === undefined ? undefined : finite(text.lineHeight, "default text lineHeight");
+  if (textLineHeight !== undefined && textLineHeight <= 0) {
+    throw new RangeError("default text lineHeight must be greater than zero");
+  }
+  const textAnchor = text.anchor;
+  if (textAnchor !== undefined) resolveTextAnchor(textAnchor);
   return {
     point: {
       color: point.color === undefined ? undefined : colorValue(point.color, "default point color"),
@@ -244,6 +439,21 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
       joint: line.joint === undefined ? undefined : jointValue(line.joint, "default line joint"),
       layer: line.layer === undefined ? undefined : layerValue(line.layer, "default line layer"),
     },
+    text: {
+      color: text.color === undefined ? undefined : colorValue(text.color, "default text color"),
+      fontSize: textSize,
+      pixelSize: textPixelSize,
+      fontFamily: text.fontFamily,
+      lineHeight: textLineHeight,
+      letterSpacing: text.letterSpacing === undefined ? undefined : finite(text.letterSpacing, "default text letterSpacing"),
+      justify: text.justify === undefined ? undefined : textJustifyValue(text.justify, "default text justify"),
+      lineBreak: text.lineBreak === undefined ? undefined : textLineBreakValue(text.lineBreak, "default text lineBreak"),
+      anchor: textAnchor,
+      space: text.space === undefined ? undefined : textSpaceValue(text.space, "default text space"),
+      source: text.source,
+      depthTest: text.depthTest,
+      layer: text.layer === undefined ? undefined : layerValue(text.layer, "default text layer"),
+    },
   };
 }
 
@@ -252,6 +462,7 @@ export class FrameRecorder {
   readonly #lines: LineCommand[] = [];
   readonly #joints: JointCommand[] = [];
   readonly #triangles: TriangleCommand[] = [];
+  readonly #texts: TextCommand[] = [];
   readonly #defaults: ResolvedFrameRecorderDefaults;
   #sealed = false;
 
@@ -474,6 +685,57 @@ export class FrameRecorder {
     return this;
   }
 
+  /**
+   * Records one text block. `text` is either the block's string or a list of spans, mirroring
+   * bevy's `Text2d`/`Text` root plus its child `TextSpan`s; a span's own style overrides the
+   * block default. Layout happens at draw time, because only the renderer knows where the
+   * glyph atlas placed each character.
+   */
+  text(position: Vec3, text: string | readonly TextSpanOptions[], options: TextOptions = {}): this {
+    this.assertOpen();
+    const defaults = this.#defaults.text;
+    const fontSize = finite(options.fontSize ?? defaults.fontSize ?? DEFAULT_TEXT_SIZE, "fontSize");
+    if (fontSize <= 0) throw new RangeError("fontSize must be greater than zero");
+    const pixelSize = finite(options.pixelSize ?? defaults.pixelSize ?? DEFAULT_TEXT_PIXEL_SIZE, "pixelSize");
+    if (pixelSize <= 0) throw new RangeError("pixelSize must be greater than zero");
+    const lineHeight = finite(options.lineHeight ?? defaults.lineHeight ?? fontSize * DEFAULT_LINE_HEIGHT_RATIO, "lineHeight");
+    if (lineHeight <= 0) throw new RangeError("lineHeight must be greater than zero");
+    const letterSpacing = finite(options.letterSpacing ?? defaults.letterSpacing ?? 0, "letterSpacing");
+    const fontFamily = options.fontFamily ?? defaults.fontFamily ?? DEFAULT_FONT_FAMILY;
+    const justify = options.justify ?? defaults.justify ?? "left";
+    const lineBreak = options.lineBreak ?? defaults.lineBreak ?? "word";
+    const anchor = options.anchor ?? defaults.anchor ?? "center";
+    const space = options.space ?? defaults.space ?? "world-plane";
+    const source = options.source ?? defaults.source;
+    const bounds = options.bounds;
+    if (bounds !== undefined) textBounds(bounds, "bounds");
+    // Validates the anchor name and the enumerated fields with the same messages defaults use.
+    resolveTextAnchor(anchor);
+    textJustifyValue(justify, "justify");
+    textLineBreakValue(lineBreak, "lineBreak");
+    textSpaceValue(space, "space");
+    this.#texts.push({
+      kind: "text",
+      position: vec3(position, "position"),
+      spans: resolveTextSpans(text, options, defaults, fontSize, fontFamily),
+      color: color(options.color ?? defaults.color),
+      fontSize,
+      pixelSize,
+      fontFamily,
+      lineHeight,
+      letterSpacing,
+      justify,
+      lineBreak,
+      anchor,
+      space,
+      ...(source === undefined ? {} : { source }),
+      depthTest: options.depthTest ?? defaults.depthTest ?? true,
+      layer: layer(options.layer ?? defaults.layer),
+      ...(bounds === undefined ? {} : { bounds }),
+    });
+    return this;
+  }
+
   get points(): readonly PointCommand[] {
     return this.#points;
   }
@@ -486,12 +748,18 @@ export class FrameRecorder {
     return this.#joints;
   }
 
+  get texts(): readonly TextCommand[] {
+    return this.#texts;
+  }
+
   commands(visibleLayers: LayerMask = 0xffff_ffff): readonly FrameCommand[] {
     this.assertOpen();
     if (!Number.isInteger(visibleLayers) || visibleLayers < 0) {
       throw new RangeError("visibleLayers must be a non-negative integer bitmask");
     }
-    return [...this.#points, ...this.#lines, ...this.#joints, ...this.#triangles].filter((command) => (command.layer & visibleLayers) !== 0);
+    // Text draws last: it is the only alpha-blended primitive that is not depth-sorted against
+    // its own kind, so keeping it at the end preserves the reference's reading order.
+    return [...this.#points, ...this.#lines, ...this.#joints, ...this.#triangles, ...this.#texts].filter((command) => (command.layer & visibleLayers) !== 0);
   }
 
   seal(): void {

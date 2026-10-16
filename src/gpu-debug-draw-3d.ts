@@ -3,7 +3,25 @@ import { prepareShader } from "@vgpu/wgsl/prepare";
 
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
-import type { FrameCommand, PointCommand, LineCommand, JointCommand, TriangleCommand, Vec3 } from "./frame-recorder.js";
+import type { FrameCommand, PointCommand, LineCommand, JointCommand, TriangleCommand, TextCommand, Vec3 } from "./frame-recorder.js";
+import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
+import { GpuText3D, type GpuText3DOptions } from "./gpu-text-3d.js";
+
+/**
+ * Named glyph sources. A text command picks one by name through `TextOptions.source`; commands that
+ * name nothing use the first one registered.
+ *
+ * More than one source is what lets a single frame mix quality levels — a sharp pass for the block
+ * the user is reading and a cheap one for the rest — or put two encodings side by side.
+ */
+export type TextSources = Readonly<Record<string, GpuText3DOptions["font"]>>;
+
+export type GpuTextOptions = {
+  readonly sources: TextSources;
+  readonly capacity?: number;
+  readonly atlasSize?: number;
+  readonly mipLevels?: number;
+};
 
 /**
  * Reference scenes set `depth_bias = -0.001` on the addon before drawing. Keeping it as an
@@ -11,44 +29,6 @@ import type { FrameCommand, PointCommand, LineCommand, JointCommand, TriangleCom
  * without adding a fourth uniform field that would break the shared camera layout.
  */
 export const DEFAULT_DEPTH_BIAS = -0.001;
-
-/**
- * Shared WGSL for depth handling, ported from `debug_line_3d_common.gdshaderinc`.
- *
- * `apply_depth_bias` keeps the reference's exponential form so a `-0.001` bias behaves
- * like Godot's and Bevy's (`depth * exp2(-bias * log2(clip.w / depth))`). `depth_bias`
- * is baked into the source instead of a uniform: the reference sets it once per scene
- * and it keeps the camera uniform layout identical across all three pipelines.
- */
-const DEPTH_BIAS_EPSILON = 0.000488;
-const NEAR_CLIP_EPSILON = 0.000488;
-
-function depthBiasHelpers(depthBias: number): string {
-  return `
-const DEPTH_BIAS: f32 = ${depthBias};
-const DEPTH_BIAS_EPSILON: f32 = ${DEPTH_BIAS_EPSILON};
-const NEAR_CLIP_EPSILON: f32 = ${NEAR_CLIP_EPSILON};
-
-fn apply_depth_bias(clip: vec4f) -> f32 {
-  let bias = clamp(DEPTH_BIAS, -1.0, 1.0);
-  if (bias >= 0.0) {
-    return clip.z * (1.0 - bias);
-  }
-  let safe_depth = max(clip.z, DEPTH_BIAS_EPSILON);
-  let depth_ratio = max(clip.w / safe_depth - DEPTH_BIAS_EPSILON, DEPTH_BIAS_EPSILON);
-  return clip.z * exp2(-bias * log2(depth_ratio));
-}
-
-fn clip_near_plane_t(a: vec4f, b: vec4f) -> f32 {
-  if (a.z > a.w && b.z <= b.w) {
-    let distance_a = a.z - a.w;
-    let distance_b = b.z - b.w;
-    return clamp(distance_a / (distance_a - distance_b) + NEAR_CLIP_EPSILON, 0.0, 1.0);
-  }
-  return 0.0;
-}
-`;
-}
 
 const normalFadeConstants = `
 const BACK_FADE_START: f32 = 1.74532925199;
@@ -523,19 +503,6 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 `;
 }
 
-const INDIRECT_SHADER = prepareShader(`
-struct Params { vertexCount: u32, instanceCount: u32 }
-@group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var<storage, read_write> args: array<u32>;
-@compute @workgroup_size(1)
-fn cs_main() {
-  args[0] = params.vertexCount;
-  args[1] = params.instanceCount;
-  args[2] = 0u;
-  args[3] = 0u;
-}
-`);
-
 function triangleShader(depthBias: number): string {
   return `
 struct Camera { viewProjection: mat4x4f }
@@ -598,12 +565,6 @@ type LineCollection = InstanceCollection<{
   joint: "uint32";
 }>;
 
-function identity(): Float32Array {
-  return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-}
-function world(collection: InstanceCollection, id: InstanceId): void {
-  collection.setWorld(id, identity());
-}
 function sameVec3(a: Vec3, b: Vec3): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
@@ -628,23 +589,6 @@ function sameJoint(a: JointCommand, b: JointCommand): boolean {
     && (a.previousNormal === undefined ? b.previousNormal === undefined : b.previousNormal !== undefined && sameVec3(a.previousNormal, b.previousNormal))
     && (a.nextNormal === undefined ? b.nextNormal === undefined : b.nextNormal !== undefined && sameVec3(a.nextNormal, b.nextNormal));
 }
-function trim(collection: InstanceCollection, ids: InstanceId[], count: number): boolean {
-  let changed = false;
-  for (let i = ids.length - 1; i >= count; i--) {
-    collection.remove(ids.pop()!);
-    changed = true;
-  }
-  return changed;
-}
-function indirectArgs(buffer: StorageBuffer, vertexCount: number, instanceCount: number): void {
-  buffer.write(new Uint32Array([vertexCount, instanceCount, 0, 0]));
-}
-function zeroGeometry(gpu: Gpu) {
-  return geometry(gpu, {
-    buffers: [{ attributes: { position: "float32x3" }, data: new Float32Array(18) }],
-    vertexCount: 6,
-  });
-}
 function triangleGeometry(gpu: Gpu) {
   return geometry(gpu, {
     buffers: [{ attributes: { position: "float32x3" }, data: new Float32Array(9) }],
@@ -665,6 +609,11 @@ function jointGeometry(gpu: Gpu) {
 }
 
 export class GpuDebugDraw3D {
+  readonly #gpu: Gpu;
+  readonly #depthBias: number;
+  readonly #textOptions: GpuTextOptions | undefined;
+  #defaultTextSource: string | undefined;
+  readonly #texts = new Map<string, GpuText3D>();
   readonly #points: PointCollection;
   readonly #lines: LineCollection;
   readonly #triangles: TriangleCollection;
@@ -702,12 +651,22 @@ export class GpuDebugDraw3D {
   #jointCount = 0;
   #jointDirty = true;
 
-  constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number; joints?: number; depthBias?: number } = {}) {
+  constructor(gpu: Gpu, capacities: { points?: number; lines?: number; triangles?: number; joints?: number; depthBias?: number; text?: GpuTextOptions } = {}) {
     const points = capacities.points ?? 4096;
     const lines = capacities.lines ?? 16384;
     const triangles = capacities.triangles ?? 8192;
     const joints = capacities.joints ?? 8192;
     const depthBias = capacities.depthBias ?? DEFAULT_DEPTH_BIAS;
+    this.#gpu = gpu;
+    this.#depthBias = depthBias;
+    this.#textOptions = capacities.text;
+    if (this.#textOptions !== undefined) {
+      const names = Object.keys(this.#textOptions.sources);
+      if (names.length === 0) {
+        throw new Error("text.sources must register at least one glyph source");
+      }
+      this.#defaultTextSource = names[0];
+    }
     this.#points = instances({ capacity: points, attributes: { point: "float32x3", color: "float32x4", size: "float32", flags: "uint32" } });
     this.#lines = instances({ capacity: lines, attributes: { start: "float32x3", end: "float32x3", color: "float32x4", colorEnd: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", normal: "float32x3", joint: "uint32" } });
     this.#triangles = instances({ capacity: triangles, attributes: { a: "float32x3", b: "float32x3", c: "float32x3", color: "float32x4" } });
@@ -744,6 +703,7 @@ export class GpuDebugDraw3D {
     let lineCount = 0;
     let triangleCount = 0;
     let jointCount = 0;
+    const textCommands: TextCommand[] = [];
     this.#pointDirty = false;
     this.#lineDirty = false;
     this.#triangleDirty = false;
@@ -752,6 +712,7 @@ export class GpuDebugDraw3D {
       if (command.kind === "point") this.addPoint(command, pointCount++);
       else if (command.kind === "triangle") this.addTriangle(command, triangleCount++);
       else if (command.kind === "joint") this.addJoint(command, jointCount++);
+      else if (command.kind === "text") textCommands.push(command);
       else this.addLine(command, lineCount++);
     }
     if (trim(this.#points, this.#pointIds, pointCount)) this.#pointDirty = true;
@@ -784,6 +745,47 @@ export class GpuDebugDraw3D {
     }
     this.#viewProjection = camera.viewProjection;
     this.#view = camera.view;
+    // Every renderer that exists is prepared, even with an empty list: that is what drops the
+    // previous frame's glyphs instead of leaving them on screen.
+    if (textCommands.length > 0 || this.#texts.size > 0) {
+      this.#prepareText(textCommands, camera);
+    }
+  }
+
+  /** Splits the frame's text by source name and hands each group to its renderer. */
+  #prepareText(commands: readonly TextCommand[], camera: Camera): void {
+    const groups = new Map<string, TextCommand[]>();
+    for (const command of commands) {
+      const name = command.source ?? this.#defaultTextSource;
+      if (name === undefined) {
+        throw new Error("text commands need a glyph source: pass `text: { sources }` to the GpuDebugDraw3D constructor");
+      }
+      const group = groups.get(name);
+      if (group === undefined) groups.set(name, [command]);
+      else group.push(command);
+    }
+    for (const name of new Set([...this.#texts.keys(), ...groups.keys()])) {
+      this.#textRenderer(name).prepare(groups.get(name) ?? [], camera);
+    }
+  }
+
+  #textRenderer(name: string): GpuText3D {
+    const existing = this.#texts.get(name);
+    if (existing !== undefined) return existing;
+    const source = this.#textOptions?.sources[name];
+    if (source === undefined) {
+      throw new Error(`text source "${name}" is not registered`);
+    }
+    const options = this.#textOptions!;
+    const renderer = new GpuText3D(this.#gpu, {
+      font: source,
+      depthBias: this.#depthBias,
+      ...(options.capacity === undefined ? {} : { capacity: options.capacity }),
+      ...(options.atlasSize === undefined ? {} : { atlasSize: options.atlasSize }),
+      ...(options.mipLevels === undefined ? {} : { mipLevels: options.mipLevels }),
+    });
+    this.#texts.set(name, renderer);
+    return renderer;
   }
 
   updateIndirect(frame: Frame): void {
@@ -796,6 +798,7 @@ export class GpuDebugDraw3D {
       pass.dispatch(this.#indirectCompute, 1);
       this.#indirectCompute.set({ params: { vertexCount: JOINT_VERTEX_COUNT, instanceCount: this.#jointCount }, args: this.#jointIndirect });
       pass.dispatch(this.#indirectCompute, 1);
+      for (const renderer of this.#texts.values()) renderer.dispatchIndirect(pass);
     });
   }
 
@@ -813,6 +816,8 @@ export class GpuDebugDraw3D {
     if (this.#pointCount > 0) pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
     if (this.#lineCount > 0) pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });
     if (this.#jointCount > 0) pass.draw(this.#jointDraw, { indirect: this.#jointIndirect });
+    // Text is last: its alpha-blended quads read the strokes and solids as they were left behind.
+    for (const renderer of this.#texts.values()) renderer.draw(pass);
   }
 
   destroy(): void {
@@ -825,6 +830,8 @@ export class GpuDebugDraw3D {
     this.#lineBridge.destroy();
     this.#triangleBridge.destroy();
     this.#jointBridge.destroy();
+    for (const renderer of this.#texts.values()) renderer.destroy();
+    this.#texts.clear();
   }
 
   private addTriangle(command: TriangleCommand, index: number): void {
