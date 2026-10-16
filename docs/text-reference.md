@@ -38,7 +38,8 @@ bun scripts/compare-text-reference.ts [case ...]
 ```
 
 产物：`artifacts/text-reference/bevy-<id>.png`、`vgpu-<id>.png`，以及
-`bevy-<id>.glyphs.json`（bevy 实际解析出的 glyph 矩形，图像像素坐标）。
+`bevy-<id>.glyphs.json`（bevy 实际解析出的 glyph 矩形，图像像素坐标）。这些产物与对比页
+都不入库（整个 `artifacts/` 在 `.gitignore` 里），由上面两条命令按需重新生成。
 
 `tools/bevy-text-reference/Cargo.toml` 里的 `bevy` 是指向本地检出的 `path` 依赖，因为要对照的
 就是那棵树的文字实现；用 **debug profile** 跑能直接复用 `~/src/bevy@bevyengine/target` 里已编译的

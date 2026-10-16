@@ -449,10 +449,10 @@ React and are read through `useSyncExternalStore`
 theme tokens, and `src/demo.css` keeps the three-column layout, compare mode
 and code highlighting.
 
-Runtime comparison viewer:
-`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`. Only the page itself is tracked;
-the baseline PNGs beside it are local diagnostic artifacts (git-ignored), so recapture them before
-opening the page.
+Runtime comparison viewers (see `docs/visual-comparison.md` and `docs/text-reference.md`):
+`http://127.0.0.1:5174/artifacts/{visual-baseline,text-reference}/index.html`. The whole
+`artifacts/` tree is git-ignored — captures and comparison pages are regenerated locally, so run
+the capture scripts before opening a page.
 
 ## Development
 
@@ -482,7 +482,7 @@ godot --path /tmp/vgpu-parity-godot --display-driver x11 --audio-driver Dummy \
 bun scripts/capture-vgpu.ts circle line
 ```
 
-Both sides write into `artifacts/visual-baseline/`, whose PNGs are git-ignored: baselines are
-recaptured locally on demand and never committed. The Godot reference is machine-specific
-(Godot 4.7.2 / Vulkan / RTX 4070 SUPER, see the capture conditions in
-`docs/visual-comparison.md`), so check that table before recapturing it elsewhere.
+Both sides write into `artifacts/`, which is entirely git-ignored: captures are recaptured locally
+on demand and never committed. The Godot reference is machine-specific (Godot 4.7.2 / Vulkan /
+RTX 4070 SUPER, see the capture conditions in `docs/visual-comparison.md`), so check that table
+before recapturing it elsewhere.

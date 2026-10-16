@@ -72,7 +72,7 @@ bevy 的做法（`~/src/bevy@bevyengine`，0.20.0-dev）是 `FontAtlasKey` 带 `
 ```bash
 bun run dev -- --host 127.0.0.1 --port 5175
 # 浏览器打开 http://127.0.0.1:5175/?scene=text-cjk（中文断行、禁则与四档字号）
-bun scripts/capture-vgpu.ts text-cjk   # 固定分辨率截图（注意会覆盖 artifacts 里的基线）
+bun scripts/capture-vgpu.ts text-cjk   # 固定分辨率截图（注意会覆盖 artifacts 里的本地产物）
 ```
 
 单测覆盖档位量化与 CJK 断行：`bun test tests/text-raster.test.ts tests/text-layout.test.ts`。

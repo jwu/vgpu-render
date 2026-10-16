@@ -59,7 +59,7 @@ vgpu-render/
   ├── tests/                       # 单元测试、场景测试与真实 GPU 测试
   ├── scripts/                     # 截图捕获等开发脚本
   ├── docs/                        # parity 状态与视觉对比说明
-  ├── artifacts/visual-baseline/  # 对比页；仅 index.html 入库，截图本地生成
+  ├── artifacts/                   # 本地生成的对比参考，整体不入库（见 .gitignore）
   ├── index.html                   # Vite gallery 页面入口
   ├── package.json                 # Bun scripts 与依赖
   ├── tsconfig.json                # 严格 TypeScript 配置
@@ -87,7 +87,7 @@ vgpu-render/
 - 渲染逻辑优先使用实例化和现有几何管线；不要在 CPU 上展开本项目明确设计为实例化的点或线图元。
 - 注释只解释不明显的渲染算法、坐标变换或兼容性约束；代码注释使用英文，面向人的 Markdown 文档使用简洁中文。
 - 不直接编辑 `node_modules/`、`dist/` 或运行时生成的临时目录。
-- `artifacts/visual-baseline/` 中的截图是诊断产物，**不纳入版本控制**（该目录只跟踪 `index.html` 对比页）。按需用 `scripts/capture-vgpu.ts` 与 `/tmp/vgpu-parity-godot` 在本地重生成，并在文档中说明捕获条件和差异。
+- `artifacts/` 下全是本地诊断产物（截图、逐 glyph 数据、对比页），**整体不纳入版本控制**。按需用 `scripts/capture-*.ts`、`/tmp/vgpu-parity-godot` 与 `tools/bevy-text-reference` 在本地重生成；入库的是复现链路（脚本、夹具 `cases.json`、字体源），不是产物。
 
 ## 测试与视觉验证
 
@@ -108,7 +108,7 @@ bun run dev -- --host 127.0.0.1 --port 5174
 bun scripts/capture-vgpu.ts circle line
 ```
 
-截图写入 `artifacts/visual-baseline/`，该目录下的 PNG 已被 git 忽略，不会污染工作区状态。Godot 参考截图使用独立的 `/tmp/vgpu-parity-godot` 副本，不要修改 `~/src/` 下的上游仓库。截图对比页默认地址为：
+截图写入 `artifacts/`，该目录整体已被 git 忽略，不会污染工作区状态。Godot 参考截图使用独立的 `/tmp/vgpu-parity-godot` 副本，不要修改 `~/src/` 下的上游仓库。截图对比页默认地址为：
 
 ```text
 http://127.0.0.1:5174/artifacts/visual-baseline/index.html
@@ -149,7 +149,7 @@ http://127.0.0.1:5174/?compare=1&scene=line
 - 删除、批量重命名或大规模移动文件。
 - 引入新的运行时依赖、替换 `vgpu` 或调整包管理方案。
 - 大规模修改渲染架构、坐标约定或公共 API。
-- 重生成 `artifacts/visual-baseline/` 截图并据此更新 `docs/visual-comparison.md` 的 parity 结论。
+- 重生成 `artifacts/` 参考产物并据此更新 `docs/` 里的 parity 结论。
 - 修改 `package.json` 的依赖、脚本或项目发布配置。
 - 提交、推送、发布 npm/Bun 包或修改上游仓库。
 
