@@ -6,25 +6,34 @@
 // Requires the Vite dev server at http://127.0.0.1:5174 and a working GPU
 // display (X11 or Wayland). The WebGPU canvas must report
 // `document.documentElement.dataset.renderReady === "true"` before capture.
+//
+// Set `VGPU_COMPARE=0` for scenes with no Godot reference — the text scenes, which the addon cannot
+// draw — so the capture is the gallery alone instead of a split view against a missing reference.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 const SCENES = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["circle", "line"];
 const BASE_URL = process.env.VGPU_URL ?? "http://127.0.0.1:5174";
+/**
+ * `?compare=1` puts the Godot reference beside the vgpu render. Scenes without a reference capture
+ * the gallery alone when this is turned off; see the usage note above.
+ */
+const COMPARE = process.env.VGPU_COMPARE !== "0";
 const OUTPUT_DIR = resolve(import.meta.dir, "..", "artifacts", "visual-baseline");
 const CHROME = process.env.CHROME_PATH ?? "/usr/bin/chromium";
 const PROFILE = mkdtempSync(resolve(tmpdir(), "vgpu-capture-"));
-const PORT = 9333;
 const WIDTH = 1920;
 const HEIGHT = 1080;
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
 const browser = spawn(CHROME, [
-  `--remote-debugging-port=${PORT}`,
+  // Port 0 lets Chromium pick one and write it to `DevToolsActivePort`; a fixed port can already be
+  // taken by another browser, and attaching to that one instead means no GPU and no rendered frame.
+  "--remote-debugging-port=0",
   `--user-data-dir=${PROFILE}`,
   "--no-first-run",
   "--no-default-browser-check",
@@ -38,12 +47,19 @@ const browser = spawn(CHROME, [
 let stderr = "";
 browser.stderr.on("data", (chunk) => { stderr += String(chunk); });
 
-async function waitForEndpoint(): Promise<string> {
+async function waitForEndpoint(): Promise<{ port: number; webSocketDebuggerUrl: string }> {
   for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${PORT}/json/version`);
-      if (response.ok) return (await response.json() as { webSocketDebuggerUrl: string }).webSocketDebuggerUrl;
-    } catch { /* not ready */ }
+    const file = resolve(PROFILE, "DevToolsActivePort");
+    if (existsSync(file)) {
+      const port = Number(readFileSync(file, "utf8").split("\n")[0]!.trim());
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+        if (response.ok) {
+          const info = await response.json() as { webSocketDebuggerUrl: string };
+          return { port, webSocketDebuggerUrl: info.webSocketDebuggerUrl };
+        }
+      } catch { /* the socket is not up yet */ }
+    }
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`CDP endpoint did not start. stderr:\n${stderr.slice(-2000)}`);
@@ -88,18 +104,21 @@ async function waitForRenderReady(client: ReturnType<typeof makeClient>, session
 }
 
 try {
-  const wsUrl = await waitForEndpoint();
-  const client = makeClient(wsUrl);
+  const { port, webSocketDebuggerUrl } = await waitForEndpoint();
+  const client = makeClient(webSocketDebuggerUrl);
   await client.ready;
 
   for (const scene of SCENES) {
-    const target = await fetch(`http://127.0.0.1:${PORT}/json/new?${encodeURIComponent(`${BASE_URL}/?compare=1&scene=${scene}`)}`, { method: "PUT" });
+    const url = `${BASE_URL}/?${COMPARE ? "compare=1&" : ""}scene=${scene}`;
+    // Open a blank page and navigate once. Opening the scene itself in the `/json/new` call and then
+    // navigating to the same URL leaves `renderReady` unset, and the wait below never returns.
+    const target = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
     const info = await target.json() as { webSocketDebuggerUrl: string };
     const page = makeClient(info.webSocketDebuggerUrl);
     await page.ready;
     await page.send("Page.enable");
     await page.send("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: HEIGHT, deviceScaleFactor: 1, mobile: false });
-    await page.send("Page.navigate", { url: `${BASE_URL}/?compare=1&scene=${scene}` });
+    await page.send("Page.navigate", { url });
     const counts = await waitForRenderReady(page, "");
     const shot = await page.send("Page.captureScreenshot", { format: "png" });
     const data = (shot.result as { data: string }).data;

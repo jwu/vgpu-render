@@ -42,7 +42,7 @@ describe("GlyphAtlas", () => {
     expect(page.data[centre + 3]).toBe(255);
   });
 
-  test("stores a signed distance in red when the encoding is sdf", () => {
+  test("stores a signed distance in red and the true distance in alpha when the encoding is sdf", () => {
     const atlas = new GlyphAtlas(new SyntheticFont("sdf"), { size: 128 });
     expect(atlas.encoding).toBe("sdf");
     atlas.glyph("A", "test", 16);
@@ -50,9 +50,9 @@ describe("GlyphAtlas", () => {
     const centre = (3 * page.size + 3) * 4;
     // Inside the glyph the distance is positive, i.e. past the 128 midpoint.
     expect(page.data[centre]).toBeGreaterThan(128);
-    // Outside it is negative, and alpha stays opaque so nothing can darken the field.
+    // Outside it is negative, and alpha carries the same distance so a block can outline itself.
     expect(page.data[0]).toBeLessThan(128);
-    expect(page.data[3]).toBe(255);
+    expect(page.data[3]).toBe(page.data[0]!);
   });
 
   test("clear drops the cache and blanks the page", () => {

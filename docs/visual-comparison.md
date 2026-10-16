@@ -19,6 +19,9 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 - [Line 局部放大](../artifacts/visual-baseline/compare-line-detail.png)
 - 形状场景原图：`artifacts/visual-baseline/{godot,vgpu}-{sphere,capsule,cone,cylinder,index,world_space_width}.png`
 - 其余场景原图：`artifacts/visual-baseline/{godot,vgpu}-{circle,line}.png` 与 `vgpu-*.png`
+- 文本场景没有 Godot 参考（addon 无文本 API）：`artifacts/visual-baseline/vgpu-{text,text-hud}.png`。
+  同样的 1920×1080 / DPR 1，非 compare 模式（`?scene=text`、`?scene=text-hud`），用于对比 vgpu
+  自身在字形编码、超采样与描边上的变化，不参与和 Godot 的像素比较。
 - 浏览器对比页：`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`（含六个形状场景的并排对比）
 
 局部放大使用两边相同的像素裁剪区域 `(650,400)-(1350,680)`，然后统一放大；没有独立移动、缩放或变形来隐藏布局差异。

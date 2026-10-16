@@ -90,12 +90,15 @@ const SPACE_SCREEN = 2;
 /** Third flag bit: skip depth comparison entirely and sit at the near plane. */
 const FLAG_NO_DEPTH = 4;
 
-function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: number): string {
+function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: number, rasterScale: number): string {
   // The atlas holds either an anti-aliased coverage mask (bevy's `FontAtlas` layout) or a distance
   // field. Coverage is already the answer; a distance has to be turned back into it, and the
   // screen-space derivative is what keeps that transition one pixel wide however far the camera
-  // pushes the glyph — which is the whole point of storing a distance.
-  const reconstruct = (stored: string, helper: string): string => `${helper}@fragment fn fs_main(input: Out) -> @location(0) vec4f {
+  // pushes the glyph — which is the whole point of storing a distance. Both encodings can also draw
+  // an outline: a distance field reads the true distance the encoder left in alpha, a coverage mask
+  // has none to read and is sampled instead.
+  const reconstruct = (stored: string, trueDistance: string, helper: string): string => `${helper}@fragment fn fs_main(input: Out) -> @location(0) vec4f {
+  let texel = ${sample()};
   // One screen pixel of edge is the goal. Two separate things have to be right for that:
   //
   // 1. The derivative is taken on the UV coordinate, not on the decoded distance. The stored distance
@@ -108,18 +111,36 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   let screenTexSize = vec2f(1.0) / fwidth(input.uv);
   let screenPxRange = max(dot(unitRange, screenTexSize), 1.0);
   let distance = screenPxRange * (${stored} - 0.5);
-  return vec4f(input.color.rgb, input.color.a * clamp(distance + 0.5, 0.0, 1.0));
+  let fill = clamp(distance + 0.5, 0.0, 1.0);
+  // The outline reads the true distance in alpha rather than the median: the median is what keeps a
+  // corner sharp, and a corner is exactly where it disagrees with the true distance, so a ring
+  // placed from it would dent inwards on every corner. An unused alpha channel saturates, which
+  // leaves the ring at zero width.
+  //
+  // The ring's width arrives in font pixels and the distance below is in the shader's own screen
+  // scale, so it goes through the same conversion the edge does: one screen pixel of that scale is
+  // 2 * DISTANCE_RANGE / screenPxRange of it.
+  let outlinePx = input.outlineWidth * RASTER_SCALE / atlasTexelsPerPixel(input.uv);
+  let outward = screenPxRange * (${trueDistance} - 0.5) + outlinePx * screenPxRange / (2.0 * DISTANCE_RANGE);
+  let outer = clamp(outward + 0.5, 0.0, 1.0);
+  // No width means no ring, whatever alpha happens to hold: a page baked before the encoder wrote
+  // true distances there is opaque, and reading that as a distance would flood the whole quad.
+  let border = select(0.0, clamp(outer - fill, 0.0, 1.0) * input.outlineColor.a, input.outlineWidth > 0.0);
+  let coverage = border + fill * input.color.a * (1.0 - border);
+  let rgb = (input.color.rgb * fill * input.color.a + input.outlineColor.rgb * border) / max(coverage, 1e-6);
+  return vec4f(rgb, coverage);
 }
 `;
   // Every sample reads one layer of the atlas array: one page per layer, so a glyph beyond the first
   // page costs no extra draw call.
-  const sample = (swizzle: string): string => `textureSample(atlas, atlasSampler, input.uv, i32(input.layer + 0.5))${swizzle}`;
+  const sample = (): string => "textureSample(atlas, atlasSampler, input.uv, i32(input.layer + 0.5))";
   const fragment =
     encoding === "sdf"
-      ? reconstruct(sample(".r"), "")
+      ? reconstruct("texel.r", "texel.a", "")
       : encoding === "msdf"
         ? reconstruct(
-            `median3(${sample(".rgb")})`,
+            "median3(texel.rgb)",
+            "texel.a",
             `// The median of the three per-edge distances is the distance to the nearest edge, which is
 // what preserves the corners a single channel rounds off.
 fn median3(value: vec3f) -> f32 {
@@ -128,8 +149,28 @@ fn median3(value: vec3f) -> f32 {
 `,
           )
         : `@fragment fn fs_main(input: Out) -> @location(0) vec4f {
-  let coverage = ${sample(".a")};
-  return vec4f(input.color.rgb, input.color.a * coverage);
+  let layer = i32(input.layer + 0.5);
+  let texel = ${sample()};
+  // A coverage mask carries no distance, so the ring is the furthest coverage any of eight
+  // directions reports at the outline's radius. Each step is taken through the screen derivative,
+  // so the ring stays round when the quad is stretched, and at width zero every sample lands back
+  // on the centre and leaves no ring at all.
+  let step = fwidth(input.uv) * (input.outlineWidth * RASTER_SCALE / atlasTexelsPerPixel(input.uv));
+  const DIAGONAL: f32 = 0.70710678;
+  var expanded = texel.a;
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(step.x, 0.0), layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv - vec2f(step.x, 0.0), layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(0.0, step.y), layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv - vec2f(0.0, step.y), layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(step.x, step.y) * DIAGONAL, layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(step.x, -step.y) * DIAGONAL, layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(-step.x, step.y) * DIAGONAL, layer).a);
+  expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(-step.x, -step.y) * DIAGONAL, layer).a);
+  let fill = texel.a;
+  let border = select(0.0, clamp(expanded - fill, 0.0, 1.0) * input.outlineColor.a, input.outlineWidth > 0.0);
+  let coverage = border + fill * input.color.a * (1.0 - border);
+  let rgb = (input.color.rgb * fill * input.color.a + input.outlineColor.rgb * border) / max(coverage, 1e-6);
+  return vec4f(rgb, coverage);
 }
 `;
   return `
@@ -137,7 +178,7 @@ struct Camera { viewProjection: mat4x4f, view: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var atlas: texture_2d_array<f32>;
 @group(0) @binding(2) var atlasSampler: sampler;
-${depthBiasHelpers(depthBias)}${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
+${depthBiasHelpers(depthBias)}\nconst RASTER_SCALE: f32 = ${rasterScale};${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
 struct In {
   @location(0) position: vec3f,
   @location(1) world0: vec4f, @location(2) world1: vec4f,
@@ -151,8 +192,11 @@ struct In {
   // The atlas layer arrives as a float: WebGPU wants an integer varying between the stages to be
   // flat-interpolated, which the wgpu/naga backend behind the GPU tests rejects outright.
   @location(11) layer: f32,
+  // The outline: a width in font pixels and the ring's colour, straight from the block's style.
+  @location(12) outlineWidth: f32,
+  @location(13) outlineColor: vec4f,
 }
-struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) color: vec4f, @location(2) layer: f32 }
+struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) color: vec4f, @location(2) layer: f32, @location(3) outlineWidth: f32, @location(4) outlineColor: vec4f }
 
 @vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
   let corners = array<vec2f, 6>(vec2f(0,0), vec2f(1,0), vec2f(0,1), vec2f(0,1), vec2f(1,0), vec2f(1,1));
@@ -187,7 +231,15 @@ struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1
   out.uv = mix(input.uv.xy, input.uv.zw, corner);
   out.color = input.color;
   out.layer = input.layer;
+  out.outlineWidth = input.outlineWidth;
+  out.outlineColor = input.outlineColor;
   return out;
+}
+
+// One font pixel is RASTER_SCALE atlas texels and a screen pixel covers this many of them, which is
+// what turns an outline width in font pixels into the screen pixels the reconstruction works in.
+fn atlasTexelsPerPixel(uv: vec2f) -> f32 {
+  return max(f32(textureDimensions(atlas, 0).x) * max(fwidth(uv).x, fwidth(uv).y), 1e-5);
 }
 
 ${fragment}`;
@@ -239,12 +291,16 @@ export class GpuText3D {
         color: "float32x4",
         flags: "uint32",
         layer: "float32",
+        // Font pixels, not layout units: the shader converts through the raster scale and the
+        // screen derivative, which is what keeps the ring proportional to the glyphs.
+        outlineWidth: "float32",
+        outlineColor: "float32x4",
       },
     });
     const mesh = zeroGeometry(gpu);
     this.#bridge = instanceGeometry(gpu, this.#glyphs, { mesh });
     this.#draw = draw(gpu, {
-      shader: prepareShader(textShader(options.depthBias ?? DEFAULT_TEXT_DEPTH_BIAS, this.#atlas.encoding, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE)),
+      shader: prepareShader(textShader(options.depthBias ?? DEFAULT_TEXT_DEPTH_BIAS, this.#atlas.encoding, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE, this.#atlas.rasterScale)),
       geometry: this.#bridge.geometry,
       instances: 0,
       blend: "alpha",
@@ -311,6 +367,8 @@ export class GpuText3D {
           color: glyph.color,
           flags,
           layer: entry.page,
+          outlineWidth: command.outlineWidth,
+          outlineColor: command.outlineColor,
         });
         index++;
       }
@@ -324,7 +382,7 @@ export class GpuText3D {
   }
 
   #addInstance(index: number): InstanceId {
-    const id = this.#glyphs.add({ origin: [0, 0, 0], offset: [0, 0], size: [0, 0], uv: [0, 0, 0, 0], color: [0, 0, 0, 0], flags: 0, layer: 0 });
+    const id = this.#glyphs.add({ origin: [0, 0, 0], offset: [0, 0], size: [0, 0], uv: [0, 0, 0, 0], color: [0, 0, 0, 0], flags: 0, layer: 0, outlineWidth: 0, outlineColor: [0, 0, 0, 0] });
     world(this.#glyphs, id);
     this.#ids[index] = id;
     return id;

@@ -132,6 +132,19 @@ export type TextSpanOptions = {
 export type TextOptions = {
   color?: Color;
   /**
+   * Outline width in font pixels, drawn around every glyph in the block. `0` (the default) draws no
+   * outline. Font pixels rather than screen pixels keeps the outline proportional to the glyphs:
+   * a block scaled up by `pixelSize` carries its outline with it, and a `screen` block's outline is
+   * in screen pixels, since there is nothing between those two units.
+   */
+  outlineWidth?: number;
+  /**
+   * Outline colour, its alpha giving how opaque the ring is. Defaults to the block's own colour,
+   * which widens the glyphs rather than ringing them; give it a contrasting colour to make a block
+   * readable against whatever it is drawn over.
+   */
+  outlineColor?: Color;
+  /**
    * Block font size in pixels. It is both the layout unit and the glyph atlas' rasterisation
    * size, exactly as in the reference `Label3D.font_size`; the two world spaces scale it by
    * `pixelSize`, and `screen` uses it directly.
@@ -176,6 +189,8 @@ export type TextCommand = {
   readonly position: Vec3;
   readonly spans: readonly ResolvedTextSpan[];
   readonly color: Color;
+  readonly outlineWidth: number;
+  readonly outlineColor: Color;
   readonly fontSize: number;
   readonly pixelSize: number;
   readonly fontFamily: string;
@@ -215,6 +230,8 @@ export type LineDefaults = {
 
 export type TextDefaults = {
   color?: Color;
+  outlineWidth?: number;
+  outlineColor?: Color;
   fontSize?: number;
   pixelSize?: number;
   fontFamily?: string;
@@ -375,6 +392,8 @@ export type ResolvedLineDefaults = {
 
 export type ResolvedTextDefaults = {
   color: Color | undefined;
+  outlineWidth: number | undefined;
+  outlineColor: Color | undefined;
   fontSize: number | undefined;
   pixelSize: number | undefined;
   fontFamily: string | undefined;
@@ -422,6 +441,10 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
   }
   const textAnchor = text.anchor;
   if (textAnchor !== undefined) resolveTextAnchor(textAnchor);
+  const textOutlineWidth = text.outlineWidth === undefined ? undefined : finite(text.outlineWidth, "default text outlineWidth");
+  if (textOutlineWidth !== undefined && textOutlineWidth < 0) {
+    throw new RangeError("default text outlineWidth must not be negative");
+  }
   return {
     point: {
       color: point.color === undefined ? undefined : colorValue(point.color, "default point color"),
@@ -441,6 +464,8 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
     },
     text: {
       color: text.color === undefined ? undefined : colorValue(text.color, "default text color"),
+      outlineWidth: textOutlineWidth,
+      outlineColor: text.outlineColor === undefined ? undefined : colorValue(text.outlineColor, "default text outlineColor"),
       fontSize: textSize,
       pixelSize: textPixelSize,
       fontFamily: text.fontFamily,
@@ -709,6 +734,9 @@ export class FrameRecorder {
     const source = options.source ?? defaults.source;
     const bounds = options.bounds;
     if (bounds !== undefined) textBounds(bounds, "bounds");
+    const outlineWidth = finite(options.outlineWidth ?? defaults.outlineWidth ?? 0, "outlineWidth");
+    if (outlineWidth < 0) throw new RangeError("outlineWidth must not be negative");
+    const outlineColor = color(options.outlineColor ?? defaults.outlineColor ?? options.color ?? defaults.color);
     // Validates the anchor name and the enumerated fields with the same messages defaults use.
     resolveTextAnchor(anchor);
     textJustifyValue(justify, "justify");
@@ -719,6 +747,8 @@ export class FrameRecorder {
       position: vec3(position, "position"),
       spans: resolveTextSpans(text, options, defaults, fontSize, fontFamily),
       color: color(options.color ?? defaults.color),
+      outlineWidth,
+      outlineColor,
       fontSize,
       pixelSize,
       fontFamily,

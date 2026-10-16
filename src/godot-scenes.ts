@@ -2225,6 +2225,19 @@ function textHudScene(recorder: FrameRecorder): void {
     recorder.text([190, y, 0], "Handgloves 0123", { fontSize: 20, space: "screen", source, anchor: "top-left" });
   }
 
+  // Outline: the same ring obtained two ways — from the true distance the distance encodings keep in
+  // alpha, and from sampling the coverage mask in eight directions.
+  const outlinedLabel = {
+    fontSize: 20,
+    space: "screen",
+    anchor: "top-left",
+    color: [0.45, 0.8, 1, 1],
+    outlineWidth: 3,
+    outlineColor: [0.04, 0.05, 0.08, 1],
+  } as const;
+  recorder.text([24, 330, 0], "outlined msdf", { ...outlinedLabel, source: "baked" });
+  recorder.text([190, 330, 0], "outlined mask", { ...outlinedLabel, source: "bitmap" });
+
   // Anchors: the marker is the position, and each block lands on it differently. Spread along one row
   // rather than a 3×3 grid, so the panel stays inside a modest viewport.
   const anchors = ["top-left", "top-right", "center", "bottom-left", "bottom-right"] as const;

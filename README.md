@@ -129,6 +129,24 @@ are rasterised at any resolution. Layout options follow bevy: `justify`, `lineBr
 `letterSpacing`. World text is depth-tested but never depth-written, so geometry in front of it
 occludes it; `screen` text pins itself to the near plane and always wins.
 
+### Outline
+
+`outlineWidth` (in font pixels) rings every glyph in the block in `outlineColor`, which defaults to
+the block's own colour. Font pixels rather than screen pixels keeps a ring proportional to the
+glyphs: a block magnified by `pixelSize` carries its outline with it, and a `screen` block's ring is
+in screen pixels, because nothing sits between those two units.
+
+How the ring is built depends on the encoding. `sdf` and `msdf` put the true distance to the shape in
+alpha — msdfgen's `mtsdf` layout — and the ring reads that, so it holds its width through a corner,
+which is exactly where the RGB median disagrees with the true distance. `bitmap` has no distance to
+read, so its ring is the furthest coverage eight directions report at the outline's radius: an
+approximation, and one that samples outside the glyph, so a wide ring wants a wider page padding. A
+width of `0` draws nothing and never reads alpha, which is what keeps a page baked before alpha
+carried distances from flooding its quads.
+
+An outline is the cheap way to keep a label readable over whatever it is drawn on — the alternative
+is fighting the geometry behind it with `depthTest: false`.
+
 ### Glyph encoding
 
 The atlas stores glyphs one of three ways. The encoding belongs to the **glyph source**, not to a
@@ -137,8 +155,8 @@ render option, so the atlas and the shader always agree:
 | Encoding | Stored | Scaling | Cost |
 | --- | --- | --- | --- |
 | `bitmap` | tintable alpha mask (RGB 255, coverage in A) — bevy's `FontAtlas` layout | the shader interpolates coverage, so magnifying softens it | cheapest; one byte of signal |
-| `sdf` | signed distance in red | the shader rebuilds the edge from the distance, so it stays sharp at any size | one CPU distance transform per glyph |
-| `msdf` | per-edge signed distance in RGB | as `sdf`, but the median keeps the corners a single channel rounds off | three channels, and outlines rather than a mask |
+| `sdf` | signed distance in red, true distance in alpha | the shader rebuilds the edge from the distance, so it stays sharp at any size | one CPU distance transform per glyph |
+| `msdf` | per-edge signed distance in RGB, true distance in alpha | as `sdf`, but the median keeps the corners a single channel rounds off | three channels, and outlines rather than a mask |
 
 `CanvasGlyphRasterizer` produces `bitmap` and `sdf` from Canvas2D coverage, running an exact
 Euclidean distance transform and letting partially covered texels place the edge sub-texel. Two
@@ -173,11 +191,19 @@ per-edge signed distances. `bun scripts/measure-msdf-error.ts` prints the number
 face; `tests/text-msdf.test.ts` locks the property against analytic square and circle distances.
 - **Supersampling.** `rasterScale` rasterises glyphs at a multiple of their layout size while quads
 stay put — the lever that matters for `bitmap` and for high-DPR displays.
+- **Outline.** A ring is a second coverage ramp around the first, so it is only as smooth as what it
+reads: the true distance for `sdf`/`msdf`, eight samples of the mask for `bitmap`. It is not part of
+the edge reconstruction and does not change it.
 - **Mip chain.** WebGPU has no `generateMipmap` and vgpu exposes none, so levels are filtered on the
 CPU (the coverage channel averages correctly) and uploaded level by level. `mipLevels` defaults to
 4, taking a 512 px page down to 64 px; deeper chains start bleeding through the 2 px packing
 padding, and averaging is not a distance field's own filter, so `sdf`/`msdf` lose a little edge
-precision as levels shrink.
+precision as levels shrink. `bun scripts/measure-mip-error.ts` puts a number on how much: 0.014 mean
+alpha against the coverage a level's block actually covered, which is inside the noise of the two
+alternatives — filtering the levels in coverage, and scaling the decode range by the level the
+sample came from. Pairing one filter with the other's range is what costs an order of magnitude.
+The part that matters visually is locked in `tests/text.gpu.test.ts`: a minified block's saturated
+interior stays opaque.
 - **Atlas pages and uploads.** Pages are layers of one 2D array texture, so a glyph that lands
 outside the first page costs no extra draw call. The page count defaults to a fixed texel budget —
 four 512 px pages' worth — so a 1024 px page set stays one page deep instead of quadrupling the
@@ -252,8 +278,9 @@ gallery to a single glyph source (`bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, 
 
 - Points (screen/world size), lines (screen/world width, dash, normal), triangles.
 - Text blocks: three placement spaces, wrapping, justification, span styling, per-block anchor,
-  line height and letter spacing, drawn from an inlined Fira Mono subset. The atlas can hold
-  `bitmap`, `sdf` or `msdf` glyphs (see [Text](#text)), with supersampling and a mip chain.
+  line height, letter spacing and a per-block outline, drawn from an inlined Fira Mono subset. The
+  atlas can hold `bitmap`, `sdf` or `msdf` glyphs (see [Text](#text)), with supersampling and a mip
+  chain.
 - Normal-aware strokes: `LineOptions.normal` for a single normal, `LineOptions.normals` for
   per-vertex normals (one per segment on an open path, one per vertex on a closed one). Lines
   and joints apply the reference back-face fade (`back_fade_start = 100°`,

@@ -24,6 +24,13 @@ function litCount(pixels: Uint8Array): number {
   return lit;
 }
 
+/** Pixels where the red channel is clearly lit. */
+function redCount(pixels: Uint8Array): number {
+  let red = 0;
+  for (let index = 0; index < pixels.length; index += 4) if (pixels[index]! > 100) red++;
+  return red;
+}
+
 /** Pixels on an anti-aliased rim: lit, but nowhere near full intensity. */
 function softCount(pixels: Uint8Array): number {
   let soft = 0;
@@ -38,11 +45,12 @@ async function render(
   build: (recorder: FrameRecorder) => void,
   view: Float32Array = identity,
   encoding: GlyphEncoding = "bitmap",
+  rasterScale = 1,
 ): Promise<Uint8Array> {
   const gpu = await init();
   try {
     const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
-    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont(encoding) } } });
+    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont(encoding, rasterScale) } } });
     const debug = new DebugDraw3D();
     const recorder = debug.beginFrame();
     build(recorder);
@@ -111,8 +119,78 @@ test("distant text still resolves through the mip chain", async () => {
   expect(lit).toBeLessThan(400);
 });
 
-test("a magnified distance field keeps a tighter edge than the coverage mask", async () => {
-  const build = (recorder: FrameRecorder): void => {
+test("a minified distance field keeps its ink opaque through the mip chain", async () => {
+  // The source rasterises at 16x, so the atlas holds sixteen texels per screen pixel and the chain
+  // has to minify. Whatever a level does to the edge, the interior of the blob is saturated ink and
+  // has to stay opaque — the reference answer is the block's coverage, and that is one.
+  const pixels = await render(
+    (recorder) => {
+      recorder.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
+    },
+    identity,
+    "sdf",
+    16,
+  );
+  // The 8×8 ink box sits at x 8..16, y 15..23, so (12, 19) is four texels inside the blob's rim.
+  expect(channel(pixels, 12, 19, 1)).toBeGreaterThan(230);
+});
+
+test("an outline rings a distance-field glyph in its own colour", async () => {
+  const draw = (outlineWidth: number, outlineColor?: readonly [number, number, number, number]) =>
+    render(
+      (recorder) => {
+        recorder.text([8, 8, 0], "A", {
+          fontSize: 16,
+          space: "screen",
+          anchor: "top-left",
+          color: [0, 1, 0, 1],
+          outlineWidth,
+          ...(outlineColor === undefined ? {} : { outlineColor }),
+        });
+      },
+      identity,
+      "sdf",
+    );
+  const plain = await draw(0);
+  const zeroWidth = await draw(0, [1, 0, 0, 1]);
+  const outlined = await draw(2, [1, 0, 0, 1]);
+  // The ring is the only red in the frame, and a zero width draws none of it however opaque alpha is:
+  // that channel holds a distance, so reading it without a width would flood the whole quad.
+  expect(redCount(plain)).toBe(0);
+  expect(redCount(zeroWidth)).toBe(0);
+  expect(redCount(outlined)).toBeGreaterThan(30);
+  // The ring sits outside the glyph, and the fill keeps its own colour.
+  expect(channel(outlined, 12, 19, 1)).toBeGreaterThan(200);
+  expect(channel(outlined, 12, 19, 0)).toBeLessThan(40);
+});
+
+test("a bitmap glyph is outlined by sampling its mask in eight directions", async () => {
+  const draw = (outlineWidth: number) =>
+    render(
+      (recorder) => {
+        recorder.text([8, 8, 0], "A", {
+          fontSize: 16,
+          space: "screen",
+          anchor: "top-left",
+          color: [0, 1, 0, 1],
+          outlineWidth,
+          outlineColor: [1, 0, 0, 1],
+        });
+      },
+      identity,
+      "bitmap",
+    );
+  const plain = await draw(0);
+  const outlined = await draw(2);
+  // A coverage mask has no distance to read, so the ring comes from the mask itself: eight samples at
+  // the outline's radius, which is what puts the ring at roughly the width the block asked for.
+  expect(redCount(plain)).toBe(0);
+  expect(redCount(outlined)).toBeGreaterThan(30);
+  expect(channel(outlined, 12, 19, 1)).toBeGreaterThan(200);
+  expect(channel(outlined, 12, 19, 0)).toBeLessThan(40);
+});
+
+test("a magnified distance field keeps a tighter edge than the coverage mask", async () => {  const build = (recorder: FrameRecorder): void => {
     // 20 px glyphs at 0.1 units/px are 2 world units, about 64 px tall on this target — a 3x
     // magnification, which is where interpolating coverage smears and reconstructing a distance
     // does not.

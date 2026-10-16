@@ -29,6 +29,9 @@
  * gradient. The same measurement drops to 0.043, against 0.040 for a field whose whole edge band is
  * made exactly right — the remainder is the resolution limit of one distance per texel plus linear
  * filtering, not something another pass can recover.
+ *
+ * Alpha is not part of the median: it keeps the same exact shape distance uncorrected, which is what
+ * an outline of uniform width needs and what the median cannot provide at a corner.
  */
 
 export type Point = readonly [number, number];
@@ -213,8 +216,11 @@ function correctMedians(texels: Uint8Array, distances: Float64Array, range: numb
  * Each channel holds the signed distance to the nearest edge in its group, averaged over the texel
  * centre, and encoded as `distance / (2 × range) + 0.5` so 128 is the edge. Channels no edge was
  * assigned to saturate, because a median over two real distances and one saturated value still
- * resolves to a real edge. The field is then corrected against the exact shape distance — see the
- * error-correction note at the top of this file.
+ * resolves to a real edge. Alpha carries the *true* distance to the shape, which is msdfgen's
+ * `mtsdf` layout: the median in RGB preserves the corners a single channel rounds off, while a
+ * uniform-width outline reads alpha, because a per-edge median dents exactly at a corner. The field
+ * is then corrected against the exact shape distance — see the error-correction note at the top of
+ * this file.
  */
 export function msdfFromOutline(
   segments: readonly OutlineSegment[],
@@ -250,8 +256,10 @@ export function msdfFromOutline(
         const value = nearest[channel] === Number.POSITIVE_INFINITY ? (inside ? range : -range) : signed[channel]!;
         texels[target + channel] = encodeDistance(value, range);
       }
-      texels[target + 3] = 255;
-      distances[index] = inside ? shapeDistance : -shapeDistance;
+      const shape = inside ? shapeDistance : -shapeDistance;
+      // Alpha holds the true distance, so the shader can draw an outline that keeps its width.
+      texels[target + 3] = encodeDistance(shape, range);
+      distances[index] = shape;
     }
   }
 

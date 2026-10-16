@@ -27,6 +27,10 @@ import type { GlyphMetrics, TextMeasurer, VerticalMetrics } from "./text-layout.
  *   fragment stage rebuilds the edge from the distance, so it stays sharp at any magnification.
  * - `msdf` stores a per-edge signed distance in RGB. The extra channels preserve corners, at the
  *   cost of three times the atlas area and a median — rather than a single — channel lookup.
+ *
+ * Both distance encodings put the *true* distance to the shape in alpha (msdfgen's `mtsdf` layout),
+ * which is what a block's outline reads: the median that preserves a corner cannot also place a
+ * ring around it. `bitmap` has no distance to give, so its outline is sampled instead.
  */
 export type GlyphEncoding = "bitmap" | "sdf" | "msdf";
 
@@ -270,12 +274,14 @@ export function encodeCoverage(coverage: Uint8Array, width: number, height: numb
     }
     return texels;
   }
-  // A signed distance in red, with alpha left opaque so a stray filter cannot darken the field.
+  // A signed distance in red, and the same distance in alpha so the shader can outline the glyph.
+  // It comes from the mask's coverage rather than from the outline, which makes it a little coarser
+  // than the msdf encoder's — fine for a ring, not what the edge itself is rebuilt from.
   const field = coverageToSdf(coverage, width, height, range);
   for (let index = 0; index < field.length; index++) {
     const target = index * 4;
     texels[target] = field[index]!;
-    texels[target + 3] = 255;
+    texels[target + 3] = field[index]!;
   }
   return texels;
 }
