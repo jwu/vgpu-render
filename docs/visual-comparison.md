@@ -16,21 +16,29 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 
 ## 产物
 
-- [Circle 全图](../artifacts/visual-baseline/compare-circle-full.png)
-- [Circle 局部放大](../artifacts/visual-baseline/compare-circle-detail.png)
-- [Line 全图](../artifacts/visual-baseline/compare-line-full.png)
-- [Line 局部放大](../artifacts/visual-baseline/compare-line-detail.png)
+截图**不入版本控制**：`artifacts/visual-baseline/` 只跟踪 `index.html` 对比页，同目录下的 PNG
+（含 `before-circle-line/`）都是本地诊断产物，按需生成：
+
+```bash
+bun run dev -- --host 127.0.0.1 --port 5174
+bun scripts/capture-vgpu.ts circle line
+```
+
+- `compare-{circle,line}-{full,detail}.png`：人工裁剪的并排图。
 - 形状场景原图：`artifacts/visual-baseline/{godot,vgpu}-{sphere,capsule,cone,cylinder,index,world_space_width}.png`
 - 其余场景原图：`artifacts/visual-baseline/{godot,vgpu}-{circle,line}.png` 与 `vgpu-*.png`
 - 文本场景没有 Godot 参考（addon 无文本 API）：`artifacts/visual-baseline/vgpu-text-hud.png`
   是**拆分前**的一页（1920×1080 / DPR 1，非 compare 模式，`?scene=text-hud`），用于对比 vgpu
   自身在字形编码、超采样与描边上的变化，不参与和 Godot 的像素比较。该页现已拆成六个
   屏幕空间场景（见 README 的 Text 节），这份基线保留为历史产物。
-- 浏览器对比页：`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`（含六个形状场景的并排对比）
+- 浏览器对比页（唯一入库的文件）：`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`
+  （含六个形状场景的并排对比）；页面引用的 PNG 需先本地生成，未生成时显示缺图。
+- `before-circle-line/`：第一轮的旧截图，仅作“修复前”的历史证据（同样不入库，本地未必有）。
 
 局部放大使用两边相同的像素裁剪区域 `(650,400)-(1350,680)`，然后统一放大；没有独立移动、缩放或变形来隐藏布局差异。
 
-局部放大使用两边相同的像素裁剪区域 `(650,400)-(1350,680)`，然后统一放大；没有独立移动、缩放或变形来隐藏布局差异。
+Godot 参考图是**机器特定**的，见下节「捕获条件」：当前记录的参考环境是 RTX 4070 SUPER，而首轮
+vgpu 侧未记录 adapter，且该机器已不可复现。换机器重跑得到的**不是同一份参照**，重捕获前先核对捕获条件。
 
 ## 捕获条件
 

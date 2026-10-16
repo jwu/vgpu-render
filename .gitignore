@@ -9,3 +9,9 @@ tools/bevy-text-reference/target/
 .env.*
 !.env.example
 .DS_Store
+
+# Visual parity baselines are local diagnostic artifacts, not sources: recapture them with
+# `bun scripts/capture-vgpu.ts` plus the Godot copies described in docs/visual-comparison.md.
+# Only the comparison page stays tracked; the PNGs are regenerated on demand.
+artifacts/visual-baseline/*
+!artifacts/visual-baseline/index.html

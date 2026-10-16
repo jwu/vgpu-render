@@ -450,7 +450,9 @@ theme tokens, and `src/demo.css` keeps the three-column layout, compare mode
 and code highlighting.
 
 Runtime comparison viewer:
-`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`.
+`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`. Only the page itself is tracked;
+the baseline PNGs beside it are local diagnostic artifacts (git-ignored), so recapture them before
+opening the page.
 
 ## Development
 
@@ -479,3 +481,8 @@ godot --path /tmp/vgpu-parity-godot --display-driver x11 --audio-driver Dummy \
 # VGPU_OZONE_PLATFORM pins the display server, e.g. `x11`; unset lets Chrome choose.
 bun scripts/capture-vgpu.ts circle line
 ```
+
+Both sides write into `artifacts/visual-baseline/`, whose PNGs are git-ignored: baselines are
+recaptured locally on demand and never committed. The Godot reference is machine-specific
+(Godot 4.7.2 / Vulkan / RTX 4070 SUPER, see the capture conditions in
+`docs/visual-comparison.md`), so check that table before recapturing it elsewhere.

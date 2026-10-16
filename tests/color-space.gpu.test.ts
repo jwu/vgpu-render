@@ -28,9 +28,10 @@ fn encode_srgb(value: vec3f) -> vec3f {
 
 /**
  * Reproduces the reference capture path end to end: linear scene target, then the sRGB
- * encode on present. Asserted values are the pixels measured from the Godot reference
- * screenshots (`artifacts/visual-baseline/godot-line.png`), so this test fails if the
- * port ever drifts back to writing authored colors into an encoded buffer.
+ * encode on present. The asserted values were measured once from the Godot reference
+ * capture of the `line` scene; that baseline is a local, git-ignored diagnostic artifact
+ * (see `docs/visual-comparison.md`), so these numbers are the frozen record of it. This
+ * test fails if the port ever drifts back to writing authored colors into an encoded buffer.
  */
 test("linear blending plus sRGB present matches the Godot reference pixels", async () => {
   const gpu = await init();
