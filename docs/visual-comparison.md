@@ -95,6 +95,29 @@ godot --path /tmp/vgpu-text-parity --display-driver x11 --audio-driver Dummy \
 - 参照公式同时修掉了一个真实缺陷：Godot 用 `0.5 * dot(px_range / msdf_size, dest_size)`，vgpu 原来
   是纯 `dot`，过渡带因此窄一半（`mid` 从 2 提到 5；后来按上表口径复测为 7.4）。
 
+### 产物（裁剪并排图）
+
+两侧**不是同一场景**（Godot 那两行是为参照写的 `.gd`，vgpu 侧是 gallery 的 `text-hud`），所以这两张图
+**不是像素对齐**的并排，只作观感参照：每行都对齐到该行第一个墨点所在的列，同样倍率最近邻放大。
+
+- `artifacts/visual-baseline/compare-text-full.png`（整段 `Handgloves 0123`，4×）
+- `artifacts/visual-baseline/compare-text-detail.png`（前几个字形，8×，看边缘过渡）
+
+复现：
+
+```bash
+# Godot 侧
+godot --path /tmp/vgpu-text-parity --display-driver x11 --audio-driver Dummy \
+  --script "$PWD/scripts/capture-godot-text.gd" -- \
+  ~/src/bevy@bevyengine/assets/fonts/FiraMono-Medium.ttf /tmp/godot-text.png 20
+# vgpu 侧：关掉无限网格，否则它的亮线压在文字上
+VGPU_COMPARE=0 VGPU_QUERY=grid=0 bun scripts/capture-vgpu.ts text-hud
+# 然后逐行裁剪（每行高 26 px、宽 182 px）、同倍率放大、左侧标注来源
+```
+
+图上能直接看出的（与上表的数字一致）：Godot 的 MSDF 笔画比 vgpu 的粗，vgpu 的 `bitmap` 笔画最粗最实、
+`sdf 4x` 边缘最软、`msdf` 两行最接近几何真值。
+
 ## 字形准确度的口径闭环（几何真值）
 
 「我们的渲染比真值多/少多少墨」这个问题在这个仓库里被答错过三次，全部出在**测量口径**上：

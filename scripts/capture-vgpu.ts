@@ -9,6 +9,7 @@
 //
 // Set `VGPU_COMPARE=0` for scenes with no Godot reference — the text scenes, which the addon cannot
 // draw — so the capture is the gallery alone instead of a split view against a missing reference.
+// `VGPU_QUERY` appends a one-off query, e.g. `grid=0` to hide the infinite grid over the text.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
@@ -109,7 +110,8 @@ try {
   await client.ready;
 
   for (const scene of SCENES) {
-    const url = `${BASE_URL}/?${COMPARE ? "compare=1&" : ""}scene=${scene}`;
+    const extra = process.env.VGPU_QUERY === undefined ? "" : `${process.env.VGPU_QUERY}&`;
+    const url = `${BASE_URL}/?${extra}${COMPARE ? "compare=1&" : ""}scene=${scene}`;
     // Open a blank page and navigate once. Opening the scene itself in the `/json/new` call and then
     // navigating to the same URL leaves `renderReady` unset, and the wait below never returns.
     const target = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });
