@@ -2040,9 +2040,10 @@ function capsuleShape(recorder: FrameRecorder): void {
 }
 
 /**
- * Encoding, raster-scale and placement matrix (vgpu extension).
+ * Encoding, raster-scale and placement matrix.
  *
- * Not a reference port — the addon has no text API. Two matrices share one view, because the
+ * Not a reference port — the addon has no text API, so this is vgpu's own capability.
+ * Two matrices share one view, because the
  * placement space changes how much of an encoding's quality survives:
  *
  * - a **world-billboard** matrix, six glyph sources by three font sizes — the full encoding axis,
@@ -2161,8 +2162,9 @@ function textCompareScene(recorder: FrameRecorder): void {
 }
 
 /**
- * Screen-space text (vgpu extension).
+ * Screen-space text.
  *
+ * Not a reference port — the addon has no text API, so screen space is vgpu's own placement mode.
  * The 2D counterpart to `text-compare`: everything here is positioned in **top-left origin pixels**,
  * so nothing moves with the camera, the projection or depth. That is what makes it a HUD, and it is
  * the one placement space that cannot be shown inside the world — a world-space scene always renders
@@ -2282,7 +2284,6 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
     case "cylinder":
     case "capsule": shapeScene(recorder, id, context); break;
     case "world_space_width": worldWidthMatrix(recorder); break;
-    case "text": textScene(recorder, context); break;
     case "text-compare": textCompareScene(recorder); break;
     case "text-hud": textHudScene(recorder); break;
     default: break;
@@ -2292,52 +2293,4 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
 /** `world_space_width.gd`: the same matrix with world-space widths and no solid columns. */
 function worldWidthMatrix(recorder: FrameRecorder): void {
   apiMatrix(recorder, { width: (pixels) => pixels * WSW_LINE_WIDTH_SCALE, widthMode: "world", solids: false });
-}
-
-/**
- * Text showcase (vgpu extension).
- *
- * Deliberately not a reference port: `godot-debug-draw` has no text API at all — the labels in
- * its examples are plain `Label3D` nodes, which is also why every other scene omits them. This
- * one exercises what the library adds instead: the three placement spaces, wrapping,
- * justification, span styling and per-frame movement.
- */
-function textScene(recorder: FrameRecorder, context: SceneContext): void {
-  // Font pixels and world units per font pixel: the reference `Label3D.font_size` /
-  // `pixel_size` pair. A 40px glyph at 0.025 units per pixel is 1.0 world unit tall, and
-  // raising the font size while lowering the ratio keeps that size at a sharper raster.
-  const label = { fontSize: 40, pixelSize: 0.025 } as const;
-  const caption = { fontSize: 24, pixelSize: 0.025 } as const;
-  // Top-left HUD: screen-space pixels, independent of projection, depth and camera motion. The
-  // anchor decides which corner of the block lands on that pixel, so it stays on screen.
-  recorder.text([24, 26, 0], "screen space HUD", { fontSize: 24, space: "screen", anchor: "top-left", color: [1, 0.85, 0.3, 1] });
-  recorder.text([24, 60, 0], "fixed pixel size, top-left origin", { fontSize: 14, space: "screen", anchor: "top-left", color: [1, 1, 1, 0.8] });
-  // Left column: the two world spaces, so their facing can be compared side by side.
-  // world-plane keeps its own XY plane and foreshortens with the camera, like a `Label3D`;
-  // world-billboard is rebuilt from the camera's axes and stays readable at any orbit angle.
-  recorder.text([0, 2.6, 7], "world-plane", { ...label, space: "world-plane" });
-  recorder.text([0, 1.4, 7], "fixed orientation", { ...caption, space: "world-plane", color: [0.68, 0.68, 1, 1] });
-  recorder.text([0, -0.4, 7], "world-billboard", { ...label, space: "world-billboard", color: [0.5, 1, 0.65, 1] });
-  recorder.text([0, -1.6, 7], "always facing the camera", { ...caption, space: "world-billboard", color: [0.6, 1, 0.78, 1] });
-  // Middle column: layout and styling.
-  recorder.text([0, 2.6, 0], "wrapped to 5 world units with centred justification", {
-    ...caption,
-    space: "world-billboard",
-    justify: "center",
-    // `bounds` is in font pixels like `fontSize`, so 5 world units is 200 px at 0.025 units/px.
-    bounds: [200, Number.POSITIVE_INFINITY],
-    color: [1, 0.75, 0.25, 1],
-  });
-  // Spans, the equivalent of bevy's child `TextSpan`s: each carries its own colour and size.
-  recorder.text([0, -0.4, 0], [
-    { text: "spans: " },
-    { text: "red ", color: [1, 0.35, 0.35, 1] },
-    { text: "green ", color: [0.4, 1, 0.5, 1] },
-    { text: "BIG", color: [0.5, 0.8, 1, 1], fontSize: 34 },
-  ], { ...caption, space: "world-billboard" });
-  // Right column: a block that moves every frame, exercising re-layout and atlas lookup.
-  const angle = context.time * 0.9;
-  const orbit: Vec3 = [Math.sin(angle) * 2.5, 1.0, -7];
-  recorder.point(orbit, { color: [1, 0.55, 0.9, 1], size: 10 });
-  recorder.text(orbit, "moves each frame", { ...caption, space: "world-billboard", color: [1, 0.55, 0.9, 1] });
 }

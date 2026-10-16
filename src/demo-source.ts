@@ -68,7 +68,6 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   cylinder: "shapeScene",
   capsule: "shapeScene",
   world_space_width: "worldWidthMatrix",
-  text: "textScene",
   "text-compare": "textCompareScene",
   "text-hud": "textHudScene",
 };
