@@ -39,7 +39,7 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 | Godot 来源 | `godot-debug-draw@hardpixel`，revision `bc51ddddcdc519164f8261fe2926fda8b3f0c39b` |
 | 执行位置 | `/tmp/vgpu-parity-godot`，独立副本；未修改上游仓库 |
 | Godot renderer | Godot 4.7.2 / Forward+ / Vulkan / NVIDIA RTX 4070 SUPER |
-| 浏览器 | `/usr/bin/chromium`，X11/Vulkan flags，CDP 截图；本轮未记录具体 WebGPU adapter，不宣称与 Godot 是同一 adapter |
+| 浏览器 | 首轮：`/usr/bin/chromium`，X11/Vulkan flags，CDP 截图（未记录 WebGPU adapter，也未记录 GPU）。重捕获：`google-chrome-stable` 154 + Intel Iris Plus Graphics 650 / Gen9 硬件 adapter；两种条件都不宣称与 Godot 是同一 adapter（见下节） |
 | 视口 | 1920×1080，浏览器 DPR=1 |
 | 投影 | perspective，vertical FOV=75°，near=0.05，far=100 |
 | 相机 | eye=(8,16,21.5)，target=(0,0,0)，up=(0,1,0) |
@@ -50,6 +50,22 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 | 抗锯齿 | Godot 沿用原项目 MSAA；vgpu 沿用当前管线。尚未统一 |
 
 两边相机/投影/分辨率相同，但场景数据、网格和 AA 不完全一致。因此本轮仍是**结构与视觉诊断**，不报告严格像素误差分数。
+
+### 重捕获记录（capture 脚本可移植性修复后）
+
+修复 `scripts/capture-vgpu.ts` 的浏览器解析后，`vgpu-circle.png` 与 `vgpu-line.png` 在本机
+（Intel Iris Plus Graphics 650 / Gen9，`google-chrome-stable` 154）重捕获了一次。与首轮基线的差异
+只集中在图元边缘，没有整体平移、缩放或变形：
+
+| 场景 | 不同像素 | 通道差 1-2 | 通道差 >9 | 涉及行数 |
+| --- | --- | --- | --- | --- |
+| Circle | 19597 / 2073600（0.945%） | 19544 | 47 | 865 |
+| Line | 19204 / 2073600（0.926%） | 19155 | 48 | 865 |
+
+已确认的归因：`VGPU_OZONE_PLATFORM=x11` 与 Wayland 两次捕获的输出**逐字节相同**，所以差异与显示
+服务器无关。首轮条件只记录了浏览器与 X11 flags，没有记录 GPU、浏览器版本和 WebGPU adapter，本轮
+为 Intel Gen9 + Chrome 154；光栅化舍入与抗锯齿实现不同是最可能的原因，但原机器不可复现，因此这
+一点**未做严格归因**。本轮不改变任何 parity 结论，只是把新基线绑定到上面记录的环境。
 
 ## 文本渲染的外部参照（Godot + msdfgen）
 
