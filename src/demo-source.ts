@@ -21,11 +21,11 @@ export type SourceToken = {
 };
 
 const TOKEN_PATTERN =
-  /\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:import|from|const|new|true|false|undefined|solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\()/g;
+  /\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:import|from|const|new|true|false|undefined|solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode|fontSize|pixelSize|fontFamily|lineHeight|letterSpacing|justify|lineBreak|bounds|anchor|space|depthTest|layer)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\()/g;
 
 const KEYWORDS = /^(?:import|from|const|new)$/;
 const LITERALS = /^(?:true|false|undefined)$/;
-const PROPERTIES = /^(?:solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode)$/;
+const PROPERTIES = /^(?:solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode|fontSize|pixelSize|fontFamily|lineHeight|letterSpacing|justify|lineBreak|bounds|anchor|space|depthTest|layer)$/;
 
 function classify(token: string): SourceTokenKind {
   if (token.startsWith("//")) return "comment";
@@ -68,6 +68,9 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   cylinder: "shapeScene",
   capsule: "shapeScene",
   world_space_width: "worldWidthMatrix",
+  text: "textScene",
+  "text-compare": "textCompareScene",
+  "text-hud": "textHudScene",
 };
 
 /**
@@ -78,6 +81,7 @@ export function sourceForExample(id: string, sceneSource: string): string {
   const name = SCENE_FUNCTIONS[id] ?? "apiMatrix";
   const start = sceneSource.search(new RegExp(`^function ${name}\\(`, "m"));
   if (start < 0) return "";
-  const next = sceneSource.slice(start + 1).search(/^function /m);
+  // `export function` also ends a block: the scene helpers come first, `buildScene` last.
+  const next = sceneSource.slice(start + 1).search(/^(?:export )?function /m);
   return sceneSource.slice(start, next < 0 ? undefined : start + 1 + next).trim();
 }

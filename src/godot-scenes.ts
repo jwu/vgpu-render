@@ -2039,6 +2039,206 @@ function capsuleShape(recorder: FrameRecorder): void {
   JOINT_VALUES.forEach((joint, row) => wireNormal(8, row, { color: TEAL, width: CAPSULE_JOINT_LINE_WIDTH, joint }, CAPSULE_JOINT_SEGMENT_COUNT, CAPSULE_JOINT_SIDE_SEGMENT_COUNT));
 }
 
+/**
+ * Encoding, raster-scale and placement matrix (vgpu extension).
+ *
+ * Not a reference port — the addon has no text API. Two matrices share one view, because the
+ * placement space changes how much of an encoding's quality survives:
+ *
+ * - a **world-billboard** matrix, six glyph sources by three font sizes — the full encoding axis,
+ *   drawn facing the camera;
+ * - a **world-plane** matrix, the same three font sizes under three representative sources, drawn on
+ *   a fixed plane so it foreshortens as the camera orbits.
+ *
+ * The layout follows the line/circle matrices: one axis enumerates the variants and the other the
+ * values, and every cell is a sample. It is **transposed** relative to those scenes because text
+ * grows sideways — six source columns would be wider than any camera wants to frame. So reading down
+ * a column compares encodings at one size, and reading across a row compares sizes under one encoding.
+ *
+ * Every row floats above the grid plane. The grid is a full-screen translucent plane that writes
+ * depth to match the reference, so a block crossing `y = 0` would be clipped along the grid lines.
+ */
+function textCompareScene(recorder: FrameRecorder): void {
+  const sizes = [16, 24, 36];
+  const pixelSize = 0.022;
+  const sample = "Handgloves";
+
+  const groups: readonly {
+    readonly space: "world-plane" | "world-billboard";
+    readonly title: string;
+    readonly labelX: number;
+    readonly columnX: readonly number[];
+    readonly firstRowY: number;
+    readonly rows: readonly (readonly [source: string, label: string])[];
+  }[] = [
+    {
+      space: "world-billboard",
+      title: "world-billboard",
+      labelX: -0.6,
+      columnX: [0, 5.0, 10.0],
+      firstRowY: 10.4,
+      rows: [
+        ["bitmap", "bitmap 1x"],
+        ["bitmap4x", "bitmap 4x"],
+        ["sdf", "sdf 1x"],
+        ["sdf4x", "sdf 4x"],
+        ["msdf", "msdf outline"],
+        ["baked", "msdf baked"],
+      ],
+    },
+    {
+      space: "world-plane",
+      title: "world-plane",
+      // Side by side rather than stacked, with a wide gutter: the camera frames the matrix by width and
+      // height together, so a wide, short layout leaves room for the rows to breathe, and the gutter
+      // keeps the leaning plane group from sweeping back through the billboard one. The rows match the
+      // billboard group one for one, so a row can be read across both spaces.
+      labelX: 26.0,
+      columnX: [26.6, 31.6, 36.6],
+      firstRowY: 10.4,
+      rows: [
+        ["bitmap", "bitmap 1x"],
+        ["bitmap4x", "bitmap 4x"],
+        ["sdf", "sdf 1x"],
+        ["sdf4x", "sdf 4x"],
+        ["msdf", "msdf outline"],
+        ["baked", "msdf baked"],
+      ],
+    },
+  ];
+  // Height costs framing distance just as width does, so the rows stay as tight as they can while still
+  // clearing one another. Screen size of the glyphs is set by how much of the bounds the matrix fills,
+  // and scaling the whole thing does not change that — only drawing less of it would.
+  const rowStep = 1.45;
+  const titleY = 12.2;
+
+  for (const group of groups) {
+    recorder.text([group.labelX - 5.6, titleY, 0], group.title, {
+      fontSize: 24,
+      pixelSize,
+      space: "world-billboard",
+      source: "baked",
+      anchor: "center-right",
+      color: [1, 0.85, 0.4, 1],
+    });
+    for (let column = 0; column < sizes.length; column++) {
+      recorder.text([group.columnX[column]!, titleY, 0], `${sizes[column]}px`, {
+        fontSize: 22,
+        pixelSize,
+        space: "world-billboard",
+        source: "baked",
+        anchor: "top-left",
+        color: [0.6, 0.8, 1, 1],
+      });
+    }
+
+    for (let row = 0; row < group.rows.length; row++) {
+      const [source, label] = group.rows[row]!;
+      const y = group.firstRowY - row * rowStep;
+      // The row label always faces the camera so the row stays identifiable, and only the samples
+      // follow the space under test. It is drawn by its own source, so the label column doubles as a
+      // sample.
+      recorder.text([group.labelX, y, 0], label, {
+        fontSize: 20,
+        pixelSize,
+        space: "world-billboard",
+        source,
+        anchor: "center-right",
+        color: [1, 1, 1, 1],
+      });
+      for (let column = 0; column < sizes.length; column++) {
+        recorder.text([group.columnX[column]!, y, 0], sample, {
+          fontSize: sizes[column]!,
+          pixelSize,
+          space: group.space,
+          source,
+          anchor: "center-left",
+          color: [1, 1, 1, 1],
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Screen-space text (vgpu extension).
+ *
+ * The 2D counterpart to `text-compare`: everything here is positioned in **top-left origin pixels**,
+ * so nothing moves with the camera, the projection or depth. That is what makes it a HUD, and it is
+ * the one placement space that cannot be shown inside the world — a world-space scene always renders
+ * it through whatever camera happens to be looking.
+ *
+ * Positions are deliberately conservative rather than pinned to the viewport: a scene builder has no
+ * viewport to measure against, and a HUD that falls off the edge in a narrow window is worse than one
+ * that sits in a comfortable column.
+ */
+function textHudScene(recorder: FrameRecorder): void {
+  recorder.text([24, 24, 0], "screen space", {
+    fontSize: 28,
+    space: "screen",
+    source: "baked",
+    anchor: "top-left",
+    color: [1, 0.85, 0.3, 1],
+  });
+  recorder.text([24, 62, 0], "pixel positions, unaffected by the camera", {
+    fontSize: 14,
+    space: "screen",
+    source: "baked",
+    anchor: "top-left",
+    color: [1, 1, 1, 0.75],
+  });
+
+  // Wrapping and justification, with `bounds` measured in font pixels like every other screen unit.
+  recorder.text([24, 100, 0], "wrapped to 260 px with centred justification", {
+    fontSize: 18,
+    space: "screen",
+    source: "baked",
+    anchor: "top-left",
+    justify: "center",
+    bounds: [260, Number.POSITIVE_INFINITY],
+    color: [1, 0.75, 0.25, 1],
+  });
+
+  // Spans, the equivalent of bevy's child `TextSpan`s: each carries its own colour and size.
+  recorder.text(
+    [24, 190, 0],
+    [
+      { text: "spans: " },
+      { text: "red ", color: [1, 0.4, 0.4, 1] },
+      { text: "green ", color: [0.45, 1, 0.55, 1] },
+      { text: "BIG", color: [0.55, 0.8, 1, 1], fontSize: 28 },
+    ],
+    { fontSize: 18, space: "screen", source: "baked", anchor: "top-left" },
+  );
+
+  // Encodings on a pixel grid — the 2D answer to the world-space matrix. A HUD is usually read at its
+  // raster size, so the differences are subtler here than they are once a world block is magnified.
+  const encodings: readonly (readonly [source: string, label: string])[] = [
+    ["bitmap", "bitmap 1x"],
+    ["sdf4x", "sdf 4x"],
+    ["baked", "msdf baked"],
+  ];
+  for (let index = 0; index < encodings.length; index++) {
+    const [source, label] = encodings[index]!;
+    const y = 240 + index * 32;
+    recorder.text([24, y, 0], label, { fontSize: 18, space: "screen", source, anchor: "top-left", color: [0.7, 0.85, 1, 1] });
+    recorder.text([190, y, 0], "Handgloves 0123", { fontSize: 20, space: "screen", source, anchor: "top-left" });
+  }
+
+  // Anchors: the marker is the position, and each block lands on it differently. Spread along one row
+  // rather than a 3×3 grid, so the panel stays inside a modest viewport.
+  const anchors = ["top-left", "top-right", "center", "bottom-left", "bottom-right"] as const;
+  for (let index = 0; index < anchors.length; index++) {
+    const anchor = anchors[index]!;
+    // The spacing has to clear the widest label at the widest anchor: `top-left` grows rightwards
+    // from its marker while `top-right` grows leftwards into the same gap.
+    const x = 60 + index * 200;
+    const y = 360;
+    recorder.text([x, y, 0], "+", { fontSize: 16, space: "screen", source: "baked", anchor: "center", color: [1, 0.55, 0.25, 1] });
+    recorder.text([x, y, 0], anchor, { fontSize: 12, space: "screen", source: "baked", anchor, color: [0.85, 0.9, 1, 1] });
+  }
+}
+
 export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
   const context: SceneContext = lineJoint === undefined ? { time } : { time, lineJoint };
   // Reference: every example's first `_process()` line is
@@ -2048,7 +2248,7 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
   // is what allows that translation. The axes are unconditional scene content, not a
   // toggle: `EndlessGrid3D` and `DebugDraw3D` are sibling nodes that never know about each
   // other, so the grid has no bearing on whether the axes show.
-  const selfAxes = id === "index" || id === "grid" || id === "world_space_width";
+  const selfAxes = id === "index" || id === "grid" || id === "world_space_width" || id === "text-hud";
   // index/grid/world_space_width draw their own translated origin axes (and
   // world_space_width needs world-space widths), so they opt out of the generic one.
   if (!selfAxes) recorder.axes(referenceOffset([0, 0, 0]), AXES_LENGTH, 2);
@@ -2068,6 +2268,9 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
     case "cylinder":
     case "capsule": shapeScene(recorder, id, context); break;
     case "world_space_width": worldWidthMatrix(recorder); break;
+    case "text": textScene(recorder, context); break;
+    case "text-compare": textCompareScene(recorder); break;
+    case "text-hud": textHudScene(recorder); break;
     default: break;
   }
 }
@@ -2075,4 +2278,52 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
 /** `world_space_width.gd`: the same matrix with world-space widths and no solid columns. */
 function worldWidthMatrix(recorder: FrameRecorder): void {
   apiMatrix(recorder, { width: (pixels) => pixels * WSW_LINE_WIDTH_SCALE, widthMode: "world", solids: false });
+}
+
+/**
+ * Text showcase (vgpu extension).
+ *
+ * Deliberately not a reference port: `godot-debug-draw` has no text API at all — the labels in
+ * its examples are plain `Label3D` nodes, which is also why every other scene omits them. This
+ * one exercises what the library adds instead: the three placement spaces, wrapping,
+ * justification, span styling and per-frame movement.
+ */
+function textScene(recorder: FrameRecorder, context: SceneContext): void {
+  // Font pixels and world units per font pixel: the reference `Label3D.font_size` /
+  // `pixel_size` pair. A 40px glyph at 0.025 units per pixel is 1.0 world unit tall, and
+  // raising the font size while lowering the ratio keeps that size at a sharper raster.
+  const label = { fontSize: 40, pixelSize: 0.025 } as const;
+  const caption = { fontSize: 24, pixelSize: 0.025 } as const;
+  // Top-left HUD: screen-space pixels, independent of projection, depth and camera motion. The
+  // anchor decides which corner of the block lands on that pixel, so it stays on screen.
+  recorder.text([24, 26, 0], "screen space HUD", { fontSize: 24, space: "screen", anchor: "top-left", color: [1, 0.85, 0.3, 1] });
+  recorder.text([24, 60, 0], "fixed pixel size, top-left origin", { fontSize: 14, space: "screen", anchor: "top-left", color: [1, 1, 1, 0.8] });
+  // Left column: the two world spaces, so their facing can be compared side by side.
+  // world-plane keeps its own XY plane and foreshortens with the camera, like a `Label3D`;
+  // world-billboard is rebuilt from the camera's axes and stays readable at any orbit angle.
+  recorder.text([0, 2.6, 7], "world-plane", { ...label, space: "world-plane" });
+  recorder.text([0, 1.4, 7], "fixed orientation", { ...caption, space: "world-plane", color: [0.68, 0.68, 1, 1] });
+  recorder.text([0, -0.4, 7], "world-billboard", { ...label, space: "world-billboard", color: [0.5, 1, 0.65, 1] });
+  recorder.text([0, -1.6, 7], "always facing the camera", { ...caption, space: "world-billboard", color: [0.6, 1, 0.78, 1] });
+  // Middle column: layout and styling.
+  recorder.text([0, 2.6, 0], "wrapped to 5 world units with centred justification", {
+    ...caption,
+    space: "world-billboard",
+    justify: "center",
+    // `bounds` is in font pixels like `fontSize`, so 5 world units is 200 px at 0.025 units/px.
+    bounds: [200, Number.POSITIVE_INFINITY],
+    color: [1, 0.75, 0.25, 1],
+  });
+  // Spans, the equivalent of bevy's child `TextSpan`s: each carries its own colour and size.
+  recorder.text([0, -0.4, 0], [
+    { text: "spans: " },
+    { text: "red ", color: [1, 0.35, 0.35, 1] },
+    { text: "green ", color: [0.4, 1, 0.5, 1] },
+    { text: "BIG", color: [0.5, 0.8, 1, 1], fontSize: 34 },
+  ], { ...caption, space: "world-billboard" });
+  // Right column: a block that moves every frame, exercising re-layout and atlas lookup.
+  const angle = context.time * 0.9;
+  const orbit: Vec3 = [Math.sin(angle) * 2.5, 1.0, -7];
+  recorder.point(orbit, { color: [1, 0.55, 0.9, 1], size: 10 });
+  recorder.text(orbit, "moves each frame", { ...caption, space: "world-billboard", color: [1, 0.55, 0.9, 1] });
 }
