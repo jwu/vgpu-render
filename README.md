@@ -12,6 +12,9 @@ layout, dash, rotation, normal-aware width, color, grid and label differences;
 round/bevel/miter line joins are built in the vertex stage like the reference.
 Passing GPU smoke tests does not establish visual equivalence.
 
+Text rendering (see [Text](#text)) is a vgpu addition rather than a port: the reference addon
+has no text API at all, and the labels in its examples are plain `Label3D` nodes.
+
 ## Usage
 
 The public API uses an explicit frame recorder:
@@ -28,6 +31,8 @@ recorder.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { width: 4, joint: "round"
 recorder.grid([0, 0, 0], [4, 4], [0.5, 0.5], { color: [0.4, 0.4, 0.5, 1] });
 recorder.curve(cubicBezier, { color: [1, 1, 1, 1], tolerance: 0.08 });
 recorder.mesh(sphere(0.5), { solid: true, color: [0.2, 0.6, 1, 0.8] });
+recorder.text([0, 1, 0], "world label", { fontSize: 32, pixelSize: 0.01, color: [1, 0.8, 0.2, 1] });
+recorder.text([24, 24, 0], "screen HUD", { space: "screen", anchor: "top-left", fontSize: 16 });
 const commands = debug.finishFrame(recorder);
 
 // `view` is the world-to-view matrix; normal-aware strokes read it like Godot's VIEW_MATRIX.
@@ -96,15 +101,141 @@ FrameRecorder -> FrameCommand[] -> GpuDebugDraw3D
   points    -> instanced billboards
   lines     -> screen-space or world-space quads, dash + normal aware
   triangles -> transient solid meshes
+  text      -> per-glyph instanced quads sampling a generated glyph atlas
 ```
 
 Points and lines are instanced; the CPU never expands a line into triangles. The
 infinite grid is a single finite plane whose fragment shader derives minor/major
 LOD grid lines.
 
+## Text
+
+`recorder.text(position, text, options)` draws one block per call. `text` is a string or a list
+of spans, the equivalent of bevy's `Text2d` root plus its child `TextSpan`s.
+
+Three placement spaces share one pipeline and are selected per block:
+
+| `space` | Position | Size |
+| --- | --- | --- |
+| `world-plane` (default) | world units, block on a fixed local XY plane | `fontSize × pixelSize` |
+| `world-billboard` | world units, block rebuilt from the camera's axes | `fontSize × pixelSize` |
+| `screen` | **top-left origin pixels** (`position.z` ignored) | `fontSize` pixels |
+
+`fontSize` is in **font pixels** and is both the layout unit and the glyph atlas' rasterisation
+size; `pixelSize` is world units per font pixel. That pair is the reference
+`Label3D.font_size` / `pixel_size`, and it lets a block keep a fixed world size while its glyphs
+are rasterised at any resolution. Layout options follow bevy: `justify`, `lineBreak`, `bounds`
+(`TextBounds`, in font pixels), `anchor`, `lineHeight` (default `1.2 × fontSize`) and
+`letterSpacing`. World text is depth-tested but never depth-written, so geometry in front of it
+occludes it; `screen` text pins itself to the near plane and always wins.
+
+### Glyph encoding
+
+The atlas stores glyphs one of three ways. The encoding belongs to the **glyph source**, not to a
+render option, so the atlas and the shader always agree:
+
+| Encoding | Stored | Scaling | Cost |
+| --- | --- | --- | --- |
+| `bitmap` | tintable alpha mask (RGB 255, coverage in A) — bevy's `FontAtlas` layout | the shader interpolates coverage, so magnifying softens it | cheapest; one byte of signal |
+| `sdf` | signed distance in red | the shader rebuilds the edge from the distance, so it stays sharp at any size | one CPU distance transform per glyph |
+| `msdf` | per-edge signed distance in RGB | as `sdf`, but the median keeps the corners a single channel rounds off | three channels, and outlines rather than a mask |
+
+`CanvasGlyphRasterizer` produces `bitmap` and `sdf` from Canvas2D coverage, running an exact
+Euclidean distance transform and letting partially covered texels place the edge sub-texel. Two
+sources produce `msdf`, and both ship:
+
+- **On demand** — `OutlineGlyphRasterizer` parses the inlined TrueType with `opentype.js` and encodes
+the first time each glyph appears. Any character the face covers, and any face at all, at the cost
+of a runtime dependency and an encoder pass.
+- **Prebaked** — `BakedMsdfRasterizer` reads the page `bun scripts/bake-msdf-atlas.ts` produced: 586
+glyphs at a 24 px raster in a 512² page, gzipped to 335 KiB and carried as raw texels (not a PNG, so
+no image decoder has to run and the payload still loads under Node). No `opentype.js`, and no
+encoding ever runs — but the character set is fixed and the payload ships whether or not it is used.
+
+### Anti-aliasing
+
+A glyph edge is a texture alpha ramp inside a quad, so the scene target's `msaa: 4` cannot help it —
+it anti-aliases triangle edges, not texel contents. What is actually in play:
+
+- **Rasterisation coverage.** Canvas2D anti-aliases every glyph it draws. That is the whole of the
+`bitmap` path's AA, and the input `sdf` is derived from.
+- **Distance reconstruction.** `sdf` and `msdf` rebuild the edge with an `fwidth`-scaled ramp, so the
+transition stays one pixel wide however far the camera pushes the glyph.
+- **Supersampling.** `rasterScale` rasterises glyphs at a multiple of their layout size while quads
+stay put — the lever that matters for `bitmap` and for high-DPR displays.
+- **Mip chain.** WebGPU has no `generateMipmap` and vgpu exposes none, so levels are filtered on the
+CPU (the coverage channel averages correctly) and uploaded level by level. `mipLevels` defaults to
+4, taking a 512 px page down to 64 px; deeper chains start bleeding through the 2 px packing
+padding, and averaging is not a distance field's own filter, so `sdf`/`msdf` lose a little edge
+precision as levels shrink.
+
+Two limits are worth knowing about before blaming the renderer for an ugly block:
+
+- **Magnification.** A distance field is only as fine as the raster it was built at. Push a block far
+  enough past its font size and the texel grid it was reconstructed from becomes visible. The lever
+  is `rasterScale`, which rasterises at a multiple of the layout size while the quad stays put — the
+  gallery uses twice the layout size by default, and that costs four times the atlas area, so raise
+  `atlasSize` with it. The prebaked MSDF source has the equivalent knob at bake time rather than at
+  run time.
+- **Depth.** Text is depth-tested, so anything that writes depth in front of it clips it. That
+  includes the infinite grid: it is a full-screen translucent plane that writes depth, matching the
+  reference's `depth_draw_always`, and when the camera looks along the ground its lines shatter
+  every letter behind them. It is the reference behaviour and not a bug, but debug labels that must
+  stay readable pass `depthTest: false`.
+
+### Multiple sources
+
+A `GpuDebugDraw3D` registers **named glyph sources**, and a block picks one through
+`TextOptions.source`. Encoding and rasterisation scale belong to the source, so one frame can mix
+quality levels — or put two of them side by side.
+
+```ts
+const renderer = new GpuDebugDraw3D(gpu, {
+  text: {
+    sources: {
+      sharp: new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 }),
+      cheap: new CanvasGlyphRasterizer({ encoding: "bitmap" }),
+      baked: new BakedMsdfRasterizer(),
+    },
+  },
+});
+
+recorder.text([0, 0, 0], "read me", { source: "sharp" });
+recorder.text([0, -1, 0], "and me", { source: "cheap" });
+```
+
+Blocks that name nothing use the first source registered, and `defaultTextStyle` can set one for the
+whole frame. Each source gets its own atlas and pipeline, and one is only built once something
+actually names it, so registering sources you never draw costs nothing.
+
+Two scenes exercise text end to end, both as vgpu extensions rather than ports — the addon has no text
+API. `text-compare` is a matrix in the shape of the line/circle examples: rows are glyph sources,
+columns are font sizes, transposed relative to those because text grows sideways. Read down a column
+to compare encodings at one size, across a row to compare sizes under one encoding. `text-hud` covers
+the screen-space side — pixel positions, wrapping, justification, spans and anchors — which a
+world-space scene cannot demonstrate, because it always renders through whatever camera is looking.
+
+Every world-space row in the matrix floats above the grid plane. The grid writes depth, and a block
+crossing `y = 0` would be clipped along its lines.
+
+### Bundled font
+
+The library inlines a **Fira Mono subset** (ASCII, Latin-1, Latin Extended-A, Greek, punctuation,
+arrows, math and geometric symbols — 591 glyphs, 19 KB WOFF2 plus a 43 KB TrueType of the same
+subset, SIL OFL 1.1). It is embedded the way bevy embeds its default font with `include_bytes!`, so
+nothing is fetched at runtime. WOFF2 feeds `FontFace` for the Canvas2D path; the TrueType is there
+because `opentype.js` cannot decompress WOFF2. The subset has **no CJK coverage**, so pass another
+`fontFamily` — already loaded with the document — when Chinese labels are needed.
+
+`?scene=text-compare` and `?scene=text-hud` open the text scenes directly. `?text=<name>` narrows the
+gallery to a single glyph source (`bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, `baked`).
+
 ## Capabilities
 
 - Points (screen/world size), lines (screen/world width, dash, normal), triangles.
+- Text blocks: three placement spaces, wrapping, justification, span styling, per-block anchor,
+  line height and letter spacing, drawn from an inlined Fira Mono subset. The atlas can hold
+  `bitmap`, `sdf` or `msdf` glyphs (see [Text](#text)), with supersampling and a mip chain.
 - Normal-aware strokes: `LineOptions.normal` for a single normal, `LineOptions.normals` for
   per-vertex normals (one per segment on an open path, one per vertex on a closed one). Lines
   and joints apply the reference back-face fade (`back_fade_start = 100°`,

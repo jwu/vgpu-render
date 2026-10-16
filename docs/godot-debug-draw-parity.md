@@ -7,13 +7,18 @@ This document tracks parity with `~/src/godot-debug-draw@hardpixel/examples` and
 
 The current port is **partial parity**. The live Circle/Line comparison in
 [visual-comparison.md](visual-comparison.md) demonstrates mismatched layout,
-rotation, dashes, normal samples, solid color/alpha, grid and missing labels.
+rotation, dashes, normal samples, solid color/alpha and grid.
 Since then the Circle and Line scenes were ported faithfully from the reference
 sources, and their primitive bounding boxes now align within 1-2 px of the Godot
 screenshots; the grid, the round/bevel/miter line joints, the curve control-point
 markers, the Sphere/Cone/Cylinder/Capsule wireframes and the normal-aware line and
-joint shading are ported, while AA and labels are still incomplete.
-`demo.gd` is absent from the manifest. The current 15 entries
+joint shading are ported, while AA is still incomplete.
+Text rendering is a vgpu addition rather than part of the port: the labels in the reference
+examples are `Label3D` nodes owned by those scenes, not output of the addon. See the README's
+Text section for the three placement spaces, the inlined Fira Mono subset and the `text`
+gallery entry.
+`demo.gd` is absent from the manifest, and `text` is an extension rather than a reference
+port. The current 16 entries
 render geometry, but that is not proof of scene or visual equivalence. GPU scene
 tests are smoke tests, not full visual regression baselines.
 

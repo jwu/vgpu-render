@@ -7,7 +7,9 @@
 全场景布局、infinite grid、色彩空间、round/bevel/miter 接头、曲线控制点标记、
 sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶点法向（第九轮），以及
 平面图元的逐顶点法向与 `index`/`world_space_width` 的列基向量（第十轮）。
-仍然不对齐：AA（Godot MSAA vs 无 AA）、3D 列/行标签、world-space 宽度的 3D 侧向、`demo.gd`。
+仍然不对齐：AA（Godot MSAA vs 无 AA）、world-space 宽度的 3D 侧向、`demo.gd`。
+参考样例的列/行标签是场景自带的 `Label3D`，不是 addon 输出；vgpu 另行实现了文字渲染
+（见 README 的 Text 节）并新增 `text` 示例场景，但未逐列对齐参考标签。
 
 ## 产物
 
@@ -352,7 +354,7 @@ bun scripts/capture-vgpu.ts circle line
 | ~~P1~~ | ~~`sphere(y axis)` / `sphere(z axis)` 列~~ | **已修复（第八轮）**：改为参考的纬线环 + 经线大圆拓扑 |
 | ~~P1~~ | ~~`cone`/`cylinder` 的 base/side 分段~~ | **已修复（第八轮）**：两个参数已独立，side 线数量由 `side_segment_count` 控制 |
 | ~~P1~~ | ~~`_n` 列法向~~ | **已修复（第九、十轮）**：逐顶点法向 + 接头法向插值；平面图元的逐顶点法向与 `index`/`world_space_width` 的取景基向量均在第十轮补齐 |
-| P1 | 缺少 3D 列/行标签 | 参考含 Label3D，vgpu 只有 HTML 参数面板 |
+| P1 | 3D 列/行标签未对齐 | 参考的标签是示例场景自带的 `Label3D` 节点，不是 addon 能力；vgpu 已实现文字渲染（README 的 Text 节）与 `text` 示例场景，但没有逐列对齐参考标签的字号/像素尺寸/朝向 |
 | P1 | AA 不同 | 未统一 MSAA/边缘模式 |
 | P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
 | P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `recorder.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
@@ -426,7 +428,7 @@ bun scripts/capture-vgpu.ts circle line
 | P1 | solid Circle 颜色与透明度错误 | Godot 蓝色半透明 (0.25,0.65,1,0.45)；vgpu 金色不透明 |
 | P1 | infinite grid 差异显著 | 已修复：见「第三轮：infinite grid 忠实移植」 |
 | P1 | AA 与粗线边缘不同 | vgpu 粗线出现明显锯齿；Godot MSAA 与参考 line/joint shader 尚未对齐 |
-| P1 | 缺少 3D 列/行标签 | Godot 样例含 Label3D；vgpu 只有 HTML 参数文本 |
+| P1 | 3D 列/行标签未对齐 | Godot 样例的标签是场景自带的 `Label3D`；vgpu 现已有自己的文字渲染（README 的 Text 节）与 `text` 示例，但未逐列对齐参考标签 |
 
 ## vgpu 对比模式
 
