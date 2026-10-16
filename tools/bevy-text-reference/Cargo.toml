@@ -1,0 +1,23 @@
+[package]
+name = "bevy-text-reference"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Reference renderer for the text comparison documented in
+# `docs/text-reference.md`. It is deliberately *not* part of the vgpu-render
+# build: the gallery is TypeScript, this only exists to produce the bevy side of
+# the screenshots.
+#
+# `path` points at a local bevy checkout because the comparison has to run
+# against the same engine revision the port was read from, and no released crate
+# carries the text API used here. Build with
+# `CARGO_TARGET_DIR=<bevy>/target cargo run --release -- <cases.json> <out-dir>`
+# so the already-compiled bevy artifacts are reused instead of rebuilt.
+
+[dependencies]
+bevy = { path = "/home/jwu/src/bevy@bevyengine" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]

@@ -9,7 +9,8 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 平面图元的逐顶点法向与 `index`/`world_space_width` 的列基向量（第十轮）。
 仍然不对齐：AA（Godot MSAA vs 无 AA）、world-space 宽度的 3D 侧向、`demo.gd`。
 参考样例的列/行标签是场景自带的 `Label3D`，不是 addon 输出；vgpu 另行实现了文字渲染
-（见 README 的 Text 节）并新增 `text` 示例场景，但未逐列对齐参考标签。
+（见 README 的 Text 节）并新增 `text-compare` 与 `text-hud` 示例场景，但未逐列对齐参考标签。
+文字的**布局语义**另有以 bevy 为参照的逐 glyph 验收，方法与结论见 `docs/text-reference.md`。
 
 ## 产物
 
@@ -19,8 +20,8 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 - [Line 局部放大](../artifacts/visual-baseline/compare-line-detail.png)
 - 形状场景原图：`artifacts/visual-baseline/{godot,vgpu}-{sphere,capsule,cone,cylinder,index,world_space_width}.png`
 - 其余场景原图：`artifacts/visual-baseline/{godot,vgpu}-{circle,line}.png` 与 `vgpu-*.png`
-- 文本场景没有 Godot 参考（addon 无文本 API）：`artifacts/visual-baseline/vgpu-{text,text-hud}.png`。
-  同样的 1920×1080 / DPR 1，非 compare 模式（`?scene=text`、`?scene=text-hud`），用于对比 vgpu
+- 文本场景没有 Godot 参考（addon 无文本 API）：`artifacts/visual-baseline/vgpu-text-hud.png`。
+  同样的 1920×1080 / DPR 1，非 compare 模式（`?scene=text-hud`），用于对比 vgpu
   自身在字形编码、超采样与描边上的变化，不参与和 Godot 的像素比较。
 - 浏览器对比页：`http://127.0.0.1:5174/artifacts/visual-baseline/index.html`（含六个形状场景的并排对比）
 
@@ -461,7 +462,7 @@ bun scripts/capture-vgpu.ts circle line
 | ~~P1~~ | ~~`sphere(y axis)` / `sphere(z axis)` 列~~ | **已修复（第八轮）**：改为参考的纬线环 + 经线大圆拓扑 |
 | ~~P1~~ | ~~`cone`/`cylinder` 的 base/side 分段~~ | **已修复（第八轮）**：两个参数已独立，side 线数量由 `side_segment_count` 控制 |
 | ~~P1~~ | ~~`_n` 列法向~~ | **已修复（第九、十轮）**：逐顶点法向 + 接头法向插值；平面图元的逐顶点法向与 `index`/`world_space_width` 的取景基向量均在第十轮补齐 |
-| P1 | 3D 列/行标签未对齐 | 参考的标签是示例场景自带的 `Label3D` 节点，不是 addon 能力；vgpu 已实现文字渲染（README 的 Text 节）与 `text` 示例场景，但没有逐列对齐参考标签的字号/像素尺寸/朝向 |
+| P1 | 3D 列/行标签未对齐 | 参考的标签是示例场景自带的 `Label3D` 节点，不是 addon 能力；vgpu 已实现文字渲染（README 的 Text 节）与 `text-compare`/`text-hud` 示例场景，但没有逐列对齐参考标签的字号/像素尺寸/朝向 |
 | P1 | AA 不同 | 未统一 MSAA/边缘模式 |
 | P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
 | P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `recorder.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
@@ -535,7 +536,7 @@ bun scripts/capture-vgpu.ts circle line
 | P1 | solid Circle 颜色与透明度错误 | Godot 蓝色半透明 (0.25,0.65,1,0.45)；vgpu 金色不透明 |
 | P1 | infinite grid 差异显著 | 已修复：见「第三轮：infinite grid 忠实移植」 |
 | P1 | AA 与粗线边缘不同 | vgpu 粗线出现明显锯齿；Godot MSAA 与参考 line/joint shader 尚未对齐 |
-| P1 | 3D 列/行标签未对齐 | Godot 样例的标签是场景自带的 `Label3D`；vgpu 现已有自己的文字渲染（README 的 Text 节）与 `text` 示例，但未逐列对齐参考标签 |
+| P1 | 3D 列/行标签未对齐 | Godot 样例的标签是场景自带的 `Label3D`；vgpu 现已有自己的文字渲染（README 的 Text 节）与 `text-compare`/`text-hud` 示例，但未逐列对齐参考标签 |
 
 ## vgpu 对比模式
 

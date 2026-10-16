@@ -1,6 +1,9 @@
 node_modules/
 dist/
 coverage/
+# The bevy reference harness builds into bevy's own target directory (see
+# docs/text-reference.md), but a plain `cargo build` in it would drop a target/ of its own.
+tools/bevy-text-reference/target/
 *.log
 .env
 .env.*

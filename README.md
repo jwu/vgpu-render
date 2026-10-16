@@ -12,7 +12,7 @@ layout, dash, rotation, normal-aware width, color, grid and label differences;
 round/bevel/miter line joins are built in the vertex stage like the reference.
 Passing GPU smoke tests does not establish visual equivalence.
 
-Text rendering (see [Text](#text)) is a vgpu addition rather than a port: the reference addon
+Text rendering (see [Text](#text)) is vgpu's own capability rather than a port: the reference addon
 has no text API at all, and the labels in its examples are plain `Label3D` nodes.
 
 ## Usage
@@ -125,8 +125,17 @@ Three placement spaces share one pipeline and are selected per block:
 size; `pixelSize` is world units per font pixel. That pair is the reference
 `Label3D.font_size` / `pixel_size`, and it lets a block keep a fixed world size while its glyphs
 are rasterised at any resolution. Layout options follow bevy: `justify`, `lineBreak`, `bounds`
-(`TextBounds`, in font pixels), `anchor`, `lineHeight` (default `1.2 × fontSize`) and
-`letterSpacing`. World text is depth-tested but never depth-written, so geometry in front of it
+(`TextBounds`, in font pixels), `anchor`, `lineHeight` and `letterSpacing`.
+
+`lineHeight` is bevy's `LineHeight::Px` when you pass one, and bevy's default
+`RelativeToFont(1.2)` otherwise — which means a line's box is that multiple of **the line's own
+largest span**, so a line holding a bigger span is taller. `lineHeightScale` names that multiple
+explicitly; the two are exclusive, like bevy's variants. Only `bounds.width` feeds layout:
+`bounds.height` is not a layout input, matching bevy, so a block runs past it instead of being
+truncated. `letterSpacing` lands after every character, the last one on a line included, because
+parley adds it to each cluster's advance.
+
+World text is depth-tested but never depth-written, so geometry in front of it
 occludes it; `screen` text pins itself to the near plane and always wins.
 
 ### Outline
@@ -256,8 +265,9 @@ Blocks that name nothing use the first source registered, and `defaultTextStyle`
 whole frame. Each source gets its own atlas and pipeline, and one is only built once something
 actually names it, so registering sources you never draw costs nothing.
 
-Two scenes exercise text end to end, both as vgpu extensions rather than ports — the addon has no text
-API. `text-compare` is a matrix in the shape of the line/circle examples: rows are glyph sources,
+Two scenes exercise text end to end. Neither is a port — the addon has no text API; the layout they
+run follows bevy's, and `docs/text-reference.md` records how that was verified against bevy itself.
+`text-compare` is a matrix in the shape of the line/circle examples: rows are glyph sources,
 columns are font sizes, transposed relative to those because text grows sideways. Read down a column
 to compare encodings at one size, across a row to compare sizes under one encoding. `text-hud` covers
 the screen-space side — pixel positions, wrapping, justification, spans and anchors — which a
@@ -313,8 +323,9 @@ gallery to a single glyph source (`bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, 
   the reference pose stays put for comparisons.
 
 See `docs/godot-debug-draw-parity.md` for the scene-by-scene parity status and the
-known approximations, and `docs/visual-comparison.md` for the Godot-vs-vgpu
-screenshot comparisons and measured alignment.
+known approximations, `docs/visual-comparison.md` for the Godot-vs-vgpu
+screenshot comparisons and measured alignment, and `docs/text-reference.md` for the run-time
+comparison of text layout against bevy itself.
 
 ## Global configuration
 
