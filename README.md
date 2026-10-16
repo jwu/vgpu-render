@@ -398,6 +398,8 @@ gallery to a single glyph source (`auto`, `bitmap`, `bitmap4x`, `sdf`, `sdf4x`, 
   (1.08× per notch), and a released drag keeps its velocity and glides — the exact integral of
   an exponentially decaying velocity (halflife 0.14 s), capped at 60°, half a screen of pan and
   0.75 doublings of zoom. Releasing more than 90 ms after the last sample is treated as a stop.
+  The right button drops into a pointer-locked free-fly camera instead (WASD to move, Q/E for
+  up/down, shift to sprint at 3×), while the middle button pans and the left button orbits.
 - Example switching frames the selected scene (`frameBounds`): the orbit pivot moves to the
   scene's bounding-box centre and the distance/height fit its projected corners, so rotating
   turns around the geometry instead of the origin. `?camera=reference` disables that framing so

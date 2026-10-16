@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backgroundToHex, cameraPoseFor, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
+import { backgroundToHex, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
 import { orbitBasis, orbitEye } from "../src/demo-camera.js";
 import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, GODOT_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
 
@@ -112,5 +112,17 @@ describe("default background", () => {
     clone[3] = 0;
     expect(DEFAULT_DEMO_CONFIG.view.background[3]).toBe(1);
     expect(DEFAULT_DEMO_CONFIG.view.background).not.toBe(GODOT_CLEAR_COLOR);
+  });
+});
+
+describe("fps camera movement", () => {
+  it("walks at the reference free-camera speed", () => {
+    expect(fpsMoveSpeed(new Set<string>())).toBe(5);
+    expect(fpsMoveSpeed(new Set(["w", "d"]))).toBe(5);
+  });
+
+  it("sprints three times as fast while shift is held", () => {
+    expect(fpsMoveSpeed(new Set(["w", "shift"]))).toBe(15);
+    expect(fpsMoveSpeed(new Set(["shift"]))).toBe(15);
   });
 });

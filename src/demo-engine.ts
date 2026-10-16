@@ -91,7 +91,20 @@ const ZOOM_FACTOR = 1.08;
 /** Chromium reports 100 `deltaY` units per notch; one notch is `log2(1.08)` doublings. */
 const ZOOM_DOUBLINGS_PER_DELTA = Math.log2(ZOOM_FACTOR) / 100;
 const FPS_KEYS = ["w", "a", "s", "d", "q", "e"];
+/**
+ * Held with the movement keys, shift sprints the right-drag FPS camera. It is tracked in the same
+ * set as the movement keys, so releasing the drag (which clears the set) also drops a sprint that
+ * was still held down.
+ */
+const FPS_SPRINT_KEY = "shift";
+/** How much faster the FPS camera moves while shift is held. */
+const FPS_SPRINT_SCALE = 3;
 const ORIGIN: Vec3 = [0, 0, 0];
+
+/** Movement speed for the FPS camera, given the keys held right now. */
+export function fpsMoveSpeed(keys: ReadonlySet<string>): number {
+  return keys.has(FPS_SPRINT_KEY) ? FPS_SPEED * FPS_SPRINT_SCALE : FPS_SPEED;
+}
 
 /**
  * Inertia. A released drag keeps a velocity that halves every `GLIDE_HALFLIFE` seconds; the caps
@@ -834,7 +847,7 @@ export class DemoEngine {
     ];
     const length = Math.hypot(move[0], move[1], move[2]);
     if (length < 1e-6) return;
-    const step = (FPS_SPEED * delta) / length;
+    const step = (fpsMoveSpeed(this.keys) * delta) / length;
     this.fpsCamera.position[0] += move[0] * step;
     this.fpsCamera.position[1] += move[1] * step;
     this.fpsCamera.position[2] += move[2] * step;
@@ -856,6 +869,10 @@ export class DemoEngine {
   private onKeyDown = (event: KeyboardEvent): void => {
     if (this.compareMode) return;
     const key = event.key.toLowerCase();
+    if (key === FPS_SPRINT_KEY) {
+      this.keys.add(key);
+      return;
+    }
     if (!FPS_KEYS.includes(key)) return;
     this.keys.add(key);
     if (this.pointer?.mode === "fps") event.preventDefault();
