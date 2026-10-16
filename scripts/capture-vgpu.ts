@@ -7,6 +7,10 @@
 // display (X11 or Wayland). The WebGPU canvas must report
 // `document.documentElement.dataset.renderReady === "true"` before capture.
 //
+// `CHROME_PATH` selects the browser binary (default: first known install path, then `PATH`), and
+// `VGPU_OZONE_PLATFORM` pins the display server. The `--enable-features=Vulkan` below is what gives
+// Chrome a hardware WebGPU adapter on Linux; without it `requestAdapter()` returns null.
+//
 // Set `VGPU_COMPARE=0` for scenes with no Godot reference — the text scenes, which the addon cannot
 // draw — so the capture is the gallery alone instead of a split view against a missing reference.
 // `VGPU_QUERY` appends a one-off query, e.g. `grid=0` to hide the infinite grid over the text.
@@ -16,6 +20,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
+import { ozonePlatformArgs, resolveChromePath } from "./chrome-launch.js";
+
 const SCENES = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["circle", "line"];
 const BASE_URL = process.env.VGPU_URL ?? "http://127.0.0.1:5174";
 /**
@@ -24,7 +30,7 @@ const BASE_URL = process.env.VGPU_URL ?? "http://127.0.0.1:5174";
  */
 const COMPARE = process.env.VGPU_COMPARE !== "0";
 const OUTPUT_DIR = resolve(import.meta.dir, "..", "artifacts", "visual-baseline");
-const CHROME = process.env.CHROME_PATH ?? "/usr/bin/chromium";
+const CHROME = resolveChromePath();
 const PROFILE = mkdtempSync(resolve(tmpdir(), "vgpu-capture-"));
 const WIDTH = 1920;
 const HEIGHT = 1080;
@@ -40,7 +46,7 @@ const browser = spawn(CHROME, [
   "--no-default-browser-check",
   "--enable-unsafe-webgpu",
   "--enable-features=Vulkan",
-  "--ozone-platform=x11",
+  ...ozonePlatformArgs(),
   `--window-size=${WIDTH},${HEIGHT}`,
   "about:blank",
 ], { stdio: ["ignore", "ignore", "pipe"] });

@@ -461,6 +461,11 @@ bun run build
 bun run dev
 ```
 
+`bun run dev` serves the gallery; open the printed URL in a WebGPU-capable browser. On Linux, Chrome
+only creates a hardware WebGPU adapter when its Vulkan feature is on — without it
+`navigator.gpu.requestAdapter()` returns `null`. Either set `chrome://flags/#enable-vulkan` to
+Enabled, or start the browser with `--enable-features=Vulkan`.
+
 Visual baselines:
 
 ```bash
@@ -470,5 +475,7 @@ godot --path /tmp/vgpu-parity-godot --display-driver x11 --audio-driver Dummy \
   circle "$PWD/artifacts/visual-baseline/godot-circle.png"
 
 # vgpu capture over CDP (needs a GPU display + dev server)
+# CHROME_PATH selects the browser binary (default: first known install path, then PATH).
+# VGPU_OZONE_PLATFORM pins the display server, e.g. `x11`; unset lets Chrome choose.
 bun scripts/capture-vgpu.ts circle line
 ```

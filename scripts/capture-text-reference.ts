@@ -4,7 +4,10 @@
 //   bun run dev -- --host 127.0.0.1 --port 5174   # in another shell
 //   bun scripts/capture-text-reference.ts [case ...]
 //
-// Requires a working GPU display (X11 or Wayland) and Chromium. Writes
+// Requires a working GPU display (X11 or Wayland) and Chrome/Chromium. `CHROME_PATH` selects the
+// binary (default: first known install path, then `PATH`) and `VGPU_OZONE_PLATFORM` pins the display
+// server. The `--enable-features=Vulkan` below is what gives Chrome a hardware WebGPU adapter on
+// Linux; without it `requestAdapter()` returns null. Writes
 // `artifacts/text-reference/vgpu-<id>.png`; the bevy side of the same cases comes from
 // `tools/bevy-text-reference` (see docs/text-reference.md), and
 // `artifacts/text-reference/index.html` puts the two side by side.
@@ -18,10 +21,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
+import { ozonePlatformArgs, resolveChromePath } from "./chrome-launch.js";
+
 const BASE_URL = process.env.VGPU_URL ?? "http://127.0.0.1:5174";
 const OUTPUT_DIR = resolve(import.meta.dir, "..", "artifacts", "text-reference");
 const CASES = resolve(import.meta.dir, "..", "tools", "bevy-text-reference", "cases.json");
-const CHROME = process.env.CHROME_PATH ?? "/usr/bin/chromium";
+const CHROME = resolveChromePath();
 const PROFILE = mkdtempSync(resolve(tmpdir(), "vgpu-text-reference-"));
 
 type ReferenceCase = { readonly id: string; readonly width: number; readonly height: number };
@@ -44,7 +49,7 @@ const browser = spawn(
     "--no-default-browser-check",
     "--enable-unsafe-webgpu",
     "--enable-features=Vulkan",
-    "--ozone-platform=x11",
+    ...ozonePlatformArgs(),
     "--window-size=1920,1080",
     "about:blank",
   ],
