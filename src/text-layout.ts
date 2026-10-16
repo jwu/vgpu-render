@@ -101,19 +101,52 @@ export type TextSpanInput = {
   readonly fontFamily?: string;
 };
 
+/** bevy's `LineHeight` default, `RelativeToFont(1.2)`. */
+export const DEFAULT_LINE_HEIGHT_SCALE = 1.2;
+
 export type TextLayoutOptions = {
   readonly color: Rgba;
   readonly fontSize: number;
   readonly fontFamily: string;
-  /** Resolved line height in layout units (bevy's `LineHeight`, default `1.2 × fontSize`). */
-  readonly lineHeight: number;
-  /** Extra advance after every character except the last of a line. */
+  /**
+   * Absolute line height in layout units, bevy's `LineHeight::Px`. When omitted the line height
+   * is `lineHeightScale` times the line's own largest font size, which is bevy's
+   * `LineHeight::RelativeToFont` — the default, and the reason a line holding a larger span gets
+   * a taller box rather than being clipped to the block's own size.
+   */
+  readonly lineHeight?: number | undefined;
+  /** Multiple of the line's largest font size, bevy's `LineHeight::RelativeToFont`. Default `1.2`. */
+  readonly lineHeightScale?: number | undefined;
+  /**
+   * Added after every character, the last one on a line included: parley adds it to each cluster's
+   * advance, and the trailing whitespace a line breaks at carries its share into the block width.
+   */
   readonly letterSpacing: number;
   readonly justify: TextJustify;
   readonly lineBreak: TextLineBreak;
-  /** `TextBounds`: maximum width and height before wrapping and truncation. */
+  /**
+   * `TextBounds`. Only `width` feeds layout: it is the wrap width. `height` is not a layout input,
+   * matching bevy, whose `Text2d` never truncates lines against it (it only sizes the node).
+   */
   readonly bounds?: readonly [number, number] | undefined;
   readonly anchor: TextAnchorPoint;
+};
+
+/**
+ * One line after breaking, with the two advances bevy/parley distinguish.
+ *
+ * - `advance` is the line as it is drawn: the whitespace it broke at is not part of it. This is
+ *   what `Alignment` centres or right-aligns inside, and what `Justify` stretches.
+ * - `fullAdvance` keeps that trailing whitespace, which is `Layout::full_width` and therefore the
+ *   block width bevy reports and anchors on.
+ */
+type LaidOutLine = {
+  readonly characters: readonly StyledCharacter[];
+  readonly advance: number;
+  readonly fullAdvance: number;
+  /** Largest font size on the line; `0` only for a line with no characters at all. */
+  readonly fontSize: number;
+  readonly isEmpty: boolean;
 };
 
 /** One laid-out glyph, ready to become an instance once its atlas rectangle is known. */
@@ -182,14 +215,32 @@ function tokenize(items: readonly StyledCharacter[]): Token[] {
   return tokens;
 }
 
-/** Total advance of a run, with `letterSpacing` applied between characters but not after the last. */
+/** Advance of a run. `letterSpacing` lands after every character, the last one included. */
 function runWidth(characters: readonly StyledCharacter[], letterSpacing: number): number {
   let width = 0;
-  for (let index = 0; index < characters.length; index++) {
-    if (index > 0) width += letterSpacing;
-    width += characters[index]!.advance;
-  }
+  for (const character of characters) width += character.advance + letterSpacing;
   return width;
+}
+
+/** Measures one broken line into the two advances and the line box size bevy works from. */
+function measureLine(characters: readonly StyledCharacter[], letterSpacing: number): LaidOutLine {
+  // UAX #14 never leaves a space at the start of a line, and the breakers bevy runs drop it there.
+  let start = 0;
+  while (start < characters.length && characters[start]!.isSpace) start++;
+  const content = start === 0 ? characters : characters.slice(start);
+  let end = content.length;
+  while (end > 0 && content[end - 1]!.isSpace) end--;
+
+  let fontSize = 0;
+  for (const character of content) fontSize = Math.max(fontSize, character.fontSize);
+
+  return {
+    characters: content.slice(0, end),
+    advance: runWidth(content.slice(0, end), letterSpacing),
+    fullAdvance: runWidth(content, letterSpacing),
+    fontSize,
+    isEmpty: content.length === 0,
+  };
 }
 
 /** Splits a word token one character at a time, the fallback for `word-or-character`. */
@@ -202,7 +253,7 @@ function splitCharacters(token: Token): Token[] {
  * bevy's `LineBreak::WordBoundary`; `character` strategies hand single characters to the same
  * loop, and `none` only honours explicit newlines.
  */
-function breakLines(tokens: readonly Token[], maxWidth: number | undefined, lineBreak: TextLineBreak, letterSpacing: number): StyledCharacter[][] {
+function breakLines(tokens: readonly Token[], maxWidth: number | undefined, lineBreak: TextLineBreak, letterSpacing: number): LaidOutLine[] {
   const lines: StyledCharacter[][] = [];
   let line: StyledCharacter[] = [];
 
@@ -213,11 +264,14 @@ function breakLines(tokens: readonly Token[], maxWidth: number | undefined, line
 
   const addCharacters = (characters: readonly StyledCharacter[]): void => {
     for (const character of characters) {
-      if (maxWidth !== undefined && lineWidth(line, letterSpacing) + (line.length > 0 ? letterSpacing : 0) + character.advance > maxWidth && line.length > 0) {
-        // Trailing spaces never push a line over: they are dropped when the line breaks.
-        const trimmed = trimTrailingSpaces(line);
-        lines.push(trimmed);
+      if (maxWidth !== undefined && line.length > 0 && lineWidth(line, letterSpacing) + character.advance + letterSpacing > maxWidth) {
+        // The space a line breaks at stays on that line as trailing whitespace — it may even take the
+        // line past its bounds, which is why a bounded block can report a wider width. Carrying it to
+        // the next line instead would push the following characters right by one space.
+        if (character.isSpace) line.push(character);
+        lines.push(line);
         line = [];
+        if (character.isSpace) continue;
       }
       line.push(character);
     }
@@ -236,38 +290,33 @@ function breakLines(tokens: readonly Token[], maxWidth: number | undefined, line
       addCharacters(token.characters);
       continue;
     }
-    const width = lineWidth(line, letterSpacing) + (line.length > 0 && token.characters.length > 0 ? letterSpacing : 0) + runWidth(token.characters, letterSpacing);
+    const width = lineWidth(line, letterSpacing) + runWidth(token.characters, letterSpacing);
     const fits = width <= maxWidth || lineWidth(line, letterSpacing) === 0;
     if (fits) {
       line.push(...token.characters);
       continue;
     }
     if (token.kind === "space") {
-      // A space that no longer fits is where the line ends; it is not carried over.
-      lines.push(trimTrailingSpaces(line));
+      // A space that no longer fits ends the line and belongs to it, as the trailing whitespace
+      // parley keeps for its width even though it is not drawn.
+      line.push(...token.characters);
+      lines.push(line);
       line = [];
       continue;
     }
     // A word too wide for an empty line falls back to per-character breaking.
-    const trimmed = trimTrailingSpaces(line);
-    lines.push(trimmed);
+    lines.push(line);
     line = [];
     const splittable = lineBreak === "word-or-character" || runWidth(token.characters, letterSpacing) > maxWidth;
     if (splittable) addCharacters(token.characters);
     else line.push(...token.characters);
   }
   pushLine();
-  return lines;
+  return lines.map((characters) => measureLine(characters, letterSpacing));
 }
 
 function lineWidth(characters: readonly StyledCharacter[], letterSpacing: number): number {
   return runWidth(characters, letterSpacing);
-}
-
-function trimTrailingSpaces(characters: StyledCharacter[]): StyledCharacter[] {
-  let end = characters.length;
-  while (end > 0 && characters[end - 1]!.isSpace) end--;
-  return end === characters.length ? characters : characters.slice(0, end);
 }
 
 function countSpaces(characters: readonly StyledCharacter[]): number {
@@ -314,40 +363,49 @@ export function layoutText(
 
   const maxWidth = options.bounds?.[0];
   const lines = breakLines(tokenize(items), maxWidth, options.lineBreak, options.letterSpacing);
-  const maxHeight = options.bounds?.[1];
-  const maxLines = maxHeight === undefined ? lines.length : Math.max(0, Math.floor(maxHeight / options.lineHeight));
-  const visibleLines = lines.slice(0, maxLines);
 
-  // Every line shares the block's default metrics: bevy resolves the line box from the
-  // block's `TextFont`, not from the tallest span on the line.
-  const base = measurer.verticalMetrics(options.fontFamily, options.fontSize);
-  const halfLeading = (options.lineHeight - (base.ascent + base.descent)) / 2;
+  // bevy resolves the line box per line, from that line's own largest run: a relative
+  // `LineHeight` multiplies the run's size, so a line holding a larger span grows its box
+  // instead of being held to the block's default size.
+  const boxes = lines.map((line) => {
+    const fontSize = line.fontSize > 0 ? line.fontSize : options.fontSize;
+    const base = measurer.verticalMetrics(options.fontFamily, fontSize);
+    const height = options.lineHeight ?? (options.lineHeightScale ?? DEFAULT_LINE_HEIGHT_SCALE) * fontSize;
+    return { base, height, halfLeading: (height - (base.ascent + base.descent)) / 2 };
+  });
 
-  const widths = visibleLines.map((line) => lineWidth(line, options.letterSpacing));
-  const blockWidth = widths.length === 0 ? 0 : Math.max(...widths);
-  const blockHeight = visibleLines.length * options.lineHeight;
+  // The block is what bevy reports and anchors on: `Layout::full_width`, which keeps the
+  // whitespace each line broke at, over the summed line boxes. Both are rounded up.
+  const blockWidth = Math.ceil(lines.reduce((widest, line) => Math.max(widest, line.fullAdvance), 0));
+  let blockHeight = boxes.reduce((sum, box) => sum + box.height, 0);
+  // parley leaves a trailing empty line's box out of the layout height.
+  if (lines.length > 1 && lines[lines.length - 1]!.isEmpty) blockHeight -= boxes[boxes.length - 1]!.height;
+  blockHeight = Math.ceil(blockHeight);
 
   const offsetX = -options.anchor[0] * blockWidth;
   const offsetY = -options.anchor[1] * blockHeight;
 
+  // `Alignment` works inside parley's `max_advance`: the bounds width when bounded, otherwise the
+  // widest line. That is a smaller box than `full_width` whenever a line breaks at a space.
+  const alignBox = maxWidth ?? lines.reduce((widest, line) => Math.max(widest, line.advance), 0);
+
   const glyphs: PositionedGlyph[] = [];
-  for (let lineIndex = 0; lineIndex < visibleLines.length; lineIndex++) {
-    const line = visibleLines[lineIndex]!;
-    const natural = widths[lineIndex]!;
-    const isLastLine = lineIndex === visibleLines.length - 1;
-    let penX = alignPenX(options.justify, natural, blockWidth, maxWidth, isLastLine);
+  let penY = 0;
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex]!;
+    const box = boxes[lineIndex]!;
+    const isLastLine = lineIndex === lines.length - 1;
+    let penX = alignPenX(options.justify, line.advance, alignBox);
     let stretch = 0;
     if (options.justify === "justified" && !isLastLine && maxWidth !== undefined) {
-      const spaces = countSpaces(line);
-      if (spaces > 0 && maxWidth > natural) {
-        stretch = (maxWidth - natural) / spaces;
+      const spaces = countSpaces(line.characters);
+      if (spaces > 0 && alignBox > line.advance) {
+        stretch = (alignBox - line.advance) / spaces;
         penX = 0;
       }
     }
-    const baseline = lineIndex * options.lineHeight + halfLeading + base.ascent;
-    for (let index = 0; index < line.length; index++) {
-      if (index > 0) penX += options.letterSpacing;
-      const character = line[index]!;
+    const baseline = penY + box.halfLeading + box.base.ascent;
+    for (const character of line.characters) {
       if (character.width > 0 && character.height > 0) {
         glyphs.push({
           character: character.character,
@@ -359,28 +417,23 @@ export function layoutText(
           height: character.height,
         });
       }
-      penX += character.advance;
+      penX += character.advance + options.letterSpacing;
       if (character.isSpace) penX += stretch;
     }
+    penY += box.height;
   }
 
-  return { glyphs, size: [blockWidth, blockHeight], lineCount: visibleLines.length };
+  return { glyphs, size: [blockWidth, blockHeight], lineCount: lines.length };
 }
 
-/** Reference `Justify` → the pen offset for one line inside the block box. */
-function alignPenX(justify: TextJustify, lineWidth: number, blockWidth: number, maxWidth: number | undefined, isLastLine: boolean): number {
-  const box = justify === "justified" ? (isLastLine ? blockWidth : (maxWidth ?? blockWidth)) : blockWidth;
+/** Reference `Justify` → the pen offset for one line inside the box `Alignment` gets. */
+function alignPenX(justify: TextJustify, lineWidth: number, box: number): number {
   switch (justify) {
     case "center":
       return (box - lineWidth) / 2;
     case "right":
     case "end":
       return box - lineWidth;
-    case "justified":
-      return 0;
-    case "left":
-    case "start":
-      return 0;
     default:
       return 0;
   }

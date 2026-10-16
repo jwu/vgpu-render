@@ -34,21 +34,22 @@ describe("layoutText", () => {
     expect(result.glyphs[0]!.width).toBeCloseTo(INK, 6);
   });
 
-  test("sizes the block from the widest line and the line height", () => {
+  test("sizes the block from the widest line and the line height, rounded up", () => {
     const result = layoutText([{ text: "AB" }], options(), font);
-    expect(result.size[0]).toBeCloseTo(2 * ADVANCE, 6);
-    expect(result.size[1]).toBeCloseTo(LINE_HEIGHT, 6);
+    // bevy reports `Layout::full_width` and the summed line boxes as `ceil`ed floats.
+    expect(result.size[0]).toBe(Math.ceil(2 * ADVANCE));
+    expect(result.size[1]).toBe(Math.ceil(LINE_HEIGHT));
     expect(result.lineCount).toBe(1);
   });
 
   test("breaks on explicit newlines", () => {
     const result = layoutText([{ text: "A\nB" }], options(), font);
     expect(result.lineCount).toBe(2);
-    expect(result.size[1]).toBeCloseTo(2 * LINE_HEIGHT, 6);
+    expect(result.size[1]).toBe(Math.ceil(2 * LINE_HEIGHT));
     expect(result.glyphs[1]!.center[1]).toBeCloseTo(LINE_HEIGHT + FIRST_LINE_CENTER_Y, 6);
   });
 
-  test("wraps at the bounds width and drops the trailing space", () => {
+  test("wraps at the bounds width and leaves the breaking space on the line it ends", () => {
     const wrapped = layoutText([{ text: "A B C" }], options({ bounds: [ADVANCE * 3, Number.POSITIVE_INFINITY] }), font);
     expect(wrapped.lineCount).toBe(2);
     expect(wrapped.glyphs.map((glyph) => glyph.character)).toEqual(["A", "B", "C"]);
@@ -71,9 +72,10 @@ describe("layoutText", () => {
     expect(right.glyphs[0]!.center[0]).toBeCloseTo(ADVANCE + INK / 2, 6);
   });
 
-  test("applies letter spacing between characters only", () => {
+  test("adds letter spacing after every character, the last one included", () => {
     const result = layoutText([{ text: "AB" }], options({ letterSpacing: 2 }), font);
-    expect(result.size[0]).toBeCloseTo(2 * ADVANCE + 2, 6);
+    // parley adds the spacing to each cluster's advance, so it lands after `B` as well.
+    expect(result.size[0]).toBe(Math.ceil(2 * ADVANCE + 4));
     expect(result.glyphs[0]!.center[0]).toBeCloseTo(INK / 2, 6);
     expect(result.glyphs[1]!.center[0]).toBeCloseTo(ADVANCE + 2 + INK / 2, 6);
   });
@@ -94,16 +96,45 @@ describe("layoutText", () => {
     expect(result.glyphs[1]!.center[0]).toBeCloseTo(ADVANCE + 32 * INK_WIDTH_RATIO / 2, 6);
   });
 
-  test("offsets the block for its anchor", () => {
+  test("offsets the block for its anchor, using the rounded block size", () => {
     const result = layoutText([{ text: "AB" }], options({ anchor: resolveTextAnchor("center") }), font);
-    expect(result.glyphs[0]!.center[0]).toBeCloseTo(-ADVANCE + INK / 2, 6);
-    expect(result.glyphs[0]!.center[1]).toBeCloseTo(-LINE_HEIGHT / 2 + FIRST_LINE_CENTER_Y, 6);
+    expect(result.glyphs[0]!.center[0]).toBeCloseTo(-Math.ceil(2 * ADVANCE) / 2 + INK / 2, 6);
+    expect(result.glyphs[0]!.center[1]).toBeCloseTo(-Math.ceil(LINE_HEIGHT) / 2 + FIRST_LINE_CENTER_Y, 6);
   });
 
-  test("truncates lines past the bounds height", () => {
-    const result = layoutText([{ text: "A\nB\nC" }], options({ bounds: [Number.POSITIVE_INFINITY, LINE_HEIGHT * 2] }), font);
-    expect(result.lineCount).toBe(2);
+  test("sizes a line box from that line's largest span", () => {
+    const result = layoutText(
+      [{ text: "A" }, { text: "B", fontSize: SIZE * 2 }],
+      options({ lineHeight: undefined }),
+      font,
+    );
+    // `LineHeight::RelativeToFont` multiplies the run's own size, so the taller span grows the line
+    // box rather than being held to the block's default size.
+    expect(result.size[1]).toBe(Math.ceil(SIZE * 2 * 1.2));
+  });
+
+  test("counts the space a line breaks at towards the block width", () => {
+    const result = layoutText([{ text: "A B" }], options({ bounds: [ADVANCE * 1.5, Number.POSITIVE_INFINITY] }), font);
     expect(result.glyphs.map((glyph) => glyph.character)).toEqual(["A", "B"]);
+    // The space closes the first line without being drawn, and the block still measures it, the way
+    // parley's `full_width` does — which is what a centred or right-aligned block aligns inside.
+    expect(result.size[0]).toBe(Math.ceil(2 * ADVANCE));
+  });
+
+  test("never starts a line with the space it broke at", () => {
+    const result = layoutText(
+      [{ text: "AB CD" }],
+      options({ bounds: [ADVANCE * 2.5, Number.POSITIVE_INFINITY], lineBreak: "character" }),
+      font,
+    );
+    expect(result.glyphs.map((glyph) => glyph.character)).toEqual(["A", "B", "C", "D"]);
+    expect(result.glyphs[2]!.center[0]).toBeCloseTo(INK / 2, 6);
+  });
+
+  test("ignores the bounds height, the way bevy's Text2d does", () => {
+    const result = layoutText([{ text: "A\nB\nC" }], options({ bounds: [Number.POSITIVE_INFINITY, LINE_HEIGHT * 2] }), font);
+    expect(result.lineCount).toBe(3);
+    expect(result.glyphs.map((glyph) => glyph.character)).toEqual(["A", "B", "C"]);
   });
 
   test("emits no glyph for whitespace, but still counts the line", () => {

@@ -362,7 +362,11 @@ export class GpuText3D {
           color: command.color,
           fontSize: command.fontSize,
           fontFamily: command.fontFamily,
-          lineHeight: command.lineHeight,
+          // A relative line height stays relative all the way to layout, where each line resolves it
+          // against that line's own largest span; only an explicit one is absolute.
+          ...(command.lineHeightScale === undefined
+            ? { lineHeight: command.lineHeight }
+            : { lineHeightScale: command.lineHeightScale }),
           letterSpacing: command.letterSpacing,
           justify: command.justify,
           lineBreak: command.lineBreak,

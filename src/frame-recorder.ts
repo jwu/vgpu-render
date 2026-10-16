@@ -1,7 +1,7 @@
 import { sampleCurve, type Curve3D, type CurveTransform } from "./curve.js";
 import { gridLines } from "./geometry-generators.js";
 import { DEFAULT_FONT_FAMILY } from "./text-font.js";
-import { resolveTextAnchor, type TextAnchor, type TextJustify, type TextLineBreak } from "./text-layout.js";
+import { resolveTextAnchor, DEFAULT_LINE_HEIGHT_SCALE, type TextAnchor, type TextJustify, type TextLineBreak } from "./text-layout.js";
 
 export type Vec3 = readonly [number, number, number];
 export type Color = readonly [number, number, number, number];
@@ -157,12 +157,24 @@ export type TextOptions = {
    */
   pixelSize?: number;
   fontFamily?: string;
-  /** Resolved line height; defaults to `1.2 × fontSize` (bevy's `LineHeight` default). */
+  /**
+   * Absolute line height in pixels, bevy's `LineHeight::Px`. Exclusive with `lineHeightScale`;
+   * omitting both leaves the line height at bevy's default, `RelativeToFont(1.2)`.
+   */
   lineHeight?: number;
+  /**
+   * Line height as a multiple of the line's own largest span, bevy's `LineHeight::RelativeToFont`.
+   * Exclusive with `lineHeight`.
+   */
+  lineHeightScale?: number;
   letterSpacing?: number;
   justify?: TextJustify;
   lineBreak?: TextLineBreak;
-  /** `TextBounds`: maximum width and height before wrapping/truncating. `Infinity` is unbounded. */
+  /**
+   * `TextBounds`. Only `width` feeds layout: it is the wrap width. `height` is deliberately not a
+   * layout input, matching bevy, whose `Text2d` never truncates against it — a block that runs
+   * past the height still draws every line.
+   */
   bounds?: readonly [number, number];
   anchor?: TextAnchor;
   space?: TextSpace;
@@ -194,7 +206,17 @@ export type TextCommand = {
   readonly fontSize: number;
   readonly pixelSize: number;
   readonly fontFamily: string;
+  /**
+   * Resolved line height in pixels: the value a `LineHeight::Px` block asked for, or
+   * `1.2 × fontSize` for the default, which `lineHeightScale` then marks as resolved per line.
+   * Only block measurements read this; layout uses whichever of the two fields applies.
+   */
   readonly lineHeight: number;
+  /**
+   * `LineHeight::RelativeToFont` multiple, present only when the block left the line height at
+   * the default. Layout then resolves each line against that line's own largest span.
+   */
+  readonly lineHeightScale?: number;
   readonly letterSpacing: number;
   readonly justify: TextJustify;
   readonly lineBreak: TextLineBreak;
@@ -235,7 +257,14 @@ export type TextDefaults = {
   fontSize?: number;
   pixelSize?: number;
   fontFamily?: string;
+  /**
+   * Absolute line height in pixels, bevy's `LineHeight::Px`. Omitted means bevy's default,
+   * `RelativeToFont(1.2)`: every line is 1.2 times its own largest span, so a line holding a
+   * larger span gets a taller box.
+   */
   lineHeight?: number;
+  /** Line height as a multiple of the line's largest span, bevy's `LineHeight::RelativeToFont`. */
+  lineHeightScale?: number;
   letterSpacing?: number;
   justify?: TextJustify;
   lineBreak?: TextLineBreak;
@@ -259,7 +288,7 @@ export const DEFAULT_TEXT_SIZE = 16;
 /** Default world units per font pixel, i.e. a 0.32 world-unit glyph at the default size. */
 export const DEFAULT_TEXT_PIXEL_SIZE = 0.02;
 /** bevy's `LineHeight` default is `RelativeToFont(1.2)`. */
-export const DEFAULT_LINE_HEIGHT_RATIO = 1.2;
+export const DEFAULT_LINE_HEIGHT_RATIO = DEFAULT_LINE_HEIGHT_SCALE;
 
 function finite(value: number, name: string): number {
   if (!Number.isFinite(value)) {
@@ -398,6 +427,7 @@ export type ResolvedTextDefaults = {
   pixelSize: number | undefined;
   fontFamily: string | undefined;
   lineHeight: number | undefined;
+  lineHeightScale: number | undefined;
   letterSpacing: number | undefined;
   justify: TextJustify | undefined;
   lineBreak: TextLineBreak | undefined;
@@ -439,6 +469,13 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
   if (textLineHeight !== undefined && textLineHeight <= 0) {
     throw new RangeError("default text lineHeight must be greater than zero");
   }
+  const textLineHeightScale = text.lineHeightScale === undefined ? undefined : finite(text.lineHeightScale, "default text lineHeightScale");
+  if (textLineHeightScale !== undefined && textLineHeightScale <= 0) {
+    throw new RangeError("default text lineHeightScale must be greater than zero");
+  }
+  if (textLineHeight !== undefined && textLineHeightScale !== undefined) {
+    throw new RangeError("default text lineHeight and lineHeightScale are exclusive, like bevy's LineHeight variants");
+  }
   const textAnchor = text.anchor;
   if (textAnchor !== undefined) resolveTextAnchor(textAnchor);
   const textOutlineWidth = text.outlineWidth === undefined ? undefined : finite(text.outlineWidth, "default text outlineWidth");
@@ -470,6 +507,7 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
       pixelSize: textPixelSize,
       fontFamily: text.fontFamily,
       lineHeight: textLineHeight,
+      lineHeightScale: textLineHeightScale,
       letterSpacing: text.letterSpacing === undefined ? undefined : finite(text.letterSpacing, "default text letterSpacing"),
       justify: text.justify === undefined ? undefined : textJustifyValue(text.justify, "default text justify"),
       lineBreak: text.lineBreak === undefined ? undefined : textLineBreakValue(text.lineBreak, "default text lineBreak"),
@@ -723,7 +761,18 @@ export class FrameRecorder {
     if (fontSize <= 0) throw new RangeError("fontSize must be greater than zero");
     const pixelSize = finite(options.pixelSize ?? defaults.pixelSize ?? DEFAULT_TEXT_PIXEL_SIZE, "pixelSize");
     if (pixelSize <= 0) throw new RangeError("pixelSize must be greater than zero");
-    const lineHeight = finite(options.lineHeight ?? defaults.lineHeight ?? fontSize * DEFAULT_LINE_HEIGHT_RATIO, "lineHeight");
+    const lineHeightOption = options.lineHeight ?? defaults.lineHeight;
+    const lineHeightScaleOption = options.lineHeightScale ?? defaults.lineHeightScale;
+    if (lineHeightOption !== undefined && lineHeightScaleOption !== undefined) {
+      throw new RangeError("lineHeight and lineHeightScale are exclusive, like bevy's LineHeight variants");
+    }
+    // A relative line height stays relative all the way to layout, where each line resolves it
+    // against that line's own largest span; only an explicit one is absolute.
+    const lineHeightScale = lineHeightOption === undefined
+      ? finite(lineHeightScaleOption ?? DEFAULT_LINE_HEIGHT_RATIO, "lineHeightScale")
+      : undefined;
+    if (lineHeightScale !== undefined && lineHeightScale <= 0) throw new RangeError("lineHeightScale must be greater than zero");
+    const lineHeight = lineHeightScale === undefined ? finite(lineHeightOption!, "lineHeight") : fontSize * lineHeightScale;
     if (lineHeight <= 0) throw new RangeError("lineHeight must be greater than zero");
     const letterSpacing = finite(options.letterSpacing ?? defaults.letterSpacing ?? 0, "letterSpacing");
     const fontFamily = options.fontFamily ?? defaults.fontFamily ?? DEFAULT_FONT_FAMILY;
@@ -753,6 +802,7 @@ export class FrameRecorder {
       pixelSize,
       fontFamily,
       lineHeight,
+      ...(lineHeightScale === undefined ? {} : { lineHeightScale }),
       letterSpacing,
       justify,
       lineBreak,
