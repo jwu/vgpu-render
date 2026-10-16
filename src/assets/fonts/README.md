@@ -72,6 +72,6 @@ bun scripts/bake-msdf-atlas.ts
 
 `tests/font-asset.test.ts` fails if the embedded constants and the font files drift apart, so always
 run the embed step after changing a subset. The bake has its own knobs at the top of
-`scripts/bake-msdf-atlas.ts`: a 24 px raster in a 512² page is 335 KiB gzipped and fits all 586
+`scripts/bake-msdf-atlas.ts`: a 24 px raster in a 512² page is 313 KiB gzipped and fits all 586
 ink-bearing glyphs; raising the raster costs payload roughly quadratically and eventually needs a
 1024² page.

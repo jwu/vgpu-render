@@ -13,6 +13,22 @@
  * at the sizes this is used at. Edge group assignment follows msdfgen's rule of thumb — adjacent
  * edges that run nearly straight through their shared vertex keep the same group, everything else
  * advances around a three-colour wheel.
+ *
+ * The median only equals the distance to the *nearest* edge where at least two channels are
+ * saturated. Inside a stroke that sees two or three edges it resolves to the middle distance
+ * instead, and the rebuilt edge drifts by up to half a texel: measured against a super-sampled
+ * coverage reference at 24 px, the raw field is off by 0.073 (mean) and 0.513 (worst texel) in alpha
+ * units. msdfgen handles that with an error-correction pass after generating the field, whose
+ * flagship form equalises every flagged texel to its own median. That was measured here too and it
+ * made the reconstruction *worse* (0.078), because this encoder gives every channel the texel's own
+ * inside/outside sign rather than a per-edge signed distance, so the channels differ only in which
+ * edge is nearest and equalising them flattens the gradient the filter relies on.
+ *
+ * What does help is correcting the median itself against the exact shape distance: only the channel
+ * or channels needed to make that distance the middle value move, so the other channel keeps its
+ * gradient. The same measurement drops to 0.043, against 0.040 for a field whose whole edge band is
+ * made exactly right — the remainder is the resolution limit of one distance per texel plus linear
+ * filtering, not something another pass can recover.
  */
 
 export type Point = readonly [number, number];
@@ -134,13 +150,71 @@ function distanceToLine(px: number, py: number, line: ColoredLine): number {
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+/** Encodes one distance as `distance / (2 × range) + 0.5`, saturated to an 8-bit channel. */
+function encodeDistance(value: number, range: number): number {
+  const encoded = Math.round((value / (2 * range) + 0.5) * 255);
+  return encoded < 0 ? 0 : encoded > 255 ? 255 : encoded;
+}
+
+/** Indices of three channel values in ascending order. */
+function ascending(values: readonly [number, number, number]): readonly [number, number, number] {
+  const order: [number, number, number] = [0, 1, 2];
+  if (values[order[0]]! > values[order[1]]!) [order[0], order[1]] = [order[1], order[0]];
+  if (values[order[1]]! > values[order[2]]!) [order[1], order[2]] = [order[2], order[1]];
+  if (values[order[0]]! > values[order[1]]!) [order[0], order[1]] = [order[1], order[0]];
+  return order;
+}
+
+/**
+ * How far a texel's median may sit from the exact shape distance before it is corrected, in texels.
+ * Half a texel is the point where the reconstruction visibly shifts the edge.
+ */
+const CORRECTION_TOLERANCE = 0.5;
+
+/**
+ * Moves each texel's median onto the exact shape distance, in place.
+ *
+ * Only the channel or channels required to make that distance the middle value are written; the
+ * remaining channel keeps its own gradient, which is what stops a magnified edge from flattening
+ * across the corrected texel. Beyond the encoded band nothing is touched: there the coverage ramp
+ * is already saturated, so the median's exact value cannot move a pixel.
+ */
+function correctMedians(texels: Uint8Array, distances: Float64Array, range: number): void {
+  const tolerance = (CORRECTION_TOLERANCE / (2 * range)) * 255;
+  for (let index = 0; index < distances.length; index++) {
+    const shape = distances[index]!;
+    if (!(Math.abs(shape) <= range)) continue;
+    const base = index * 4;
+    const red = texels[base]!;
+    const green = texels[base + 1]!;
+    const blue = texels[base + 2]!;
+    const order = ascending([red, green, blue]);
+    const values = [red, green, blue];
+    const lowest = values[order[0]]!;
+    const median = values[order[1]]!;
+    const highest = values[order[2]]!;
+    const target = encodeDistance(shape, range);
+    if (Math.abs(median - target) <= tolerance) continue;
+    if (target < median) {
+      // Lower the highest channel. Once the target is at or below the lowest one, that channel has
+      // to move as well, or it would become the new median instead.
+      texels[base + order[2]] = target;
+      if (target <= lowest) texels[base + order[0]] = target;
+    } else {
+      texels[base + order[0]] = target;
+      if (target >= highest) texels[base + order[2]] = target;
+    }
+  }
+}
+
 /**
  * Renders one glyph outline into an RGBA8 distance field.
  *
  * Each channel holds the signed distance to the nearest edge in its group, averaged over the texel
  * centre, and encoded as `distance / (2 × range) + 0.5` so 128 is the edge. Channels no edge was
  * assigned to saturate, because a median over two real distances and one saturated value still
- * resolves to a real edge.
+ * resolves to a real edge. The field is then corrected against the exact shape distance — see the
+ * error-correction note at the top of this file.
  */
 export function msdfFromOutline(
   segments: readonly OutlineSegment[],
@@ -152,7 +226,7 @@ export function msdfFromOutline(
   if (!(range > 0)) throw new RangeError("msdf range must be greater than zero");
   const lines = flattenOutline(segments, colorOutlineEdges(segments), steps);
   const texels = new Uint8Array(width * height * 4);
-  const scale = 1 / (2 * range);
+  const distances = new Float64Array(width * height);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -161,21 +235,26 @@ export function msdfFromOutline(
       const inside = isInside(px, py, lines);
       const nearest = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
       const signed = [0, 0, 0];
+      let shapeDistance = Number.POSITIVE_INFINITY;
       for (const line of lines) {
         const distance = distanceToLine(px, py, line);
+        if (distance < shapeDistance) shapeDistance = distance;
         if (distance < nearest[line.channel]!) {
           nearest[line.channel] = distance;
           signed[line.channel] = inside ? distance : -distance;
         }
       }
-      const target = (y * width + x) * 4;
+      const index = y * width + x;
+      const target = index * 4;
       for (let channel = 0; channel < 3; channel++) {
         const value = nearest[channel] === Number.POSITIVE_INFINITY ? (inside ? range : -range) : signed[channel]!;
-        const encoded = Math.round((value * scale + 0.5) * 255);
-        texels[target + channel] = encoded < 0 ? 0 : encoded > 255 ? 255 : encoded;
+        texels[target + channel] = encodeDistance(value, range);
       }
       texels[target + 3] = 255;
+      distances[index] = inside ? shapeDistance : -shapeDistance;
     }
   }
+
+  correctMedians(texels, distances, range);
   return texels;
 }

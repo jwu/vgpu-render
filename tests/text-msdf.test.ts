@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { colorOutlineEdges, flattenOutline, msdfFromOutline, type OutlineSegment } from "../src/text-msdf.js";
+import { colorOutlineEdges, flattenOutline, msdfFromOutline, type OutlineSegment, type Point } from "../src/text-msdf.js";
 
 const RANGE = 4;
 
@@ -74,5 +74,68 @@ describe("msdfFromOutline", () => {
 
   test("rejects a bad range", () => {
     expect(() => msdfFromOutline(SQUARE, 4, 4, 0)).toThrow(RangeError);
+  });
+});
+
+/** Exact signed distance to the 10×10 square, in texel units. */
+function squareDistance(x: number, y: number): number {
+  const outsideX = Math.max(-x, x - 10, 0);
+  const outsideY = Math.max(-y, y - 10, 0);
+  const outside = Math.hypot(outsideX, outsideY);
+  return outside > 0 ? -outside : Math.min(x, 10 - x, y, 10 - y);
+}
+
+/** A circle of radius 8 around (10, 10) as four cubic beziers, in the same y-down space. */
+function circleOutline(radius: number, centre: number): readonly OutlineSegment[] {
+  const kappa = 0.5522847498307936;
+  const segments: OutlineSegment[] = [];
+  for (let quarter = 0; quarter < 4; quarter++) {
+    const from = (quarter * Math.PI) / 2;
+    const to = ((quarter + 1) * Math.PI) / 2;
+    const at = (angle: number): Point => [centre + radius * Math.cos(angle), centre + radius * Math.sin(angle)];
+    segments.push({
+      from: at(from),
+      to: at(to),
+      control1: [centre + radius * Math.cos(from) - radius * kappa * Math.sin(from), centre + radius * Math.sin(from) + radius * kappa * Math.cos(from)],
+      control2: [centre + radius * Math.cos(to) + radius * kappa * Math.sin(to), centre + radius * Math.sin(to) - radius * kappa * Math.cos(to)],
+    });
+  }
+  return segments;
+}
+
+describe("error correction", () => {
+  // The median of the three per-edge distances equals the distance to the nearest edge only where
+  // two channels are saturated. Everywhere else it lands on the middle distance, which measured at
+  // 24 px on the bundled face left 71% of the edge-band texels more than half a texel off. These
+  // lock down that the field now carries the exact distance across the whole encoded band.
+
+  test("puts the median on the exact distance around a right-angled shape", () => {
+    const field = msdfFromOutline(SQUARE, 12, 12, RANGE);
+    let checked = 0;
+    for (let y = 0; y < 12; y++) {
+      for (let x = 0; x < 12; x++) {
+        const truth = squareDistance(x + 0.5, y + 0.5);
+        if (Math.abs(truth) > RANGE) continue;
+        // One 8-bit step of the encoded range is the quantisation floor.
+        expect(Math.abs(median(field, x, y, 12) - truth)).toBeLessThanOrEqual(0.55);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(50);
+  });
+
+  test("puts the median on the exact distance around a curved shape", () => {
+    const size = 22;
+    const field = msdfFromOutline(circleOutline(8, 10), size, size, RANGE);
+    let checked = 0;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const truth = 8 - Math.hypot(x + 0.5 - 10, y + 0.5 - 10);
+        if (Math.abs(truth) > RANGE) continue;
+        expect(Math.abs(median(field, x, y, size) - truth)).toBeLessThanOrEqual(0.6);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
   });
 });

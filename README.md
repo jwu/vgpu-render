@@ -148,7 +148,7 @@ sources produce `msdf`, and both ship:
 the first time each glyph appears. Any character the face covers, and any face at all, at the cost
 of a runtime dependency and an encoder pass.
 - **Prebaked** — `BakedMsdfRasterizer` reads the page `bun scripts/bake-msdf-atlas.ts` produced: 586
-glyphs at a 24 px raster in a 512² page, gzipped to 335 KiB and carried as raw texels (not a PNG, so
+glyphs at a 24 px raster in a 512² page, gzipped to 313 KiB and carried as raw texels (not a PNG, so
 no image decoder has to run and the payload still loads under Node). No `opentype.js`, and no
 encoding ever runs — but the character set is fixed and the payload ships whether or not it is used.
 
@@ -161,6 +161,16 @@ it anti-aliases triangle edges, not texel contents. What is actually in play:
 `bitmap` path's AA, and the input `sdf` is derived from.
 - **Distance reconstruction.** `sdf` and `msdf` rebuild the edge with an `fwidth`-scaled ramp, so the
 transition stays one pixel wide however far the camera pushes the glyph.
+- **Error correction.** The median of the three channels only equals the distance to the *nearest*
+edge where two of them saturate, so inside a stroke it lands on the middle distance and the rebuilt
+edge drifts. `msdfFromOutline` therefore corrects each texel's median against the exact shape
+distance before packing, moving only the channel needed to keep that distance the middle value. At
+24 px, measured against a super-sampled coverage reference: mean error 0.073 → 0.043, and edge-band
+texels whose median is off by more than half a texel 71% → 0%. Equalising flagged texels to their own
+median — the form msdfgen's error correction takes — was measured too and makes this encoder *worse*
+(0.078), because its channels share the texel's own inside/outside sign instead of carrying
+per-edge signed distances. `bun scripts/measure-msdf-error.ts` prints the numbers for the bundled
+face; `tests/text-msdf.test.ts` locks the property against analytic square and circle distances.
 - **Supersampling.** `rasterScale` rasterises glyphs at a multiple of their layout size while quads
 stay put — the lever that matters for `bitmap` and for high-DPR displays.
 - **Mip chain.** WebGPU has no `generateMipmap` and vgpu exposes none, so levels are filtered on the
