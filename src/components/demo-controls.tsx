@@ -9,8 +9,10 @@
  * stays readable while still mapping one to one onto the ported addon property.
  */
 
+import { Collapsible } from "@base-ui/react/collapsible";
+import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -23,7 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import { Separator } from "@/components/ui/separator";
 import type { CameraPreset, DemoConfig, LineJoint, ProjectionMode } from "@/demo-config.js";
 import type { ControlHandlers } from "@/demo-hooks";
 import { backgroundHex, gridColorToHex } from "@/demo-hooks";
@@ -251,6 +252,120 @@ export type DemoControlsProps = {
   readonly handlers: ControlHandlers;
 };
 
+/** Display section: background, camera projection, animation and visibility. */
+function DisplayControls({ config, handlers }: DemoControlsProps) {
+  return (
+    <>
+      <ColorRow
+        id="background"
+        label="背景色"
+        name="background"
+        value={backgroundHex(config)}
+        onValueChange={handlers.onBackgroundChange}
+      />
+      <ControlRow label="投影" name="projection">
+        <Select
+          value={config.camera.projection}
+          onValueChange={(value) => handlers.onProjectionChange(value as ProjectionMode)}
+        >
+          <SelectTrigger id="projection" className="w-full">
+            {/* Without an explicit formatter Base UI prints the raw value
+             * (`perspective`); map it back to the localized option label. */}
+            <SelectValue>
+              {(value: ProjectionMode) => PROJECTIONS.find((option) => option.value === value)?.label ?? value}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {PROJECTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ControlRow>
+      <ToggleRow
+        label="动画"
+        name="animate"
+        checked={config.view.animate}
+        onCheckedChange={handlers.onAnimateChange}
+      />
+      <ToggleRow
+        label="显示网格"
+        name="grid"
+        checked={config.view.showGrid}
+        onCheckedChange={handlers.onShowGridChange}
+      />
+      <SliderInputRow
+        id="grid-opacity"
+        label="网格不透明度"
+        name="grid opacity"
+        min={0}
+        max={1}
+        step={0.05}
+        value={config.view.gridOpacity}
+        onValueChange={handlers.onGridOpacityChange}
+        format={(value) => value.toFixed(2)}
+      />
+      <ControlRow label="视角预设" name="camera">
+        {/* The buttons keep their own widths (`Button` is `shrink-0`), so the row wraps in the
+         * 224px sidebar instead of pushing the page wider than the viewport. */}
+        <div className="flex flex-wrap gap-2">
+          {CAMERA_PRESETS.map((option) => (
+            <Button
+              key={option.value}
+              id={`camera-${option.value}`}
+              type="button"
+              variant="outline"
+              onClick={() => handlers.onCameraPresetChange(option.value)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      </ControlRow>
+    </>
+  );
+}
+
+/** Geometry section: line width scaling and joint handling of the debug-draw layer. */
+function GeometryControls({ config, handlers }: DemoControlsProps) {
+  return (
+    <>
+      <SliderInputRow
+        id="line-width-scale"
+        label="线宽倍率"
+        name="line width"
+        min={0.25}
+        max={3}
+        step={0.05}
+        value={config.view.lineWidthScale}
+        onValueChange={handlers.onLineWidthScaleChange}
+        format={(value) => `${value.toFixed(2)}×`}
+      />
+      <ControlRow label="拐角" name="joint">
+        <Select
+          value={config.view.lineJoint}
+          onValueChange={(value) => handlers.onLineJointChange(value as LineJoint)}
+        >
+          <SelectTrigger id="line-joint" className="w-full">
+            <SelectValue>
+              {(value: LineJoint) => JOINTS.find((option) => option.value === value)?.label ?? value}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {JOINTS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ControlRow>
+    </>
+  );
+}
+
 /**
  * Grid section. Every field maps one to one onto a reference addon property
  * (`infinite_grid_3d.gd`), so the panel doubles as documentation of the ported
@@ -262,8 +377,6 @@ function GridControls({ config, handlers }: DemoControlsProps) {
   const patch = handlers.onGridOptionsChange;
   return (
     <>
-      <Separator />
-      <div className="eyebrow">无限网格 · infinite grid</div>
       <NumberRow
         id="grid-size"
         label="网格范围"
@@ -435,113 +548,124 @@ function GridControls({ config, handlers }: DemoControlsProps) {
   );
 }
 
+/** The three sidebar groups; the ids double as the persisted open-state keys. */
+type SectionId = "display" | "geometry" | "infinite-grid";
+
+const SECTION_IDS: readonly SectionId[] = ["display", "geometry", "infinite-grid"];
+const SECTION_STATE_KEY = "vgpu-render:control-sections";
+
+/**
+ * Open state of the sidebar groups, restored from storage so a reload keeps the
+ * layout the user set up. Every section starts open; a stored value only
+ * overrides the ones the user actually toggled.
+ */
+function loadSectionState(): Record<SectionId, boolean> {
+  const state: Record<SectionId, boolean> = { display: true, geometry: true, "infinite-grid": true };
+  try {
+    const raw = globalThis.localStorage.getItem(SECTION_STATE_KEY);
+    if (raw === null) return state;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed === null || typeof parsed !== "object") return state;
+    const stored = parsed as Record<string, unknown>;
+    for (const id of SECTION_IDS) {
+      const value = stored[id];
+      if (typeof value === "boolean") state[id] = value;
+    }
+  } catch {
+    // Missing or full storage must not break the panel: fall back to the defaults.
+  }
+  return state;
+}
+
+function useControlSections(): {
+  readonly open: Record<SectionId, boolean>;
+  readonly setOpen: (id: SectionId, open: boolean) => void;
+} {
+  const [open, setOpenState] = useState<Record<SectionId, boolean>>(loadSectionState);
+
+  useEffect(() => {
+    try {
+      globalThis.localStorage.setItem(SECTION_STATE_KEY, JSON.stringify(open));
+    } catch {
+      // Persisting is best effort; the panel already shows the new state.
+    }
+  }, [open]);
+
+  const setOpen = useCallback((id: SectionId, next: boolean) => {
+    setOpenState((current) => ({ ...current, [id]: next }));
+  }, []);
+
+  return { open, setOpen };
+}
+
+type ControlSectionProps = {
+  readonly id: SectionId;
+  readonly title: string;
+  readonly subtitle: string;
+  readonly open: boolean;
+  readonly onOpenChange: (id: SectionId, open: boolean) => void;
+  readonly children: ReactNode;
+};
+
+/**
+ * Collapsible group. The panels are independent rather than an accordion, so
+ * two sections can stay open while comparing a grid value against a geometry one.
+ */
+function ControlSection({ id, title, subtitle, open, onOpenChange, children }: ControlSectionProps) {
+  return (
+    <Collapsible.Root
+      className="control-section"
+      open={open}
+      onOpenChange={(next) => onOpenChange(id, next)}
+    >
+      <Collapsible.Trigger type="button" className="control-section-trigger">
+        <ChevronRight className="control-section-chevron" aria-hidden="true" />
+        <span className="control-section-heading">
+          <span className="control-section-title">{title}</span>
+          <span className="control-section-subtitle">{subtitle}</span>
+        </span>
+      </Collapsible.Trigger>
+      <Collapsible.Panel className="control-section-panel">
+        <div className="control-section-body">{children}</div>
+      </Collapsible.Panel>
+    </Collapsible.Root>
+  );
+}
+
 export function DemoControls({ config, handlers }: DemoControlsProps) {
+  const { open, setOpen } = useControlSections();
   return (
     <aside className="sidebar sidebar-controls" aria-label="渲染控制">
-      <header className="sidebar-header">
-        <div className="eyebrow">渲染控制 · render controls</div>
-        <h2>显示</h2>
-      </header>
       <div className="control-list">
-        <ToggleRow
-          label="动画"
-          name="animate"
-          checked={config.view.animate}
-          onCheckedChange={handlers.onAnimateChange}
-        />
-        <ToggleRow
-          label="显示网格"
-          name="grid"
-          checked={config.view.showGrid}
-          onCheckedChange={handlers.onShowGridChange}
-        />
-        <SliderInputRow
-          id="line-width-scale"
-          label="线宽倍率"
-          name="line width"
-          min={0.25}
-          max={3}
-          step={0.05}
-          value={config.view.lineWidthScale}
-          onValueChange={handlers.onLineWidthScaleChange}
-          format={(value) => `${value.toFixed(2)}×`}
-        />
-        <SliderInputRow
-          id="grid-opacity"
-          label="网格不透明度"
-          name="grid opacity"
-          min={0}
-          max={1}
-          step={0.05}
-          value={config.view.gridOpacity}
-          onValueChange={handlers.onGridOpacityChange}
-          format={(value) => value.toFixed(2)}
-        />
-        <ControlRow label="投影" name="projection">
-          <Select
-            value={config.camera.projection}
-            onValueChange={(value) => handlers.onProjectionChange(value as ProjectionMode)}
-          >
-            <SelectTrigger id="projection" className="w-full">
-              {/* Without an explicit formatter Base UI prints the raw value
-               * (`perspective`); map it back to the localized option label. */}
-              <SelectValue>
-                {(value: ProjectionMode) => PROJECTIONS.find((option) => option.value === value)?.label ?? value}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {PROJECTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ControlRow>
-        <ControlRow label="视角预设" name="camera">
-          {/* The buttons keep their own widths (`Button` is `shrink-0`), so the row wraps in the
-           * 224px sidebar instead of pushing the page wider than the viewport. */}
-          <div className="flex flex-wrap gap-2">
-            {CAMERA_PRESETS.map((option) => (
-              <Button
-                key={option.value}
-                id={`camera-${option.value}`}
-                type="button"
-                variant="outline"
-                onClick={() => handlers.onCameraPresetChange(option.value)}
-              >
-                {option.label}
-              </Button>
-            ))}
-          </div>
-        </ControlRow>
-        <ControlRow label="拐角" name="joint">
-          <Select
-            value={config.view.lineJoint}
-            onValueChange={(value) => handlers.onLineJointChange(value as LineJoint)}
-          >
-            <SelectTrigger id="line-joint" className="w-full">
-              <SelectValue>
-                {(value: LineJoint) => JOINTS.find((option) => option.value === value)?.label ?? value}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {JOINTS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ControlRow>
-        <ColorRow
-          id="background"
-          label="背景色"
-          name="background"
-          value={backgroundHex(config)}
-          onValueChange={handlers.onBackgroundChange}
-        />
-        <GridControls config={config} handlers={handlers} />
+        <ControlSection
+          id="display"
+          title="显示"
+          subtitle="display"
+          open={open.display}
+          onOpenChange={setOpen}
+        >
+          <DisplayControls config={config} handlers={handlers} />
+        </ControlSection>
+        <ControlSection
+          id="geometry"
+          title="3D 图形"
+          subtitle="Geometry 3D"
+          open={open.geometry}
+          onOpenChange={setOpen}
+        >
+          <GeometryControls config={config} handlers={handlers} />
+        </ControlSection>
+        <ControlSection
+          id="infinite-grid"
+          title="无限网格"
+          subtitle="Infinite Grid"
+          open={open["infinite-grid"]}
+          onOpenChange={setOpen}
+        >
+          <GridControls config={config} handlers={handlers} />
+        </ControlSection>
+      </div>
+      <div className="control-actions">
         <Button id="reset-config" type="button" variant="outline" onClick={handlers.onReset}>
           恢复默认
         </Button>

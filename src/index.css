@@ -84,6 +84,7 @@
     /* Scrollbar thumb derived from the scheme's foreground: `scrollbar-color` needs a color,
      * and `currentColor` would ignore the muted weight a thumb should have. */
     --scrollbar-thumb: color-mix(in oklab, var(--foreground) 20%, transparent);
+    --scrollbar-thumb-hover: color-mix(in oklab, var(--foreground) 42%, transparent);
 }
 
 .dark {
@@ -129,10 +130,39 @@
     }
   html {
     @apply font-sans;
-    /* Frameless scrollbars: thin, with a transparent track, so a bar reads as a floating
-     * thumb instead of a bordered box with end buttons. Both properties inherit, so the page,
-     * the example list and the code preview all pick them up. */
+    /* Firefox and other engines without the WebKit pseudo-elements: the standard
+     * properties, which inherit, so the sidebars, the example list and the code
+     * preview all pick them up. */
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
     }
+
+  /* Chromium ignores the WebKit pseudo-elements while `scrollbar-width` is set to
+   * anything but `auto` (the standard properties win), and its `thin` resolves
+   * wider than the 6px bar we want. So the WebKit engines drop the standard
+   * properties here and style the bar directly: no track, no end buttons, a
+   * square 6px thumb that only reads as a floating bar. */
+  @supports selector(::-webkit-scrollbar) {
+    html {
+      scrollbar-width: auto;
+      scrollbar-color: auto;
+      }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+      }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+      }
+    ::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+      }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--scrollbar-thumb-hover);
+      }
+    ::-webkit-scrollbar-button {
+      display: none;
+      }
+  }
 }
