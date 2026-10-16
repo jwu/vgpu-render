@@ -40,6 +40,19 @@ bun scripts/capture-vgpu.ts circle line
 Godot 参考图是**机器特定**的，见下节「捕获条件」：当前记录的参考环境是 RTX 4070 SUPER，而首轮
 vgpu 侧未记录 adapter，且该机器已不可复现。换机器重跑得到的**不是同一份参照**，重捕获前先核对捕获条件。
 
+## 复现前提
+
+仓库只保存复现链路（`scripts/`、`tools/bevy-text-reference/`、夹具 `cases.json` 与字体源），参考截图本身不入库。要在本地重建对比，需要下面三项外部依赖：
+
+| 参照 | 需要什么 | 仓库能确定到哪一步 |
+| --- | --- | --- |
+| vgpu 侧 | Bun + Vite + 支持 WebGPU 的 Chromium + 可用 GPU 显示服务器 | 完全自足，见 `scripts/capture-vgpu.ts` |
+| Godot 侧 | Godot 4.7.2，以及 `/tmp/vgpu-parity-godot` 独立副本（内含 `godot-debug-draw@hardpixel`，revision `bc51ddddcdc519164f8261fe2926fda8b3f0c39b`） | addon revision 已记录；`/tmp` 副本需自行创建（重启即丢），引擎二进制需自备 |
+| bevy 侧（仅文字） | `~/src/bevy@bevyengine` 的 0.20.0-dev 检出，以及其中 `assets/fonts/FiraMono-Medium.ttf` | **只能确定到 `0.20.0-dev`**：`tools/bevy-text-reference/Cargo.toml` 用的是 path 依赖，`Cargo.lock` 不含来源 commit，而原检出已不在——因此再次生成的是「同版本」而非「同一份」参照 |
+
+`tools/bevy-text-reference/Cargo.toml` 里的 bevy 路径是绝对路径，换机器跑之前需要按实际检出
+位置修改。用 debug profile 可复用该检出 `target/` 里已编译的产物（`--release` 会从零重编整套 bevy）。仓库内的 `src/assets/fonts/fira-mono-medium-subset.ttf` 是从上面那个字体裁出的 subset。
+
 ## 捕获条件
 
 | 项目 | 条件 |

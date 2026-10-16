@@ -18,6 +18,11 @@
 
 ## 怎么跑
 
+复现前提：bevy 侧需要 `~/src/bevy@bevyengine` 的 **0.20.0-dev** 检出（`Cargo.toml` 里是绝对路径，
+换机器需按实际位置修改）。仓库只能确定这个版本号：path 依赖不携带来源 commit，`Cargo.lock` 也不含，
+而原检出已不在，所以重新生成的是「同版本」而非「同一份」参照。完整的外部依赖清单见
+`docs/visual-comparison.md` 的「复现前提」。
+
 两侧读同一份用例表 `tools/bevy-text-reference/cases.json`，所以用例不会各自漂移。
 
 ```bash
