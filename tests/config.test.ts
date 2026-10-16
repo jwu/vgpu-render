@@ -1,12 +1,19 @@
 import { describe, expect, test } from "vitest";
 import { DebugDraw3D, FrameRecorder, type LineCommand, type PointCommand } from "../src/index.js";
 import {
-  DEFAULT_DEMO_CONFIG,
-  SCREENSHOT_DEMO_CONFIG,
+  applyDisplayConfig,
   cloneDemoConfig,
+  DEFAULT_DEMO_CONFIG,
+  DEMO_DISPLAY_CONFIG_KEY,
+  displayConfigFor,
+  displayConfigFrom,
   loadDemoConfig,
+  loadDisplayConfigs,
   parseDemoConfig,
+  parseDisplayConfig,
   saveDemoConfig,
+  saveDisplayConfig,
+  SCREENSHOT_DEMO_CONFIG,
   serializeDemoConfig,
   type ConfigStorage,
 } from "../src/demo-config.js";
@@ -307,5 +314,90 @@ describe("demo config", () => {
   test("serialize round-trips grid overrides through parse", () => {
     const config = parseDemoConfig({ grid: { gridSize: 500, debugLodColors: true } });
     expect(parseDemoConfig(JSON.parse(serializeDemoConfig(config)))).toEqual(config);
+  });
+});
+
+/** The sidebar's display group is the part of the config remembered per example. */
+describe("per-example display config", () => {
+  const withStorage = () => {
+    const store = new Map<string, string>();
+    const storage: ConfigStorage = {
+      getItem: (key) => store.get(key) ?? null,
+      setItem: (key, value) => { store.set(key, value); },
+    };
+    return { store, storage };
+  };
+
+  test("displayConfigFrom copies the display group without aliasing arrays", () => {
+    const config = parseDemoConfig({ view: { background: [0.1, 0.2, 0.3, 1], showGrid: false, animate: false, gridOpacity: 0.25 } });
+    const display = displayConfigFrom(config);
+    expect(display).toEqual({ background: [0.1, 0.2, 0.3, 1], projection: "perspective", animate: false, showGrid: false, gridOpacity: 0.25 });
+    display.background[0] = 0.9;
+    expect(config.view.background[0]).toBeCloseTo(0.1, 12);
+  });
+
+  test("applyDisplayConfig writes only the display fields", () => {
+    const config = cloneDemoConfig(DEFAULT_DEMO_CONFIG);
+    applyDisplayConfig(config, { background: [1, 0, 0, 1], projection: "orthographic", animate: false, showGrid: false, gridOpacity: 0.5 });
+    expect(config.view.background).toEqual([1, 0, 0, 1]);
+    expect(config.camera.projection).toBe("orthographic");
+    expect(config.view.animate).toBe(false);
+    expect(config.view.showGrid).toBe(false);
+    expect(config.view.gridOpacity).toBe(0.5);
+    // Everything else, camera pose included, keeps the value shared by all examples.
+    expect(config.view.lineWidthScale).toBe(DEFAULT_DEMO_CONFIG.view.lineWidthScale);
+    expect(config.view.lineJoint).toBe(DEFAULT_DEMO_CONFIG.view.lineJoint);
+    expect(config.camera.yaw).toBe(DEFAULT_DEMO_CONFIG.camera.yaw);
+    expect(config.grid.gridSize).toBe(DEFAULT_DEMO_CONFIG.grid.gridSize);
+  });
+
+  test("displayConfigFor starts from the defaults plus the scene's hideGrid", () => {
+    expect(displayConfigFor({}).showGrid).toBe(DEFAULT_DEMO_CONFIG.view.showGrid);
+    expect(displayConfigFor({ hideGrid: true }).showGrid).toBe(false);
+    expect(displayConfigFor({ hideGrid: false }).showGrid).toBe(true);
+    expect(displayConfigFor({ hideGrid: true }).background).toEqual(DEFAULT_DEMO_CONFIG.view.background);
+    expect(displayConfigFor({ hideGrid: true }).animate).toBe(DEFAULT_DEMO_CONFIG.view.animate);
+  });
+
+  test("parseDisplayConfig falls back per field and rejects invalid values", () => {
+    const base = displayConfigFrom(DEFAULT_DEMO_CONFIG);
+    expect(parseDisplayConfig({}, base)).toEqual(base);
+    expect(parseDisplayConfig({ animate: false }, base).animate).toBe(false);
+    expect(() => parseDisplayConfig({ animate: "yes" }, base)).toThrow();
+    expect(() => parseDisplayConfig({ gridOpacity: 5 }, base)).toThrow();
+    expect(() => parseDisplayConfig({ projection: "isometric" }, base)).toThrow();
+    expect(() => parseDisplayConfig({ background: [0, 0, 0] }, base)).toThrow();
+  });
+
+  test("records are stored per example and keep their siblings", () => {
+    const { storage } = withStorage();
+    const circle = { ...displayConfigFrom(DEFAULT_DEMO_CONFIG), animate: false };
+    saveDisplayConfig("circle", circle, storage);
+    saveDisplayConfig("text-scale", { ...displayConfigFrom(DEFAULT_DEMO_CONFIG), showGrid: false, gridOpacity: 0.3 }, storage);
+
+    const restored = loadDisplayConfigs(storage);
+    expect(restored.circle).toEqual(circle);
+    expect(restored["text-scale"]?.showGrid).toBe(false);
+    expect(restored["text-scale"]?.gridOpacity).toBe(0.3);
+    expect(restored["text-scale"]?.animate).toBe(DEFAULT_DEMO_CONFIG.view.animate);
+    expect(loadDisplayConfigs(storage, "other-key")).toEqual({});
+  });
+
+  test("loadDisplayConfigs drops a damaged record instead of the whole map", () => {
+    const raw = JSON.stringify({ circle: { animate: false }, broken: { gridOpacity: 42 } });
+    expect(loadDisplayConfigs({ getItem: () => raw, setItem: () => {} })).toEqual({
+      circle: { ...displayConfigFrom(DEFAULT_DEMO_CONFIG), animate: false },
+    });
+    expect(loadDisplayConfigs({ getItem: () => "{ not json", setItem: () => {} })).toEqual({});
+    expect(loadDisplayConfigs({ getItem: () => JSON.stringify([1, 2]), setItem: () => {} })).toEqual({});
+    expect(loadDisplayConfigs({ getItem: () => { throw new Error("blocked"); }, setItem: () => {} })).toEqual({});
+    expect(loadDisplayConfigs(null)).toEqual({});
+    expect(loadDisplayConfigs()).toEqual({});
+  });
+
+  test("display records live under their own storage key", () => {
+    const { store, storage } = withStorage();
+    saveDisplayConfig("circle", displayConfigFrom(DEFAULT_DEMO_CONFIG), storage);
+    expect([...store.keys()]).toEqual([DEMO_DISPLAY_CONFIG_KEY]);
   });
 });

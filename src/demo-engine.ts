@@ -27,17 +27,23 @@ import {
   type Bounds,
 } from "./demo-camera.js";
 import {
+  applyDisplayConfig,
   cloneDemoConfig,
   DEFAULT_DEMO_CONFIG,
+  displayConfigFor,
+  displayConfigFrom,
   FRONT_DEMO_CONFIG,
   loadDemoConfig,
+  loadDisplayConfigs,
   OBLIQUE_DEMO_CONFIG,
   parseDemoConfig,
   REFERENCE_DEMO_CONFIG,
   saveDemoConfig,
+  saveDisplayConfig,
   SCREENSHOT_DEMO_CONFIG,
   type CameraPreset,
   type DemoConfig,
+  type DemoDisplayConfig,
   type DemoGridConfig,
   type LineJoint,
   type ProjectionMode,
@@ -62,6 +68,8 @@ export type DemoEngineOptions = {
    * the camera to the reference pose, since that comparison needs the pose left alone.
    */
   readonly autoFrame?: boolean;
+  /** Display fields the URL pins; see {@link displayOverridesFrom}. */
+  readonly displayOverrides?: DisplayOverrides;
 };
 
 type PointerMode = "rotate" | "pan" | "fps";
@@ -159,10 +167,45 @@ export function cameraPoseFor(value: string | null): DemoConfig | undefined {
 }
 
 /** Resolves the initial config from URL params, cloning shared presets. */
+/**
+ * Display fields the URL pins, which must outlive an example switch: a capture like `?grid=0` has to
+ * stay deterministic whichever example was visited before it.
+ */
+export type DisplayOverrides = {
+  readonly showGrid?: boolean;
+  readonly projection?: ProjectionMode;
+};
+
+/** Reads the display overrides the gallery accepts in the URL. */
+export function displayOverridesFrom(params: URLSearchParams): DisplayOverrides {
+  const overrides: { showGrid?: boolean; projection?: ProjectionMode } = {};
+  if (params.get("grid") === "0") overrides.showGrid = false;
+  if (params.get("projection") === "orthographic") overrides.projection = "orthographic";
+  return overrides;
+}
+
+function applyDisplayOverrides(config: DemoConfig, overrides: DisplayOverrides): void {
+  if (overrides.showGrid !== undefined) config.view.showGrid = overrides.showGrid;
+  if (overrides.projection !== undefined) config.camera.projection = overrides.projection;
+}
+
+/**
+ * Gallery storage, or `undefined` when the host blocks it (private mode, blocked
+ * cookies). Reads and writes both go through here so a blocked store cannot throw
+ * out of the render loop.
+ */
+function galleryStorage(): Storage | undefined {
+  try {
+    return localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Resolves the initial config from URL params, cloning shared presets. */
 export function resolveInitialConfig(compareMode: boolean, params: URLSearchParams, storage?: Storage): DemoConfig {
   const base = compareMode ? cloneDemoConfig(SCREENSHOT_DEMO_CONFIG) : loadDemoConfig(storage ?? null);
-  if (params.get("projection") === "orthographic") base.camera.projection = "orthographic";
-  if (params.get("grid") === "0") base.view.showGrid = false;
+  applyDisplayOverrides(base, displayOverridesFrom(params));
   // The capture preset owns the camera in compare mode so paired screenshots stay deterministic; every
   // `?camera=` pose is an interactive-gallery override only.
   const pose = cameraPoseFor(params.get("camera"));
@@ -176,6 +219,9 @@ export class DemoEngine {
   private canvas: HTMLCanvasElement | undefined;
   private config: DemoConfig;
   private selected: GodotExample;
+  private readonly displayOverrides: DisplayOverrides;
+  /** Per-example display groups, mirrored into storage by `persist`. */
+  private readonly displayConfigs: Record<string, DemoDisplayConfig>;
   private status: EngineStatus = "requesting";
   private statusDetail = "正在请求 WebGPU";
   private counts = "";
@@ -207,6 +253,9 @@ export class DemoEngine {
     this.compareMode = options.compareMode;
     this.config = options.config;
     this.autoFrame = options.autoFrame ?? true;
+    this.displayOverrides = options.displayOverrides ?? {};
+    // Compare mode is deterministic by design: it neither reads nor writes records.
+    this.displayConfigs = this.compareMode ? {} : loadDisplayConfigs(galleryStorage());
     this.selected = GODOT_EXAMPLES[0]!;
     this.current = this.buildSnapshot();
 
@@ -232,21 +281,41 @@ export class DemoEngine {
   selectInitialFromLocation(params: URLSearchParams): void {
     const id = params.get("scene") ?? location.hash.slice(1);
     const match = GODOT_EXAMPLES.find((example) => example.id === id);
-    if (match) this.selectExample(match, false);
+    if (match) {
+      this.selectExample(match, false);
+      return;
+    }
+    // Without a scene in the URL the first example is already selected, so only its
+    // display group is still pending.
+    this.restoreDisplayConfig(this.selected);
   }
 
   selectExample(example: GodotExample, updateHash = true): void {
     this.selected = example;
     this.time = 0;
-    // A screen-space page is its own content in pixel space, and the infinite grid is a world-space
-    // reference that can only cross it as diagonal lines. The sidebar toggle stays available.
-    if (example.hideGrid !== undefined) this.config.view.showGrid = !example.hideGrid;
+    // The display group is remembered per example, so switching back restores what this
+    // scene was set up with. `hideGrid` is only the starting point for an example that
+    // has no record yet.
+    this.restoreDisplayConfig(example);
     if (updateHash) location.hash = example.id;
     if (this.autoFrame) {
       this.frameSelectedExample();
       this.persist();
     }
     this.emit();
+  }
+
+  /**
+   * Applies the selected example's display group: its own record when there is one,
+   * otherwise the gallery defaults with the scene's `hideGrid` preference. URL-pinned
+   * fields are layered on top, since a capture must not depend on visit history.
+   */
+  private restoreDisplayConfig(example: GodotExample): void {
+    // Compare mode is the screenshot path: it keeps the preset's display fields so paired
+    // captures stay deterministic, whichever example the page happens to open.
+    if (this.compareMode) return;
+    applyDisplayConfig(this.config, this.displayConfigs[example.id] ?? displayConfigFor(example));
+    applyDisplayOverrides(this.config, this.displayOverrides);
   }
 
   setAnimate(animate: boolean): void {
@@ -504,11 +573,28 @@ export class DemoEngine {
 
   private persist(): void {
     if (this.compareMode) return;
+    const storage = galleryStorage();
+    if (storage === undefined) return;
     try {
-      saveDemoConfig(this.config, localStorage);
+      saveDemoConfig(this.config, storage);
+      this.rememberDisplayConfig(storage);
     } catch {
       /* Storage can be unavailable. */
     }
+  }
+
+  /**
+   * Records the current example's display group, so switching back restores it. A
+   * field the URL pinned is a capture override rather than a user choice, so the
+   * record keeps the value it already had instead of the pinned one.
+   */
+  private rememberDisplayConfig(storage: Storage): void {
+    const display = displayConfigFrom(this.config);
+    const base = this.displayConfigs[this.selected.id] ?? displayConfigFor(this.selected);
+    if (this.displayOverrides.showGrid !== undefined) display.showGrid = base.showGrid;
+    if (this.displayOverrides.projection !== undefined) display.projection = base.projection;
+    this.displayConfigs[this.selected.id] = display;
+    saveDisplayConfig(this.selected.id, display, storage);
   }
 
   /** Maps the gallery grid config onto the library option names. */

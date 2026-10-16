@@ -424,7 +424,12 @@ const debug = new DebugDraw3D({
 `src/demo-config.ts` contains independently validated camera/view configuration
 and injected storage helpers. Gallery controls support grid, opacity, animation,
 width multiplier, projection, background, camera preset and reset; camera
-interaction is persisted. The camera preset offers three poses of the same gallery
+interaction is persisted. The sidebar groups them into three collapsible
+sections — display, Geometry 3D and Infinite Grid — and remembers which ones are
+open next to the config. The display group (background, projection, animation,
+grid visibility, grid opacity) is stored per example: switching examples restores
+what that scene was set up with, and a scene that hides the grid opens with the
+toggle off. Line width, joints and the infinite grid options stay shared. The camera preset offers three poses of the same gallery
 distance, FOV and clipping, so switching is purely a change of angle: the gallery's own
 orbit, a 45° oblique view (off the +X/+Z diagonal, so nothing sits edge-on) and a 45° front
 view (square on to the origin from the +Z axis, so the X/Y plane reads straight off the

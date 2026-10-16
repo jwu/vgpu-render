@@ -7,7 +7,7 @@
 
 import { createRoot } from "react-dom/client";
 import { DemoApp } from "@/components/demo-app";
-import { cameraPoseFor, DemoEngine, resolveInitialConfig } from "@/demo-engine";
+import { cameraPoseFor, DemoEngine, displayOverridesFrom, resolveInitialConfig } from "@/demo-engine";
 import "./index.css";
 import "./demo.css";
 
@@ -20,11 +20,23 @@ if (compareMode) document.documentElement.classList.add("compare-mode");
 function createEngine(): DemoEngine {
   // Storage can be unavailable (private mode, blocked cookies); fall back to
   // URL-only configuration instead of failing the page.
+  // URL-pinned display fields are handed to the engine too, so an example switch
+  // cannot overwrite them with a stored record.
   try {
-    return new DemoEngine({ compareMode, config: resolveInitialConfig(compareMode, params, window.localStorage), autoFrame });
+    return new DemoEngine({
+      compareMode,
+      config: resolveInitialConfig(compareMode, params, window.localStorage),
+      autoFrame,
+      displayOverrides: displayOverridesFrom(params),
+    });
   } catch (error) {
     document.documentElement.dataset.configError = error instanceof Error ? error.message : String(error);
-    return new DemoEngine({ compareMode, config: resolveInitialConfig(compareMode, params), autoFrame });
+    return new DemoEngine({
+      compareMode,
+      config: resolveInitialConfig(compareMode, params),
+      autoFrame,
+      displayOverrides: displayOverridesFrom(params),
+    });
   }
 }
 

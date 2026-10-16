@@ -439,3 +439,116 @@ export function loadDemoConfig(storage?: ConfigStorage | null, key: string = DEM
 export function saveDemoConfig(config: DemoConfig, storage: ConfigStorage, key: string = DEMO_CONFIG_KEY): void {
   storage.setItem(key, serializeDemoConfig(parseDemoConfig(config)));
 }
+
+/**
+ * The controls sidebar's display group: the only part of the config remembered per
+ * example. Switching examples restores what that scene was set up with, while the
+ * camera, line width, joints and grid options stay shared across examples.
+ */
+export type DemoDisplayConfig = {
+  background: [number, number, number, number];
+  projection: ProjectionMode;
+  animate: boolean;
+  showGrid: boolean;
+  gridOpacity: number;
+};
+
+/** Storage key holding one display group per example id. */
+export const DEMO_DISPLAY_CONFIG_KEY = "vgpu-render:display-configs";
+
+/** Reads the display group out of a full config. */
+export function displayConfigFrom(config: DemoConfig): DemoDisplayConfig {
+  return {
+    background: [config.view.background[0], config.view.background[1], config.view.background[2], config.view.background[3]],
+    projection: config.camera.projection,
+    animate: config.view.animate,
+    showGrid: config.view.showGrid,
+    gridOpacity: config.view.gridOpacity,
+  };
+}
+
+/** Writes a display group into a config, leaving every other field alone. */
+export function applyDisplayConfig(config: DemoConfig, display: DemoDisplayConfig): void {
+  config.view.background = [display.background[0], display.background[1], display.background[2], display.background[3]];
+  config.camera.projection = display.projection;
+  config.view.animate = display.animate;
+  config.view.showGrid = display.showGrid;
+  config.view.gridOpacity = display.gridOpacity;
+}
+
+/**
+ * The display group an example starts from before it has a record of its own: the
+ * gallery defaults, with the scene's own grid preference (`hideGrid`) applied. That
+ * preference is a scene property, so an example that hides the infinite grid opens
+ * with the toggle off instead of inheriting whatever the previous example used.
+ */
+export function displayConfigFor(
+  example: { readonly hideGrid?: boolean | undefined },
+  fallback: DemoConfig = DEFAULT_DEMO_CONFIG,
+): DemoDisplayConfig {
+  const display = displayConfigFrom(fallback);
+  if (example.hideGrid !== undefined) display.showGrid = !example.hideGrid;
+  return display;
+}
+
+/** Validates a stored display group, falling back per missing field. */
+export function parseDisplayConfig(
+  value: unknown,
+  base: DemoDisplayConfig = displayConfigFrom(DEFAULT_DEMO_CONFIG),
+): DemoDisplayConfig {
+  const root = value === undefined ? {} : readRecord(value, "display");
+  const background = root.background === undefined ? base.background : readNumberTuple(root.background, "display.background", 4);
+  return {
+    background: [background[0]!, background[1]!, background[2]!, background[3]!],
+    projection: root.projection === undefined ? base.projection : readProjection(root.projection),
+    animate: root.animate === undefined ? base.animate : readBoolean(root.animate, "display.animate"),
+    showGrid: root.showGrid === undefined ? base.showGrid : readBoolean(root.showGrid, "display.showGrid"),
+    gridOpacity: root.gridOpacity === undefined ? base.gridOpacity : readBounded(root.gridOpacity, "display.gridOpacity", 0, 1),
+  };
+}
+
+/**
+ * Reads every example's display group. Never throws: a missing, unreadable or
+ * corrupt store falls back to no records, and one bad record does not drop the
+ * records next to it.
+ */
+export function loadDisplayConfigs(
+  storage?: ConfigStorage | null,
+  key: string = DEMO_DISPLAY_CONFIG_KEY,
+): Record<string, DemoDisplayConfig> {
+  let raw: string | null;
+  try {
+    raw = storage === undefined || storage === null ? null : storage.getItem(key);
+  } catch {
+    return {};
+  }
+  if (raw === null) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!isRecord(parsed)) return {};
+  const configs: Record<string, DemoDisplayConfig> = {};
+  for (const [id, value] of Object.entries(parsed)) {
+    try {
+      configs[id] = parseDisplayConfig(value);
+    } catch {
+      /* Skip the damaged record and keep the rest. */
+    }
+  }
+  return configs;
+}
+
+/** Stores one example's display group, keeping every other record intact. */
+export function saveDisplayConfig(
+  id: string,
+  display: DemoDisplayConfig,
+  storage: ConfigStorage,
+  key: string = DEMO_DISPLAY_CONFIG_KEY,
+): void {
+  const configs = loadDisplayConfigs(storage, key);
+  configs[id] = parseDisplayConfig(display);
+  storage.setItem(key, JSON.stringify(configs));
+}
