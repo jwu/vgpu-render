@@ -9,7 +9,7 @@
 export type ProjectionMode = "perspective" | "orthographic";
 export type LineJoint = "none" | "round" | "bevel" | "miter";
 /** Named camera poses the gallery can switch to. */
-export type CameraPreset = "default" | "reference";
+export type CameraPreset = "default" | "oblique" | "front";
 
 export type DemoCameraConfig = {
   yaw: number;
@@ -136,6 +136,40 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     background: [...GODOT_CLEAR_COLOR],
   },
   grid: defaultGridConfig(),
+};
+
+/**
+ * The two 45° presets: the same 45° elevation, seen from two azimuths, with the gallery's own distance,
+ * FOV and clipping — only the angle differs, so switching between the three presets is purely a change
+ * of view.
+ *
+ * `oblique` sits off the +X/+Z diagonal, which is how a 3D gizmo is usually read: all three axes
+ * foreshorten equally and nothing sits edge-on. `front` sits on the **+Z axis itself** — square on to
+ * the origin, at the same 45° — so the X/Y plane reads straight off the screen and depth runs away
+ * along one axis instead of two.
+ *
+ * Orbit angles come from `orbitBasis`: `yaw = 0` is the +X axis and `yaw = π/2` is +Z, while `eye`
+ * sits `sin(pitch) · distance` above the pivot, so 45° means the eye is exactly as high as it is far.
+ */
+export const OBLIQUE_CAMERA: DemoCameraConfig = {
+  ...DEFAULT_DEMO_CONFIG.camera,
+  yaw: Math.PI / 4,
+  pitch: Math.PI / 4,
+};
+
+export const FRONT_CAMERA: DemoCameraConfig = {
+  ...OBLIQUE_CAMERA,
+  yaw: Math.PI / 2,
+};
+
+export const OBLIQUE_DEMO_CONFIG: DemoConfig = {
+  ...cloneDemoConfig(DEFAULT_DEMO_CONFIG),
+  camera: { ...OBLIQUE_CAMERA, target: [OBLIQUE_CAMERA.target[0], OBLIQUE_CAMERA.target[1], OBLIQUE_CAMERA.target[2]] },
+};
+
+export const FRONT_DEMO_CONFIG: DemoConfig = {
+  ...cloneDemoConfig(DEFAULT_DEMO_CONFIG),
+  camera: { ...FRONT_CAMERA, target: [FRONT_CAMERA.target[0], FRONT_CAMERA.target[1], FRONT_CAMERA.target[2]] },
 };
 
 /**

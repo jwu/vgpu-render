@@ -31,6 +31,24 @@ describe("sourceForExample", () => {
     }
   });
 
+  it("extracts an exported block, which is the shape the screen-space text pages have", () => {
+    // `text-scenes.ts` exports its pages so the dispatcher can reach them, so the block starts with
+    // `export function` rather than `function`; both shapes have to be recognised.
+    const exported = `
+export function textScaleScene(recorder: FrameRecorder): void {
+  const sizes = [8, 12, 18];
+}
+
+export function textScene(id: string, recorder: FrameRecorder): void {
+  textScaleScene(recorder);
+}
+`;
+    const extracted = sourceForExample("text-scale", exported);
+    expect(extracted.startsWith("export function textScaleScene(")).toBe(true);
+    expect(extracted).toContain("const sizes");
+    expect(extracted).not.toContain("textScene(");
+  });
+
   it("falls back to the matrix function for unknown ids", () => {
     expect(sourceForExample("does-not-exist", SCENE_SOURCE).startsWith("function apiMatrix(")).toBe(true);
   });

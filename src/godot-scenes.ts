@@ -46,6 +46,7 @@ import {
   WIDTH_VALUES,
   type CircleBasis,
 } from "./godot-layout.js";
+import { textScene } from "./text-scenes.js";
 
 export type SceneContext = { readonly time: number; readonly lineJoint?: "none" | "round" | "bevel" | "miter" };
 
@@ -2161,100 +2162,6 @@ function textCompareScene(recorder: FrameRecorder): void {
   }
 }
 
-/**
- * Screen-space text.
- *
- * Not a reference port — the addon has no text API, so screen space is vgpu's own placement mode.
- * The 2D counterpart to `text-compare`: everything here is positioned in **top-left origin pixels**,
- * so nothing moves with the camera, the projection or depth. That is what makes it a HUD, and it is
- * the one placement space that cannot be shown inside the world — a world-space scene always renders
- * it through whatever camera happens to be looking.
- *
- * Positions are deliberately conservative rather than pinned to the viewport: a scene builder has no
- * viewport to measure against, and a HUD that falls off the edge in a narrow window is worse than one
- * that sits in a comfortable column.
- */
-function textHudScene(recorder: FrameRecorder): void {
-  recorder.text([24, 24, 0], "screen space", {
-    fontSize: 28,
-    space: "screen",
-    source: "baked",
-    anchor: "top-left",
-    color: [1, 0.85, 0.3, 1],
-  });
-  recorder.text([24, 62, 0], "pixel positions, unaffected by the camera", {
-    fontSize: 14,
-    space: "screen",
-    source: "baked",
-    anchor: "top-left",
-    color: [1, 1, 1, 0.75],
-  });
-
-  // Wrapping and justification, with `bounds` measured in font pixels like every other screen unit.
-  recorder.text([24, 100, 0], "wrapped to 260 px with centred justification", {
-    fontSize: 18,
-    space: "screen",
-    source: "baked",
-    anchor: "top-left",
-    justify: "center",
-    bounds: [260, Number.POSITIVE_INFINITY],
-    color: [1, 0.75, 0.25, 1],
-  });
-
-  // Spans, the equivalent of bevy's child `TextSpan`s: each carries its own colour and size.
-  recorder.text(
-    [24, 190, 0],
-    [
-      { text: "spans: " },
-      { text: "red ", color: [1, 0.4, 0.4, 1] },
-      { text: "green ", color: [0.45, 1, 0.55, 1] },
-      { text: "BIG", color: [0.55, 0.8, 1, 1], fontSize: 28 },
-    ],
-    { fontSize: 18, space: "screen", source: "baked", anchor: "top-left" },
-  );
-
-  // Encodings on a pixel grid — the 2D answer to the world-space matrix. A HUD is usually read at its
-  // raster size, so the differences are subtler here than they are once a world block is magnified.
-  const encodings: readonly (readonly [source: string, label: string])[] = [
-    ["bitmap", "bitmap 1x"],
-    ["sdf4x", "sdf 4x"],
-    ["baked", "msdf baked"],
-    ["msdf2x", "msdf 2x"],
-  ];
-  for (let index = 0; index < encodings.length; index++) {
-    const [source, label] = encodings[index]!;
-    const y = 240 + index * 32;
-    recorder.text([24, y, 0], label, { fontSize: 18, space: "screen", source, anchor: "top-left", color: [0.7, 0.85, 1, 1] });
-    recorder.text([190, y, 0], "Handgloves 0123", { fontSize: 20, space: "screen", source, anchor: "top-left" });
-  }
-
-  // Outline: the same ring obtained two ways — from the true distance the distance encodings keep in
-  // alpha, and from sampling the coverage mask in eight directions.
-  const outlinedLabel = {
-    fontSize: 20,
-    space: "screen",
-    anchor: "top-left",
-    color: [0.45, 0.8, 1, 1],
-    outlineWidth: 3,
-    outlineColor: [0.04, 0.05, 0.08, 1],
-  } as const;
-  recorder.text([24, 400, 0], "outlined msdf", { ...outlinedLabel, source: "baked" });
-  recorder.text([190, 400, 0], "outlined mask", { ...outlinedLabel, source: "bitmap" });
-
-  // Anchors: the marker is the position, and each block lands on it differently. Spread along one row
-  // rather than a 3×3 grid, so the panel stays inside a modest viewport.
-  const anchors = ["top-left", "top-right", "center", "bottom-left", "bottom-right"] as const;
-  for (let index = 0; index < anchors.length; index++) {
-    const anchor = anchors[index]!;
-    // The spacing has to clear the widest label at the widest anchor: `top-left` grows rightwards
-    // from its marker while `top-right` grows leftwards into the same gap.
-    const x = 60 + index * 200;
-    const y = 360;
-    recorder.text([x, y, 0], "+", { fontSize: 16, space: "screen", source: "baked", anchor: "center", color: [1, 0.55, 0.25, 1] });
-    recorder.text([x, y, 0], anchor, { fontSize: 12, space: "screen", source: "baked", anchor, color: [0.85, 0.9, 1, 1] });
-  }
-}
-
 export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
   const context: SceneContext = lineJoint === undefined ? { time } : { time, lineJoint };
   // Reference: every example's first `_process()` line is
@@ -2264,7 +2171,16 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
   // is what allows that translation. The axes are unconditional scene content, not a
   // toggle: `EndlessGrid3D` and `DebugDraw3D` are sibling nodes that never know about each
   // other, so the grid has no bearing on whether the axes show.
-  const selfAxes = id === "index" || id === "grid" || id === "world_space_width" || id === "text-hud";
+  // The screen-space text pages are their own content in pixel space, so the world axes would only be
+  // clutter in front of them; `text-compare` keeps its axes, being a world-space matrix.
+  const screenTextPage =
+    id === "text-encodings" ||
+    id === "text-scale" ||
+    id === "text-world-zoom" ||
+    id === "text-layout" ||
+    id === "text-anchor" ||
+    id === "text-cjk";
+  const selfAxes = screenTextPage || id === "index" || id === "grid" || id === "world_space_width";
   // index/grid/world_space_width draw their own translated origin axes (and
   // world_space_width needs world-space widths), so they opt out of the generic one.
   if (!selfAxes) recorder.axes(referenceOffset([0, 0, 0]), AXES_LENGTH, 2);
@@ -2285,7 +2201,12 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
     case "capsule": shapeScene(recorder, id, context); break;
     case "world_space_width": worldWidthMatrix(recorder); break;
     case "text-compare": textCompareScene(recorder); break;
-    case "text-hud": textHudScene(recorder); break;
+    case "text-encodings":
+    case "text-scale":
+    case "text-world-zoom":
+    case "text-layout":
+    case "text-anchor":
+    case "text-cjk": textScene(id, recorder); break;
     default: break;
   }
 }

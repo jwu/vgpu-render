@@ -69,7 +69,12 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   capsule: "shapeScene",
   world_space_width: "worldWidthMatrix",
   "text-compare": "textCompareScene",
-  "text-hud": "textHudScene",
+  "text-encodings": "textEncodingsScene",
+  "text-scale": "textScaleScene",
+  "text-world-zoom": "textWorldZoomScene",
+  "text-layout": "textLayoutScene",
+  "text-anchor": "textAnchorScene",
+  "text-cjk": "textCjkScene",
 };
 
 /**
@@ -78,7 +83,9 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
  */
 export function sourceForExample(id: string, sceneSource: string): string {
   const name = SCENE_FUNCTIONS[id] ?? "apiMatrix";
-  const start = sceneSource.search(new RegExp(`^function ${name}\\(`, "m"));
+  // `export function` also starts a block: the text pages moved to their own module, where their
+  // implementations are exported so the dispatcher can reach them.
+  const start = sceneSource.search(new RegExp(`^(?:export )?function ${name}\\(`, "m"));
   if (start < 0) return "";
   // `export function` also ends a block: the scene helpers come first, `buildScene` last.
   const next = sceneSource.slice(start + 1).search(/^(?:export )?function /m);

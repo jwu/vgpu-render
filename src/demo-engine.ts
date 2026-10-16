@@ -29,7 +29,9 @@ import {
 import {
   cloneDemoConfig,
   DEFAULT_DEMO_CONFIG,
+  FRONT_DEMO_CONFIG,
   loadDemoConfig,
+  OBLIQUE_DEMO_CONFIG,
   parseDemoConfig,
   REFERENCE_DEMO_CONFIG,
   saveDemoConfig,
@@ -129,14 +131,42 @@ fn encode_srgb(value: vec3f) -> vec3f {
 }
 `);
 
+/** Poses the sidebar can switch to. */
+const CAMERA_PRESETS: Record<CameraPreset, DemoConfig> = {
+  default: DEFAULT_DEMO_CONFIG,
+  oblique: OBLIQUE_DEMO_CONFIG,
+  front: FRONT_DEMO_CONFIG,
+};
+
+/**
+ * Poses `?camera=` accepts. `reference` is URL-only: it exists so a paired capture can stand on the
+ * reference scene's own pose, which is not something the interactive gallery needs a button for.
+ */
+const URL_CAMERA_PRESETS: Record<string, DemoConfig> = {
+  ...CAMERA_PRESETS,
+  reference: REFERENCE_DEMO_CONFIG,
+};
+
+/**
+ * The pose `?camera=` names, when it names one the gallery knows.
+ *
+ * A named pose also pins the camera: it turns example framing off (`DemoEngine`'s `autoFrame`), because
+ * framing re-fits the distance and pivot around the selected scene and would otherwise undo the pose
+ * the URL asked for.
+ */
+export function cameraPoseFor(value: string | null): DemoConfig | undefined {
+  return value !== null && value in URL_CAMERA_PRESETS ? URL_CAMERA_PRESETS[value] : undefined;
+}
+
 /** Resolves the initial config from URL params, cloning shared presets. */
 export function resolveInitialConfig(compareMode: boolean, params: URLSearchParams, storage?: Storage): DemoConfig {
   const base = compareMode ? cloneDemoConfig(SCREENSHOT_DEMO_CONFIG) : loadDemoConfig(storage ?? null);
   if (params.get("projection") === "orthographic") base.camera.projection = "orthographic";
   if (params.get("grid") === "0") base.view.showGrid = false;
-  // The capture preset owns the camera in compare mode so paired screenshots stay
-  // deterministic; the reference pose is an interactive-gallery override only.
-  if (!compareMode && params.get("camera") === "reference") base.camera = cloneDemoConfig(REFERENCE_DEMO_CONFIG).camera;
+  // The capture preset owns the camera in compare mode so paired screenshots stay deterministic; every
+  // `?camera=` pose is an interactive-gallery override only.
+  const pose = cameraPoseFor(params.get("camera"));
+  if (!compareMode && pose !== undefined) base.camera = cloneDemoConfig(pose).camera;
   return base;
 }
 
@@ -208,6 +238,9 @@ export class DemoEngine {
   selectExample(example: GodotExample, updateHash = true): void {
     this.selected = example;
     this.time = 0;
+    // A screen-space page is its own content in pixel space, and the infinite grid is a world-space
+    // reference that can only cross it as diagonal lines. The sidebar toggle stays available.
+    if (example.hideGrid !== undefined) this.config.view.showGrid = !example.hideGrid;
     if (updateHash) location.hash = example.id;
     if (this.autoFrame) {
       this.frameSelectedExample();
@@ -275,14 +308,14 @@ export class DemoEngine {
   }
 
   /**
-   * Switches the orbit pose between the gallery default and the pose the reference
-   * examples run with (`examples/*.tscn` `FreeCamera`). Free orbiting afterwards leaves
+   * Switches the orbit pose between the gallery default and the two 45° views: `oblique` off the
+   * +X/+Z diagonal, `front` square on to the origin from the +Z axis. Free orbiting afterwards leaves
    * the preset in place as a starting point rather than tracking the change.
    */
   setCameraPreset(preset: CameraPreset): void {
     this.stopGlide();
     this.update(() => {
-      this.config.camera = cloneDemoConfig(preset === "reference" ? REFERENCE_DEMO_CONFIG : DEFAULT_DEMO_CONFIG).camera;
+      this.config.camera = cloneDemoConfig(CAMERA_PRESETS[preset]).camera;
     });
   }
 
@@ -340,7 +373,9 @@ export class DemoEngine {
     const textSources = await createTextSources(params);
     // The page has to hold every glyph the scene drew at its own raster scale, and 4x rasterisation
     // costs sixteen times the area of 1x.
-    const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536, joints: 65536, text: { sources: textSources, atlasSize: 1024 } });
+    // A screen-driven raster ladder holds several rungs per character, and a CJK frame draws hundreds
+    // of characters at once; the default single 1024 px page is sized for latin debug text.
+    const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536, joints: 65536, text: { sources: textSources, atlasSize: 1024, pages: 4 } });
     const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
     const grid = new InfiniteGrid3D(gpu, this.gridOptions());
 
@@ -849,39 +884,47 @@ async function createTextSources(params: URLSearchParams): Promise<TextSources> 
   await registerFont();
   const baked = new BakedMsdfRasterizer();
   await baked.load();
-  // First, because blocks that name no source use it, and it is the best default: no runtime encoder,
-  // no `opentype.js`, and corners the single-channel field would round off.
+  // First, because blocks that name no source use it: the renderer rasterises each glyph at the size
+  // it covers on screen, which is the shape bevy's `FontAtlas` has — one atlas per size, rasterised
+  // at the physical pixel size it will be shown at. The ladder in `text-raster` is what keeps that
+  // from costing one atlas per font size, which a continuously resized block could not afford.
   return {
+    auto: new CanvasGlyphRasterizer({ encoding: "bitmap" }),
     baked,
-    bitmap: new CanvasGlyphRasterizer({ encoding: "bitmap" }),
-    bitmap4x: new CanvasGlyphRasterizer({ encoding: "bitmap", rasterScale: 4 }),
-    sdf: new CanvasGlyphRasterizer({ encoding: "sdf" }),
-    sdf4x: new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 }),
-    msdf: new OutlineGlyphRasterizer(),
+    // The comparison sources keep the fixed raster they were built with: they exist to put one
+    // encoding next to another at a known raster size, which the screen-driven ladder would remove.
+    bitmap: new CanvasGlyphRasterizer({ encoding: "bitmap", dynamicRaster: false }),
+    bitmap4x: new CanvasGlyphRasterizer({ encoding: "bitmap", rasterScale: 4, dynamicRaster: false }),
+    sdf: new CanvasGlyphRasterizer({ encoding: "sdf", dynamicRaster: false }),
+    sdf4x: new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4, dynamicRaster: false }),
+    msdf: new OutlineGlyphRasterizer({ dynamicRaster: false }),
     // The same encoder at twice the raster, with the range scaled to keep the 1/6 ratio the 24 px
     // baked page uses — the lever against a magnified block showing its own raster.
-    msdf2x: new OutlineGlyphRasterizer({ rasterScale: 2, distanceRange: 8 }),
+    msdf2x: new OutlineGlyphRasterizer({ rasterScale: 2, distanceRange: 8, dynamicRaster: false }),
   };
 }
 
 async function createTextSource(name: string): Promise<TextFontSource> {
   switch (name) {
-    case "bitmap":
+    case "auto":
       await registerFont();
       return new CanvasGlyphRasterizer({ encoding: "bitmap" });
+    case "bitmap":
+      await registerFont();
+      return new CanvasGlyphRasterizer({ encoding: "bitmap", dynamicRaster: false });
     case "bitmap4x":
       await registerFont();
-      return new CanvasGlyphRasterizer({ encoding: "bitmap", rasterScale: 4 });
+      return new CanvasGlyphRasterizer({ encoding: "bitmap", rasterScale: 4, dynamicRaster: false });
     case "sdf":
       await registerFont();
-      return new CanvasGlyphRasterizer({ encoding: "sdf" });
+      return new CanvasGlyphRasterizer({ encoding: "sdf", dynamicRaster: false });
     case "sdf4x":
       await registerFont();
-      return new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 });
+      return new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4, dynamicRaster: false });
     case "msdf":
-      return new OutlineGlyphRasterizer();
+      return new OutlineGlyphRasterizer({ dynamicRaster: false });
     case "msdf2x":
-      return new OutlineGlyphRasterizer({ rasterScale: 2, distanceRange: 8 });
+      return new OutlineGlyphRasterizer({ rasterScale: 2, distanceRange: 8, dynamicRaster: false });
     case "baked":
     default: {
       const font = new BakedMsdfRasterizer();

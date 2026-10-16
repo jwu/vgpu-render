@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { backgroundToHex, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
-import { DEFAULT_DEMO_CONFIG, GODOT_CLEAR_COLOR, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
+import { backgroundToHex, cameraPoseFor, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
+import { orbitBasis, orbitEye } from "../src/demo-camera.js";
+import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, GODOT_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
 
 describe("hexToRgb", () => {
   it("parses six-digit hex with and without a leading hash", () => {
@@ -51,6 +52,37 @@ describe("camera presets", () => {
     // Paired screenshots keep their deterministic capture pose.
     const compare = resolveInitialConfig(true, new URLSearchParams("camera=reference"));
     expect(compare.camera).toEqual(SCREENSHOT_DEMO_CONFIG.camera);
+  });
+
+  it("puts the two 45° poses at one elevation, on the diagonal and on the +Z axis", () => {
+    const oblique = resolveInitialConfig(false, new URLSearchParams("camera=oblique")).camera;
+    const front = resolveInitialConfig(false, new URLSearchParams("camera=front")).camera;
+    const eyes = [oblique, front].map((camera) => orbitEye(camera.target, orbitBasis(camera.yaw, camera.pitch), camera.distance));
+    // A 45° elevation means the eye is exactly as high above the pivot as it is far from it.
+    for (const eye of eyes) expect(Math.atan2(eye[1]!, Math.hypot(eye[0]!, eye[2]!))).toBeCloseTo(Math.PI / 4, 12);
+    // `oblique` looks in off the +X/+Z diagonal, `front` square on to the origin from the +Z axis alone.
+    expect(eyes[0]![0]).toBeCloseTo(eyes[0]![2]!, 12);
+    expect(eyes[0]![0]).toBeGreaterThan(0);
+    expect(eyes[1]![0]).toBeCloseTo(0, 12);
+    expect(eyes[1]![2]).toBeGreaterThan(0);
+    // Both keep the gallery's distance, FOV and projection: a preset is a change of angle, nothing else.
+    expect(front.distance).toBeCloseTo(DEFAULT_DEMO_CONFIG.camera.distance, 12);
+    expect(front.fov).toBeCloseTo(DEFAULT_DEMO_CONFIG.camera.fov, 12);
+    expect(front.projection).toBe(DEFAULT_DEMO_CONFIG.camera.projection);
+  });
+
+  it("ignores an unknown camera preset instead of guessing", () => {
+    const config = resolveInitialConfig(false, new URLSearchParams("camera=nope"));
+    expect(config.camera.yaw).toBeCloseTo(DEFAULT_DEMO_CONFIG.camera.yaw, 12);
+  });
+
+  it("recognises the named poses, which is what pins the camera against example framing", () => {
+    expect(cameraPoseFor("front")).toBe(FRONT_DEMO_CONFIG);
+    expect(cameraPoseFor("oblique")).toBe(OBLIQUE_DEMO_CONFIG);
+    expect(cameraPoseFor("reference")).toBe(REFERENCE_DEMO_CONFIG);
+    expect(cameraPoseFor("default")).toBe(DEFAULT_DEMO_CONFIG);
+    expect(cameraPoseFor(null)).toBeUndefined();
+    expect(cameraPoseFor("nope")).toBeUndefined();
   });
 });
 

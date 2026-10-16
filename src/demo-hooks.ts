@@ -12,6 +12,10 @@ import type { GodotExample } from "./godot-examples.js";
 import { GODOT_EXAMPLES } from "./godot-examples.js";
 import { sourceForExample, tokenizeSource, type SourceToken } from "./demo-source.js";
 import sceneSource from "./godot-scenes.ts?raw";
+import textSceneSource from "./text-scenes.ts?raw";
+
+/** Both scene modules, so the source preview can find an implementation in either one. */
+const SCENE_SOURCE = `${textSceneSource}\n${sceneSource}`;
 
 export function useEngineSnapshot(engine: DemoEngine) {
   const subscribe = useCallback((listener: () => void) => engine.subscribe(listener), [engine]);
@@ -23,7 +27,7 @@ export function useExamples(): readonly GodotExample[] {
 }
 
 export function useHighlightedSource(exampleId: string): readonly SourceToken[] {
-  return useMemo(() => tokenizeSource(sourceForExample(exampleId, sceneSource)), [exampleId]);
+  return useMemo(() => tokenizeSource(sourceForExample(exampleId, SCENE_SOURCE)), [exampleId]);
 }
 
 export type ControlHandlers = {

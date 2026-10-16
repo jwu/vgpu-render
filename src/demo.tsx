@@ -7,14 +7,14 @@
 
 import { createRoot } from "react-dom/client";
 import { DemoApp } from "@/components/demo-app";
-import { DemoEngine, resolveInitialConfig } from "@/demo-engine";
+import { cameraPoseFor, DemoEngine, resolveInitialConfig } from "@/demo-engine";
 import "./index.css";
 import "./demo.css";
 
 const params = new URLSearchParams(location.search);
 const compareMode = params.get("compare") === "1";
-// `?camera=reference` pins the pose for parity comparisons, so example switches must not re-frame it.
-const autoFrame = !compareMode && params.get("camera") !== "reference";
+// A named `?camera=` pose is pinned: example switches must not re-frame it (see `cameraPoseFor`).
+const autoFrame = !compareMode && cameraPoseFor(params.get("camera")) === undefined;
 if (compareMode) document.documentElement.classList.add("compare-mode");
 
 function createEngine(): DemoEngine {

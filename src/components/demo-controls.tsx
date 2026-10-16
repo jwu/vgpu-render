@@ -44,7 +44,8 @@ const JOINTS: readonly { value: LineJoint; label: string }[] = [
 // afterwards), so there is no maintained "current preset" state to show.
 const CAMERA_PRESETS: readonly { value: CameraPreset; label: string }[] = [
   { value: "default", label: "默认 gallery" },
-  { value: "reference", label: "原版实机 reference" },
+  { value: "oblique", label: "斜 45°" },
+  { value: "front", label: "正 45°" },
 ];
 
 /** Chinese label with the reference parameter name as a secondary hint. */

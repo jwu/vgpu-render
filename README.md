@@ -121,10 +121,12 @@ Three placement spaces share one pipeline and are selected per block:
 | `world-billboard` | world units, block rebuilt from the camera's axes | `fontSize × pixelSize` |
 | `screen` | **top-left origin pixels** (`position.z` ignored) | `fontSize` pixels |
 
-`fontSize` is in **font pixels** and is both the layout unit and the glyph atlas' rasterisation
-size; `pixelSize` is world units per font pixel. That pair is the reference
-`Label3D.font_size` / `pixel_size`, and it lets a block keep a fixed world size while its glyphs
-are rasterised at any resolution. Layout options follow bevy: `justify`, `lineBreak`, `bounds`
+`fontSize` is in **font pixels** and is the layout unit; `pixelSize` is world units per font pixel.
+That pair is the reference `Label3D.font_size` / `pixel_size`, and it lets a block keep a fixed world
+size while its glyphs are rasterised at any resolution. Which resolution that is belongs to the glyph
+source: one that can rasterise on demand is asked for the size the block covers on screen (see
+[Raster size](#raster-size)), while one that declares `dynamicRaster: false` stays at
+`fontSize × rasterScale`. Layout options follow bevy: `justify`, `lineBreak`, `bounds`
 (`TextBounds`, in font pixels), `anchor`, `lineHeight` and `letterSpacing`.
 
 `lineHeight` is bevy's `LineHeight::Px` when you pass one, and bevy's default
@@ -178,7 +180,61 @@ the layout size while the quad stays put.
 - **Prebaked** — `BakedMsdfRasterizer` reads the page `bun scripts/bake-msdf-atlas.ts` produced: 586
 glyphs at a 24 px raster in a 512² page, gzipped to 313 KiB and carried as raw texels (not a PNG, so
 no image decoder has to run and the payload still loads under Node). No `opentype.js`, and no
-encoding ever runs — but the character set is fixed and the payload ships whether or not it is used.
+encoding ever runs — but the character set is fixed and the payload ships whether or not it is used. Its
+glyphs are also stuck at the 24 px they were baked at: the further a block sits from that size, the
+softer the reconstruction, which is why the default source rasterises on demand at the size a block
+actually covers (see [Raster size](#raster-size)).
+
+### Raster size
+
+A glyph is a bitmap, so it is only sharp when it is rasterised at the size it is drawn at. bevy gets
+there by keying its `FontAtlasSet` by font size and rasterising every size at the physical pixel size
+it will be shown at. That is affordable because bevy's text sizes change rarely; a debug draw block's
+size follows its camera, and a CJK block has thousands of candidate glyphs, so one atlas per size is
+not something this library can spend.
+
+The default source keeps the screen-facing half of bevy's answer: glyphs are rasterised at **the size
+the block covers on screen**, quantised onto a ladder of sizes (`text-raster.ts` — one step every
+1.25×, 6 px to 256 px). A block asks for the smallest rung that covers it, so a glyph is never
+magnified when it is decoded, at most oversampled by one step, which the mip chain then covers.
+Because the **rung**, not the font size, is the atlas key, a block whose size changes every frame
+rasterises each character about once per rung it passes rather than once per frame.
+
+- A `screen` block's font pixels are canvas pixels, so it asks for exactly what it draws.
+- A world block multiplies `pixelSize` by the projection scale at its position
+  (`viewProjection[1][1] × viewportSize.y × 0.5 / clip.w`, the same estimate the width shaders use),
+  so a label that grows as the camera approaches keeps its glyphs sharp instead of only being sharp at
+  the one size its source was rasterised for.
+- Coverage sampling puts the mip level on the floor: while the ladder oversamples by less than a step,
+  blending level 0 against a half-resolution level is exactly what softens a stem that is already the
+  right size. A block that really has shrunk into the chain still reads it.
+
+A source's `rasterScale` becomes a lower bound rather than the whole story, and `dynamicRaster: false`
+pins a source to that bound. The comparison scenes pin theirs, so one encoding still sits next to
+another at a known raster size, and `text-reference.html` pins its `bitmap` source because it is
+compared against bevy glyph by glyph.
+
+The design, the bevy correspondence it came from, and the measured sharpness numbers are in
+[`docs/text-rasterization.md`](docs/text-rasterization.md).
+
+### CJK
+
+Chinese, Japanese and Korean text has no spaces to break at and thousands of distinct glyphs, which
+are the two assumptions the word breaking and per-size rasters above make. What the layout does about
+the first:
+
+- **Breaks between characters.** Ideographs, kana, hangul and CJK punctuation become their own tokens,
+  so `lineBreak: "word"` wraps between any two of them while latin text still wraps at spaces.
+- **Kinsoku (禁则).** Punctuation that may not open a line is glued to the run before it, and opening
+  brackets to the character after it — expressed as token gluing because the breaker only moves whole
+  tokens.
+
+Glyphs come from whatever face the family resolves to. The bundled subset has **no CJK coverage**, so
+the canvas falls back to a system CJK face, which is the same arrangement bevy has with fontique's
+system fallback; pass a `fontFamily` (bundled, or loaded into the document) to choose one on purpose.
+The side of bevy's raster handling that shows up here is [Raster size](#raster-size): each ideograph is
+rasterised at the rung it lands on, so a screenful of Chinese costs a few rungs' worth of glyphs
+rather than one set per font size.
 
 ### Anti-aliasing
 
@@ -223,17 +279,23 @@ four 512 px pages' worth — so a 1024 px page set stays one page deep instead o
 memory each glyph source holds. A page whose glyphs were all
 requested in an earlier frame is blanked and repacked as a whole, and a page that mixes current and
 stale glyphs hands the stale rectangles back one at a time, so a bounded atlas recycles instead of
-failing. Only the rectangles written since the last upload reach the GPU — a new glyph costs a few
-hundred bytes rather than a whole page, and each mip level is re-sent for the region that maps to it.
+failing. When every page is full and nothing on them can be recycled, the renderer drops that glyph
+(`onFull: "skip"`, the default) and counts it in `GpuText3D.skippedGlyphs`, because a frame that is
+quietly missing a character has to be tellable apart from one the font never had; a probe or a test
+that would rather fail loudly asks for `onFull: "throw"`. Only the rectangles written since the last
+upload reach the GPU — a new glyph costs a few hundred bytes rather than a whole page, and each mip
+level is re-sent for the region that maps to it.
 
 Two limits are worth knowing about before blaming the renderer for an ugly block:
 
-- **Magnification.** A distance field is only as fine as the raster it was built at. Push a block far
-  enough past its font size and the texel grid it was reconstructed from becomes visible. The lever
-  is `rasterScale`, which rasterises at a multiple of the layout size while the quad stays put — the
-  gallery uses twice the layout size by default, and that costs four times the atlas area, so raise
-  `atlasSize` with it. The prebaked MSDF source has the equivalent knob at bake time rather than at
-  run time.
+- **Magnification.** A distance field is only as fine as the raster it was built at, so a block pushed
+  far past the size its glyphs were rasterised at shows the texel grid they were reconstructed from.
+  The default source follows the screen and re-rasterises when the block climbs a rung, which spends
+  atlas area instead of sharpness. A source pinned to a fixed raster — `dynamicRaster: false`, which is
+  what the comparison scenes and the prebaked page use — keeps its own knob instead: `rasterScale`
+  rasterises at a multiple of the layout size while the quad stays put, and twice the scale costs four
+  times the atlas area, so raise `atlasSize` with it. The prebaked MSDF source has the equivalent knob
+  at bake time rather than at run time.
 - **Depth.** Text is depth-tested, so anything that writes depth in front of it clips it. That
   includes the infinite grid: it is a full-screen translucent plane that writes depth, matching the
   reference's `depth_draw_always`, and when the camera looks along the ground its lines shatter
@@ -244,7 +306,9 @@ Two limits are worth knowing about before blaming the renderer for an ugly block
 
 A `GpuDebugDraw3D` registers **named glyph sources**, and a block picks one through
 `TextOptions.source`. Encoding and rasterisation scale belong to the source, so one frame can mix
-quality levels — or put two of them side by side.
+quality levels — or put two of them side by side. The renderer may override a source's raster size per
+block; `dynamicRaster: false` opts a source out of that, which is what the comparison scenes do (see
+[Raster size](#raster-size)).
 
 ```ts
 const renderer = new GpuDebugDraw3D(gpu, {
@@ -265,13 +329,27 @@ Blocks that name nothing use the first source registered, and `defaultTextStyle`
 whole frame. Each source gets its own atlas and pipeline, and one is only built once something
 actually names it, so registering sources you never draw costs nothing.
 
-Two scenes exercise text end to end. Neither is a port — the addon has no text API; the layout they
-run follows bevy's, and `docs/text-reference.md` records how that was verified against bevy itself.
-`text-compare` is a matrix in the shape of the line/circle examples: rows are glyph sources,
-columns are font sizes, transposed relative to those because text grows sideways. Read down a column
-to compare encodings at one size, across a row to compare sizes under one encoding. `text-hud` covers
-the screen-space side — pixel positions, wrapping, justification, spans and anchors — which a
-world-space scene cannot demonstrate, because it always renders through whatever camera is looking.
+Seven scenes exercise text end to end, and none of them is a port — the addon has no text API; the
+layout they run follows bevy's, and `docs/text-reference.md` records how that was verified against
+bevy itself.
+
+`text-compare` is the parity matrix, in the shape of the line/circle examples: rows are glyph sources,
+columns are font sizes, transposed relative to those because text grows sideways. The six
+screen-space pages answer one question each, because a page that answers eight is comparable to
+nothing:
+
+| scene | the question it answers |
+| --- | --- |
+| `text-encodings` | the same text from four glyph sources, at two sizes, plus the outline pair |
+| `text-scale` | the same text at six sizes, over three raster strategies at one size |
+| `text-world-zoom` | four sources in world space, magnified with the camera — the only honest test of what a source does past its own raster |
+| `text-layout` | wrapping, justification, bounds, line height, letter spacing and spans |
+| `text-anchor` | the nine anchors against the marker they land on and their own bounds |
+| `text-cjk` | CJK wrapping per character, kinsoku and mixed scripts |
+
+Two conventions run through the screen-space pages: every page repeats one text per condition with the
+condition labelled above it, and each ends with a 1 px rule, because judging whether an edge is clean
+needs something of a known width next to it.
 
 Every world-space row in the matrix floats above the grid plane. The grid writes depth, and a block
 crossing `y = 0` would be clipped along its lines.
@@ -282,19 +360,22 @@ The library inlines a **Fira Mono subset** (ASCII, Latin-1, Latin Extended-A, Gr
 arrows, math and geometric symbols — 591 glyphs, 19 KB WOFF2 plus a 43 KB TrueType of the same
 subset, SIL OFL 1.1). It is embedded the way bevy embeds its default font with `include_bytes!`, so
 nothing is fetched at runtime. WOFF2 feeds `FontFace` for the Canvas2D path; the TrueType is there
-because `opentype.js` cannot decompress WOFF2. The subset has **no CJK coverage**, so pass another
-`fontFamily` — already loaded with the document — when Chinese labels are needed.
+because `opentype.js` cannot decompress WOFF2. The subset has **no CJK coverage**: CJK labels fall back to a system face, and a `fontFamily` bundled
+here or loaded into the document picks one on purpose. See [CJK](#cjk).
 
-`?scene=text-compare` and `?scene=text-hud` open the text scenes directly. `?text=<name>` narrows the
-gallery to a single glyph source (`bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, `msdf2x`, `baked`).
+`?scene=<id>` opens any scene directly, including every text page (`text-compare`, `text-encodings`,
+`text-scale`, `text-world-zoom`, `text-layout`, `text-anchor`, `text-cjk`). `?text=<name>` narrows the
+gallery to a single glyph source (`auto`, `bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, `msdf2x`,
+`baked`).
 
 ## Capabilities
 
 - Points (screen/world size), lines (screen/world width, dash, normal), triangles.
-- Text blocks: three placement spaces, wrapping, justification, span styling, per-block anchor,
-  line height, letter spacing and a per-block outline, drawn from an inlined Fira Mono subset. The
-  atlas can hold `bitmap`, `sdf` or `msdf` glyphs (see [Text](#text)), with supersampling and a mip
-  chain.
+- Text blocks: three placement spaces, wrapping (latin words and CJK characters), justification, span
+  styling, per-block anchor, line height, letter spacing and a per-block outline, drawn from an inlined
+  Fira Mono subset that falls back to the system for scripts it does not cover. The atlas can hold
+  `bitmap`, `sdf` or `msdf` glyphs (see [Text](#text)), rasterised at the size each block covers on
+  screen, with supersampling and a mip chain.
 - Normal-aware strokes: `LineOptions.normal` for a single normal, `LineOptions.normals` for
   per-vertex normals (one per segment on an open path, one per vertex on a closed one). Lines
   and joints apply the reference back-face fade (`back_fade_start = 100°`,
@@ -343,11 +424,15 @@ const debug = new DebugDraw3D({
 `src/demo-config.ts` contains independently validated camera/view configuration
 and injected storage helpers. Gallery controls support grid, opacity, animation,
 width multiplier, projection, background, camera preset and reset; camera
-interaction is persisted. The camera preset switches between the gallery orbit
-pose and the reference scene pose (`examples/*.tscn` `FreeCamera`, also reachable
-as `/?scene=line&camera=reference`). Screenshot mode uses a deterministic preset
-without localStorage: `/?compare=1&scene=circle`. Orthographic zoom changes the
-orthographic extent.
+interaction is persisted. The camera preset offers three poses of the same gallery
+distance, FOV and clipping, so switching is purely a change of angle: the gallery's own
+orbit, a 45° oblique view (off the +X/+Z diagonal, so nothing sits edge-on) and a 45° front
+view (square on to the origin from the +Z axis, so the X/Y plane reads straight off the
+screen). `?camera=` also takes the
+reference scene pose (`examples/*.tscn` `FreeCamera`, `/?scene=line&camera=reference`),
+which stays URL-only because it exists for paired captures. Screenshot mode uses a
+deterministic preset without localStorage: `/?compare=1&scene=circle`. Orthographic zoom
+changes the orthographic extent.
 
 The gallery UI is built with **Base UI + shadcn (base-lyra preset) + Tailwind v4**
 in `src/components/`, and the imperative WebGPU side lives in `src/demo-engine.ts`.
