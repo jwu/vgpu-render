@@ -21,6 +21,8 @@ export type GpuTextOptions = {
   readonly capacity?: number;
   readonly atlasSize?: number;
   readonly mipLevels?: number;
+  /** Atlas pages per source. See `GpuText3DOptions.pages`. */
+  readonly pages?: number;
 };
 
 /**
@@ -783,6 +785,7 @@ export class GpuDebugDraw3D {
       ...(options.capacity === undefined ? {} : { capacity: options.capacity }),
       ...(options.atlasSize === undefined ? {} : { atlasSize: options.atlasSize }),
       ...(options.mipLevels === undefined ? {} : { mipLevels: options.mipLevels }),
+      ...(options.pages === undefined ? {} : { pages: options.pages }),
     });
     this.#texts.set(name, renderer);
     return renderer;

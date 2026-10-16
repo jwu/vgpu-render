@@ -6,6 +6,11 @@
  * coverage, and the render pass instantiates one quad per `PositionedGlyph`
  * (`crates/bevy_text/src/pipeline.rs`, `crates/bevy_sprite_render/src/text2d/mod.rs`).
  *
+ * The atlas' pages are the layers of one 2D array texture, so growing past a single page costs no
+ * extra draw call: the instance carries the layer it samples, and `GlyphAtlas` recycles pages whose
+ * glyphs are no longer requested. Only the rectangles written since the last upload are copied, and
+ * each mip level is re-sent for the region that maps to it.
+ *
  * The atlas stores a tintable alpha mask (RGB = 255, A = coverage) like bevy's `FontAtlas`,
  * so the fragment stage only has to multiply the coverage into the span colour's alpha. When
  * the glyph source encodes a distance field instead, the fragment stage reconstructs the edge
@@ -33,7 +38,7 @@ import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
 import type { TextCommand } from "./frame-recorder.js";
 import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
-import { DEFAULT_ATLAS_SIZE, buildMipChain, GlyphAtlas, padMipRows, type GlyphEncoding } from "./text-atlas.js";
+import { DEFAULT_ATLAS_SIZE, buildMipChain, dirtyAtLevel, extractRegion, GlyphAtlas, type GlyphEncoding } from "./text-atlas.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";
 import { layoutText, resolveTextAnchor, type TextMeasurer } from "./text-layout.js";
 import type { GlyphRasterizer } from "./text-font.js";
@@ -50,6 +55,12 @@ export type GpuText3DOptions = {
    * `bytesPerRow` alignment. Defaults to 512, bevy's minimum atlas size.
    */
   readonly atlasSize?: number;
+  /**
+   * Atlas pages, one array-texture layer each. A glyph that lands in a later page costs no extra
+   * draw call, and the atlas is never "full" until every page is. Defaults to four 512 px pages'
+   * worth of texels split across the page size chosen: 4 pages at 512 px, one at 1024 px.
+   */
+  readonly pages?: number;
   /** Depth bias baked into the shader, matching the reference primitive bias. */
   readonly depthBias?: number;
   /**
@@ -63,6 +74,14 @@ export type GpuText3DOptions = {
 const DEFAULT_TEXT_DEPTH_BIAS = -0.001;
 /** Levels of the atlas mip chain. A 512 px page reaches 64 px; beyond that the padding bleeds. */
 const DEFAULT_MIP_LEVELS = 4;
+/** Atlas pages. Bevy grows its `FontAtlasSet` the same way, one page at a time. */
+const DEFAULT_ATLAS_PAGES = 4;
+/**
+ * Default atlas budget, in texels: four 512 px pages' worth, however they are split. A 512 px page
+ * therefore gets four pages while a 1024 px one gets a single page, so raising `atlasSize` does not
+ * silently multiply the memory every glyph source holds.
+ */
+const DEFAULT_ATLAS_AREA = DEFAULT_ATLAS_PAGES * DEFAULT_ATLAS_SIZE * DEFAULT_ATLAS_SIZE;
 
 /** Placement space, encoded in the low two bits of an instance's flags. */
 const SPACE_WORLD_PLANE = 0;
@@ -92,12 +111,15 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   return vec4f(input.color.rgb, input.color.a * clamp(distance + 0.5, 0.0, 1.0));
 }
 `;
+  // Every sample reads one layer of the atlas array: one page per layer, so a glyph beyond the first
+  // page costs no extra draw call.
+  const sample = (swizzle: string): string => `textureSample(atlas, atlasSampler, input.uv, i32(input.layer + 0.5))${swizzle}`;
   const fragment =
     encoding === "sdf"
-      ? reconstruct("textureSample(atlas, atlasSampler, input.uv).r", "")
+      ? reconstruct(sample(".r"), "")
       : encoding === "msdf"
         ? reconstruct(
-            "median3(textureSample(atlas, atlasSampler, input.uv).rgb)",
+            `median3(${sample(".rgb")})`,
             `// The median of the three per-edge distances is the distance to the nearest edge, which is
 // what preserves the corners a single channel rounds off.
 fn median3(value: vec3f) -> f32 {
@@ -106,14 +128,14 @@ fn median3(value: vec3f) -> f32 {
 `,
           )
         : `@fragment fn fs_main(input: Out) -> @location(0) vec4f {
-  let coverage = textureSample(atlas, atlasSampler, input.uv).a;
+  let coverage = ${sample(".a")};
   return vec4f(input.color.rgb, input.color.a * coverage);
 }
 `;
   return `
 struct Camera { viewProjection: mat4x4f, view: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(1) var atlas: texture_2d<f32>;
+@group(0) @binding(1) var atlas: texture_2d_array<f32>;
 @group(0) @binding(2) var atlasSampler: sampler;
 ${depthBiasHelpers(depthBias)}${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
 struct In {
@@ -126,8 +148,11 @@ struct In {
   @location(8) uv: vec4f,
   @location(9) color: vec4f,
   @location(10) flags: u32,
+  // The atlas layer arrives as a float: WebGPU wants an integer varying between the stages to be
+  // flat-interpolated, which the wgpu/naga backend behind the GPU tests rejects outright.
+  @location(11) layer: f32,
 }
-struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) color: vec4f }
+struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) color: vec4f, @location(2) layer: f32 }
 
 @vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
   let corners = array<vec2f, 6>(vec2f(0,0), vec2f(1,0), vec2f(0,1), vec2f(0,1), vec2f(1,0), vec2f(1,1));
@@ -161,6 +186,7 @@ struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1
   out.clip = vec4f(clip.xy, depth, clip.w);
   out.uv = mix(input.uv.xy, input.uv.zw, corner);
   out.color = input.color;
+  out.layer = input.layer;
   return out;
 }
 
@@ -177,10 +203,10 @@ export class GpuText3D {
   readonly #draw: Draw;
   readonly #indirect: StorageBuffer;
   readonly #indirectCompute: Compute;
-  readonly #page: Texture;
+  readonly #atlasTexture: Texture;
   readonly #sampler: GPUSampler;
   readonly #mipLevels: number;
-  #uploadedRevision = -1;
+  readonly #uploadedRevisions: number[] = [];
   #viewProjection: ArrayLike<number> = identity();
   #view: ArrayLike<number> = identity();
   #count = 0;
@@ -188,15 +214,17 @@ export class GpuText3D {
   constructor(gpu: Gpu, options: GpuText3DOptions) {
     const capacity = options.capacity ?? 16384;
     const atlasSize = options.atlasSize ?? DEFAULT_ATLAS_SIZE;
+    const pageCount = Math.max(1, Math.floor(options.pages ?? DEFAULT_ATLAS_AREA / (atlasSize * atlasSize)));
     if (atlasSize % 64 !== 0) {
       throw new RangeError("atlasSize must be a multiple of 64 so an atlas row meets WebGPU's 256 byte alignment");
     }
     this.#gpu = gpu;
     this.#font = options.font;
-    // One page only: a second page would need a second draw call and a second indirect buffer,
-    // and the caller can always raise `atlasSize` instead.
+    // Pages are layers of one 2D array texture, so a glyph that lands outside the first page costs
+    // no extra draw call and no extra indirect buffer. The caller can still raise `atlasSize`
+    // instead, which costs memory for every page either way.
     // The source owns the rasterisation scale, so two sources of one encoding can coexist in a frame.
-    this.#atlas = new GlyphAtlas(options.font, { size: atlasSize, maxPages: 1 });
+    this.#atlas = new GlyphAtlas(options.font, { size: atlasSize, maxPages: pageCount });
     // A chain cannot outrun the page: a 512 px atlas only has ten levels down to 1×1.
     this.#mipLevels = Math.max(1, Math.min(options.mipLevels ?? DEFAULT_MIP_LEVELS, Math.floor(Math.log2(atlasSize)) + 1));
     this.#glyphs = instances({
@@ -210,6 +238,7 @@ export class GpuText3D {
         uv: "float32x4",
         color: "float32x4",
         flags: "uint32",
+        layer: "float32",
       },
     });
     const mesh = zeroGeometry(gpu);
@@ -225,9 +254,10 @@ export class GpuText3D {
     this.#indirect = storage(gpu, 16, { access: "read-write", indirect: true });
     this.#indirectCompute = compute(gpu, INDIRECT_SHADER);
     indirectArgs(this.#indirect, 6, 0);
-    this.#page = texture(gpu, {
-      kind: "2d",
+    this.#atlasTexture = texture(gpu, {
+      kind: "2d-array",
       size: [atlasSize, atlasSize],
+      layers: pageCount,
       format: "rgba8unorm",
       usage: ["texture_binding", "copy_dst"],
       mipLevelCount: this.#mipLevels,
@@ -243,6 +273,8 @@ export class GpuText3D {
 
   /** Lays out every block, fills the glyph atlas, and refreshes the instance buffer. */
   prepare(commands: readonly TextCommand[], camera: { readonly viewProjection: ArrayLike<number>; readonly view: ArrayLike<number> }): void {
+    // One frame per call, so the atlas knows which pages it may recycle. See `GlyphAtlas.beginFrame`.
+    this.#atlas.beginFrame();
     let index = 0;
     for (const command of commands) {
       const layout = layoutText(
@@ -278,6 +310,7 @@ export class GpuText3D {
           uv: entry.uv,
           color: glyph.color,
           flags,
+          layer: entry.page,
         });
         index++;
       }
@@ -291,34 +324,38 @@ export class GpuText3D {
   }
 
   #addInstance(index: number): InstanceId {
-    const id = this.#glyphs.add({ origin: [0, 0, 0], offset: [0, 0], size: [0, 0], uv: [0, 0, 0, 0], color: [0, 0, 0, 0], flags: 0 });
+    const id = this.#glyphs.add({ origin: [0, 0, 0], offset: [0, 0], size: [0, 0], uv: [0, 0, 0, 0], color: [0, 0, 0, 0], flags: 0, layer: 0 });
     world(this.#glyphs, id);
     this.#ids[index] = id;
     return id;
   }
 
   /**
-   * Copies the atlas page into its GPU texture when new glyphs landed in it, rebuilding the whole
-   * mip chain. WebGPU has no `generateMipmap` and vgpu exposes none, so the levels are filtered on
-   * the CPU — the coverage channel averages correctly, and the chain only has to be rebuilt on the
-   * frames that actually added a glyph. Uploads use the native queue directly, which is what
-   * `Texture.gpu` exists for.
+   * Copies every page that changed into its layer of the array texture, rebuilding the whole mip
+   * chain on the CPU and uploading only the rectangles that were actually written. WebGPU has no
+   * `generateMipmap` and vgpu exposes none, so the levels are filtered here — the coverage channel
+   * averages correctly, and a distance field keeps the encoder's own resampling. Uploads use the
+   * native queue directly, which is what `Texture.gpu` exists for.
    */
   #uploadAtlas(): void {
-    const page = this.#atlas.pages[0];
-    if (page === undefined || page.revision === this.#uploadedRevision) return;
-    const chain = buildMipChain(page.data, page.size, this.#mipLevels);
-    for (let level = 0; level < chain.length; level++) {
-      const mip = chain[level]!;
-      const rows = padMipRows(mip.data, mip.size);
-      this.#gpu.gpu.queue.writeTexture(
-        { texture: this.#page.gpu, mipLevel: level },
-        rows.data,
-        { bytesPerRow: rows.bytesPerRow, rowsPerImage: mip.size },
-        { width: mip.size, height: mip.size, depthOrArrayLayers: 1 },
-      );
+    for (const page of this.#atlas.pages) {
+      if (page.revision === (this.#uploadedRevisions[page.index] ?? -1)) continue;
+      const dirty = page.dirty;
+      const chain = buildMipChain(page.data, page.size, this.#mipLevels);
+      for (let level = 0; level < chain.length; level++) {
+        const mip = chain[level]!;
+        const rect = dirty === undefined ? { x: 0, y: 0, width: mip.size, height: mip.size } : dirtyAtLevel(dirty, level, page.size);
+        const rows = extractRegion(mip.data, mip.size, rect);
+        this.#gpu.gpu.queue.writeTexture(
+          { texture: this.#atlasTexture.gpu, mipLevel: level, origin: [rect.x, rect.y, page.index] },
+          rows.data,
+          { bytesPerRow: rows.bytesPerRow, rowsPerImage: rect.height },
+          { width: rect.width, height: rect.height, depthOrArrayLayers: 1 },
+        );
+      }
+      page.dirty = undefined;
+      this.#uploadedRevisions[page.index] = page.revision;
     }
-    this.#uploadedRevision = page.revision;
   }
 
   /**
@@ -334,7 +371,7 @@ export class GpuText3D {
     if (this.#count === 0) return;
     this.#draw.set({
       camera: { viewProjection: this.#viewProjection, view: this.#view, viewportSize: pass.target.size },
-      atlas: this.#page,
+      atlas: this.#atlasTexture,
       atlasSampler: this.#sampler,
     });
     pass.draw(this.#draw, { indirect: this.#indirect });
@@ -348,6 +385,6 @@ export class GpuText3D {
     this.#draw.dispose();
     this.#bridge.destroy();
     this.#indirectCompute.dispose();
-    this.#page.dispose();
+    this.#atlasTexture.dispose();
   }
 }

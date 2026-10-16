@@ -178,6 +178,14 @@ CPU (the coverage channel averages correctly) and uploaded level by level. `mipL
 4, taking a 512 px page down to 64 px; deeper chains start bleeding through the 2 px packing
 padding, and averaging is not a distance field's own filter, so `sdf`/`msdf` lose a little edge
 precision as levels shrink.
+- **Atlas pages and uploads.** Pages are layers of one 2D array texture, so a glyph that lands
+outside the first page costs no extra draw call. The page count defaults to a fixed texel budget —
+four 512 px pages' worth — so a 1024 px page set stays one page deep instead of quadrupling the
+memory each glyph source holds. A page whose glyphs were all
+requested in an earlier frame is blanked and repacked as a whole, and a page that mixes current and
+stale glyphs hands the stale rectangles back one at a time, so a bounded atlas recycles instead of
+failing. Only the rectangles written since the last upload reach the GPU — a new glyph costs a few
+hundred bytes rather than a whole page, and each mip level is re-sent for the region that maps to it.
 
 Two limits are worth knowing about before blaming the renderer for an ugly block:
 

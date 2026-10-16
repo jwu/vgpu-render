@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildMipChain, downsamplePage, GlyphAtlas, padMipRows } from "../src/text-atlas.js";
+import { buildMipChain, dirtyAtLevel, downsamplePage, extractRegion, GlyphAtlas, padMipRows } from "../src/text-atlas.js";
 import { SyntheticFont } from "./support/synthetic-font.js";
 
 const font = new SyntheticFont();
@@ -122,5 +122,91 @@ describe("atlas mip chain", () => {
     // Row 1 starts at the aligned stride, and the gap after row 0 stays zeroed.
     expect(padded.data[16]).toBe(0);
     expect(padded.data[256]).toBe(1);
+  });
+});
+
+describe("atlas pages", () => {
+  test("grows onto a second page once the first is full", () => {
+    const atlas = new GlyphAtlas(font, { size: 32, padding: 2, maxPages: 4 });
+    const entries = "ABCDEFGHIJKL".split("").map((character) => atlas.glyph(character, "test", 16));
+    // 16px synthetic ink is 8×8, so a 32px page holds nine of them in three shelves.
+    expect(atlas.pages).toHaveLength(2);
+    expect(entries.filter((entry) => entry?.page === 1)).toHaveLength(3);
+  });
+
+  test("is full only when every page is in use", () => {
+    const atlas = new GlyphAtlas(font, { size: 32, padding: 2, maxPages: 1 });
+    for (const character of "ABCDEFGHI") atlas.glyph(character, "test", 16);
+    expect(() => atlas.glyph("J", "test", 16)).toThrow(RangeError);
+  });
+
+  test("recycles the oldest page once a frame has passed", () => {
+    const atlas = new GlyphAtlas(font, { size: 32, padding: 2, maxPages: 1 });
+    const first = atlas.glyph("A", "test", 16)!;
+    for (const character of "BCDEFGHI") atlas.glyph(character, "test", 16);
+    expect(atlas.pages[0]!.revision).toBe(9);
+    atlas.beginFrame();
+    const recycled = atlas.glyph("J", "test", 16)!;
+    expect(recycled.page).toBe(0);
+    expect(atlas.pages).toHaveLength(1);
+    // Nine writes, then the eviction and the new glyph.
+    expect(atlas.pages[0]!.revision).toBe(11);
+    // A recycled page has to be re-uploaded in full, because its texels were blanked.
+    expect(atlas.pages[0]!.dirty).toEqual({ x: 0, y: 0, width: 32, height: 32 });
+    // The evicted entry is gone, so the glyph is rasterised again rather than reused.
+    expect(atlas.glyph("A", "test", 16)).not.toBe(first);
+  });
+
+  test("marks only the rectangles it wrote as dirty", () => {
+    const atlas = new GlyphAtlas(font, { size: 64, padding: 2 });
+    atlas.glyph("A", "test", 16);
+    const page = atlas.pages[0]!;
+    expect(page.dirty).toEqual({ x: 0, y: 0, width: 8, height: 8 });
+    atlas.glyph("B", "test", 16);
+    expect(page.dirty).toEqual({ x: 0, y: 0, width: 18, height: 8 });
+  });
+
+  test("blanking a page makes the whole page dirty", () => {
+    const atlas = new GlyphAtlas(font, { size: 64 });
+    atlas.glyph("A", "test", 16);
+    atlas.clear();
+    expect(atlas.pages[0]!.dirty).toEqual({ x: 0, y: 0, width: 64, height: 64 });
+  });
+});
+
+describe("dirty regions", () => {
+  test("halves and pads a rectangle down the mip chain", () => {
+    const dirty = { x: 64, y: 32, width: 32, height: 32 };
+    expect(dirtyAtLevel(dirty, 0, 512)).toEqual(dirty);
+    expect(dirtyAtLevel(dirty, 1, 512)).toEqual({ x: 31, y: 15, width: 18, height: 18 });
+    expect(dirtyAtLevel(dirty, 2, 512)).toEqual({ x: 14, y: 6, width: 12, height: 12 });
+  });
+
+  test("stays inside the level it maps to", () => {
+    const corner = dirtyAtLevel({ x: 500, y: 500, width: 12, height: 12 }, 3, 512);
+    expect(corner.x + corner.width).toBeLessThanOrEqual(64);
+    expect(corner.y + corner.height).toBeLessThanOrEqual(64);
+    expect(corner.width).toBeGreaterThan(0);
+  });
+
+  test("copies a region with rows padded to WebGPU's alignment", () => {
+    const size = 8;
+    const data = new Uint8Array(size * size * 4);
+    for (let index = 0; index < size * size; index++) data[index * 4] = index;
+    const region = extractRegion(data, size, { x: 1, y: 2, width: 2, height: 2 });
+    expect(region.bytesPerRow).toBe(256);
+    expect(region.data[0]).toBe(17);
+    expect(region.data[4]).toBe(18);
+    expect(region.data[256]).toBe(25);
+    expect(region.data[260]).toBe(26);
+  });
+
+  test("hands an aligned full-width region over without copying", () => {
+    const wide = new Uint8Array(64 * 8 * 4).fill(7);
+    const view = extractRegion(wide, 64, { x: 0, y: 4, width: 64, height: 2 });
+    expect(view.bytesPerRow).toBe(256);
+    expect(view.data.byteLength).toBe(256 * 2);
+    expect(view.data[0]).toBe(7);
+    expect(view.data.buffer).toBe(wide.buffer);
   });
 });

@@ -131,3 +131,61 @@ test("an empty block draws nothing", async () => {
   });
   expect(litCount(pixels)).toBe(0);
 });
+
+/** Render one screen-space block with a bounded atlas and read the pixels back. */
+async function renderWithAtlas(pages: number, text: string): Promise<Uint8Array> {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    // A 64px page holds 36 of the synthetic 16px glyphs (six 10px shelves of six), so 40 distinct
+    // characters cannot fit one page.
+    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont("bitmap") }, atlasSize: 64, pages } });
+    const debug = new DebugDraw3D();
+    const recorder = debug.beginFrame();
+    recorder.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
+    renderer.prepare(debug.finishFrame(recorder), { viewProjection: identity, view: identity });
+    frame(gpu, (f) => {
+      renderer.updateIndirect(f);
+      f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
+    });
+    return await output.color.read({ mipLevel: 0, region: "all" });
+  } finally {
+    gpu.dispose();
+  }
+}
+
+const OVERFLOWING = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcd";
+
+test("draws text that spills onto a second atlas page", async () => {
+  expect(litCount(await renderWithAtlas(4, OVERFLOWING))).toBeGreaterThan(30);
+});
+
+test("reports a full atlas rather than dropping glyphs", async () => {
+  await expect(renderWithAtlas(1, OVERFLOWING)).rejects.toThrow(RangeError);
+});
+
+test("keeps drawing after a page is recycled between frames", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont("bitmap") }, atlasSize: 64, pages: 1 } });
+    const debug = new DebugDraw3D();
+    const draw = async (text: string): Promise<Uint8Array> => {
+      const recorder = debug.beginFrame();
+      recorder.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
+      renderer.prepare(debug.finishFrame(recorder), { viewProjection: identity, view: identity });
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
+      });
+      return output.color.read({ mipLevel: 0, region: "all" });
+    };
+    // Both frames fill the single page; the second one only fits because the first is recycled.
+    // Both blocks are 36 distinct glyphs, which is exactly one 64px page; the second block can only
+    // be drawn because the first one's glyphs are recycled.
+    expect(litCount(await draw("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"))).toBeGreaterThan(30);
+    expect(litCount(await draw("abcdefghijklmnopqrstuvwxyz!@#$%^&*()"))).toBeGreaterThan(30);
+  } finally {
+    gpu.dispose();
+  }
+});

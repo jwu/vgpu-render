@@ -40,6 +40,21 @@ export type AtlasGlyph = {
   readonly width: number;
   readonly height: number;
   readonly advance: number;
+  /** Frame this glyph was last requested in. Glyphs older than the current frame are recyclable. */
+  lastFrame: number;
+  /** Packed rectangle in page texels, padding included, so eviction can hand the space back. */
+  readonly atlasX: number;
+  readonly atlasY: number;
+  readonly atlasWidth: number;
+  readonly atlasHeight: number;
+};
+
+/** Texel rectangle of a page that changed since the renderer last copied it to the GPU. */
+export type AtlasDirtyRect = {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
 };
 
 /** One RGBA8 page. `revision` is bumped on every write so the renderer can upload lazily. */
@@ -49,6 +64,11 @@ export type AtlasPage = {
   /** Tightly packed RGBA8 rows, `size * size * 4` bytes. */
   readonly data: Uint8Array;
   revision: number;
+  /**
+   * Union of every rectangle written since the last upload, or `undefined` when the page is clean
+   * on the GPU. One glyph costs a few hundred bytes to upload instead of a whole page.
+   */
+  dirty: AtlasDirtyRect | undefined;
 };
 
 type Shelf = {
@@ -71,6 +91,11 @@ export class GlyphAtlas {
   readonly #packing: PagePacking[] = [];
   readonly #glyphs = new Map<string, AtlasGlyph>();
   readonly #missing = new Set<string>();
+  /** Cache keys per page, so a page can be recycled as a whole when every glyph on it is stale. */
+  readonly #pageGlyphs: Set<string>[] = [];
+  /** Rectangles handed back by recycling a single stale glyph, reusable for later ones. */
+  readonly #free: ({ readonly page: number } & AtlasDirtyRect)[] = [];
+  #frame = 0;
 
   constructor(rasterizer: GlyphRasterizer, options: { size?: number; padding?: number; maxPages?: number } = {}) {
     this.#rasterizer = rasterizer;
@@ -103,6 +128,15 @@ export class GlyphAtlas {
   }
 
   /**
+   * Marks the start of a frame. Glyphs that were not requested in the current frame become
+   * recyclable, so a bounded atlas stops being a hard failure once on-screen text changes shape.
+   * Call it once per frame, before the frame's glyphs are requested.
+   */
+  beginFrame(): void {
+    this.#frame++;
+  }
+
+  /**
    * Returns the atlas entry for a character, rasterising and packing it on first use.
    * `undefined` means the character has no ink (whitespace) or the rasteriser has nothing for
    * it; the layout layer has already dropped those glyphs, so callers treat it as a skip.
@@ -110,7 +144,10 @@ export class GlyphAtlas {
   glyph(character: string, fontFamily: string, fontSize: number): AtlasGlyph | undefined {
     const key = `${fontFamily}|${fontSize}|${character}`;
     const cached = this.#glyphs.get(key);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) {
+      cached.lastFrame = this.#frame;
+      return cached;
+    }
     if (this.#missing.has(key)) return undefined;
     const rasterized = this.#rasterizer.rasterize(character, fontFamily, fontSize * this.rasterScale);
     if (rasterized === undefined) {
@@ -134,8 +171,14 @@ export class GlyphAtlas {
       width: rasterized.inkWidth,
       height: rasterized.inkHeight,
       advance: rasterized.advance,
+      lastFrame: this.#frame,
+      atlasX: placement.x,
+      atlasY: placement.y,
+      atlasWidth: rasterized.width,
+      atlasHeight: rasterized.height,
     };
     this.#glyphs.set(key, glyph);
+    this.#pageGlyphs[placement.page]!.add(key);
     return glyph;
   }
 
@@ -143,9 +186,13 @@ export class GlyphAtlas {
   clear(): void {
     this.#glyphs.clear();
     this.#missing.clear();
+    this.#free.length = 0;
+    for (const keys of this.#pageGlyphs) keys.clear();
     for (const page of this.#pages) {
       page.data.fill(0);
       page.revision++;
+      // Blanking the whole page is a full-page upload, not a few dirty rectangles.
+      page.dirty = { x: 0, y: 0, width: page.size, height: page.size };
     }
     for (const packing of this.#packing) {
       packing.nextY = 0;
@@ -155,15 +202,104 @@ export class GlyphAtlas {
 
   #createPage(): number {
     const index = this.#pages.length;
-    this.#pages.push({ index, size: this.#size, data: new Uint8Array(this.#size * this.#size * 4), revision: 0 });
+    this.#pages.push({ index, size: this.#size, data: new Uint8Array(this.#size * this.#size * 4), revision: 0, dirty: undefined });
     this.#packing.push({ nextY: 0, shelves: [] });
+    this.#pageGlyphs.push(new Set());
     return index;
+  }
+
+  /**
+   * Blanks a page whose glyphs were all requested in an earlier frame and returns its index, or
+   * `undefined` when no page is entirely stale. Recycling a whole page resets its shelf packing,
+   * which is what makes it the preferred path over handing single rectangles back.
+   */
+  #recyclePage(): number | undefined {
+    let victim = -1;
+    let oldest = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.#pages.length; index++) {
+      let newest = -1;
+      for (const key of this.#pageGlyphs[index]!) {
+        const entry = this.#glyphs.get(key);
+        if (entry !== undefined && entry.lastFrame > newest) newest = entry.lastFrame;
+      }
+      if (newest >= this.#frame) continue;
+      if (newest < oldest) {
+        oldest = newest;
+        victim = index;
+      }
+    }
+    if (victim === -1) return undefined;
+    const page = this.#pages[victim]!;
+    page.data.fill(0);
+    page.revision++;
+    page.dirty = { x: 0, y: 0, width: page.size, height: page.size };
+    const packing = this.#packing[victim]!;
+    packing.nextY = 0;
+    packing.shelves.length = 0;
+    for (const key of this.#pageGlyphs[victim]!) this.#glyphs.delete(key);
+    this.#pageGlyphs[victim]!.clear();
+    return victim;
+  }
+
+  /**
+   * Falls back to recycling single stale glyphs, oldest first, until one of their rectangles can
+   * hold the new glyph. This is what covers a page that mixes glyphs from the current frame with
+   * ones from earlier frames: the whole page cannot be blanked, but the stale part can be reused.
+   */
+  #recycleGlyphs(w: number, h: number): { page: number; x: number; y: number } | undefined {
+    const stale: { key: string; glyph: AtlasGlyph }[] = [];
+    for (const [key, glyph] of this.#glyphs) {
+      if (glyph.lastFrame < this.#frame) stale.push({ key, glyph });
+    }
+    if (stale.length === 0) return undefined;
+    stale.sort((a, b) => a.glyph.lastFrame - b.glyph.lastFrame);
+    for (const { key, glyph } of stale) {
+      this.#release(key, glyph);
+      const placement = this.#takeFree(w, h);
+      if (placement !== undefined) return placement;
+    }
+    return undefined;
+  }
+
+  /** Hands one glyph's packed rectangle back, sized to include the packing padding. */
+  #release(key: string, glyph: AtlasGlyph): void {
+    this.#glyphs.delete(key);
+    this.#pageGlyphs[glyph.page]!.delete(key);
+    this.#free.push({
+      page: glyph.page,
+      x: glyph.atlasX,
+      y: glyph.atlasY,
+      width: glyph.atlasWidth + this.#padding,
+      height: glyph.atlasHeight + this.#padding,
+    });
+  }
+
+  /** Takes the smallest recycled rectangle that fits, splitting off whatever it does not use. */
+  #takeFree(w: number, h: number): { page: number; x: number; y: number } | undefined {
+    let best = -1;
+    let bestArea = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.#free.length; index++) {
+      const rect = this.#free[index]!;
+      if (rect.width < w || rect.height < h) continue;
+      const area = rect.width * rect.height;
+      if (area < bestArea) {
+        bestArea = area;
+        best = index;
+      }
+    }
+    if (best === -1) return undefined;
+    const rect = this.#free[best]!;
+    this.#free.splice(best, 1);
+    if (rect.width > w) this.#free.push({ page: rect.page, x: rect.x + w, y: rect.y, width: rect.width - w, height: rect.height });
+    if (rect.height > h) this.#free.push({ page: rect.page, x: rect.x, y: rect.y + h, width: Math.min(rect.width, w), height: rect.height - h });
+    return { page: rect.page, x: rect.x, y: rect.y };
   }
 
   /**
    * Shelf packing: glyphs fill a row until it runs out of width, then a new row starts below.
    * bevy uses a rectangle packer, but for the handful of sizes a debug frame draws, shelves
-   * waste little and keep placement deterministic.
+   * waste little and keep placement deterministic. When every page is full and none can be
+   * evicted the atlas reports itself full instead of silently dropping glyphs.
    */
   #pack(width: number, height: number): { page: number; x: number; y: number } {
     const w = width + this.#padding;
@@ -171,12 +307,21 @@ export class GlyphAtlas {
     if (w > this.#size || h > this.#size) {
       throw new RangeError(`a ${width}×${height} glyph does not fit a ${this.#size}px atlas page`);
     }
+    const free = this.#takeFree(w, h);
+    if (free !== undefined) return free;
     for (let index = 0; index < this.#pages.length; index++) {
       const placement = packInto(this.#packing[index]!, w, h, this.#size);
       if (placement !== undefined) return { page: index, x: placement.x, y: placement.y };
     }
+    const recycledPage = this.#recyclePage();
+    if (recycledPage !== undefined) {
+      const placement = packInto(this.#packing[recycledPage]!, w, h, this.#size)!;
+      return { page: recycledPage, x: placement.x, y: placement.y };
+    }
+    const recycled = this.#recycleGlyphs(w, h);
+    if (recycled !== undefined) return recycled;
     if (this.#pages.length >= this.#maxPages) {
-      throw new RangeError(`the glyph atlas is full: ${this.#pages.length} page(s) of ${this.#size}px no longer fit a new glyph; raise the atlas size`);
+      throw new RangeError(`the glyph atlas is full: ${this.#pages.length} page(s) of ${this.#size}px no longer fit a new glyph; raise the atlas size or the page count`);
     }
     const index = this.#createPage();
     const placement = packInto(this.#packing[index]!, w, h, this.#size);
@@ -192,7 +337,38 @@ export class GlyphAtlas {
       page.data.set(texels.subarray(row * glyphRowBytes, (row + 1) * glyphRowBytes), (y + row) * rowBytes + x * 4);
     }
     page.revision++;
+    page.dirty = extendDirty(page.dirty, { x, y, width, height });
   }
+}
+
+/** Grows a dirty rectangle so it also covers `next`. */
+function extendDirty(current: AtlasDirtyRect | undefined, next: AtlasDirtyRect): AtlasDirtyRect {
+  if (current === undefined) return next;
+  const x = Math.min(current.x, next.x);
+  const y = Math.min(current.y, next.y);
+  const right = Math.max(current.x + current.width, next.x + next.width);
+  const bottom = Math.max(current.y + current.height, next.y + next.height);
+  return { x, y, width: right - x, height: bottom - y };
+}
+
+/**
+ * Maps a level-0 dirty rectangle onto one mip level. Every level halves the coordinates and grows
+ * the rectangle by one texel, because a box filter reads across the edge it averages.
+ */
+export function dirtyAtLevel(dirty: AtlasDirtyRect, level: number, pageSize: number): AtlasDirtyRect {
+  let size = pageSize;
+  let left = dirty.x;
+  let top = dirty.y;
+  let right = dirty.x + dirty.width;
+  let bottom = dirty.y + dirty.height;
+  for (let step = 0; step < level; step++) {
+    size = Math.max(1, size >> 1);
+    left = Math.max(0, (left >> 1) - 1);
+    top = Math.max(0, (top >> 1) - 1);
+    right = Math.min(size, Math.ceil(right / 2) + 1);
+    bottom = Math.min(size, Math.ceil(bottom / 2) + 1);
+  }
+  return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
 }
 
 /**
@@ -252,19 +428,29 @@ export function buildMipChain(data: Uint8Array, size: number, levels: number): r
 }
 
 /**
- * Pads one mip level's rows to WebGPU's 256 byte `bytesPerRow` requirement, which only binds once a
- * level has more than one row (2×2 and up). Levels needing this are a few hundred bytes, so the
- * extra copy is not worth avoiding.
+ * Extracts one rectangle of a page and pads its rows to WebGPU's 256 byte `bytesPerRow`
+ * requirement, which only binds once a rectangle has more than one row. The copy is a few hundred
+ * bytes for a single glyph, so it is not worth avoiding.
  */
-export function padMipRows(data: Uint8Array, size: number): { readonly data: Uint8Array; readonly bytesPerRow: number } {
-  const rowBytes = size * 4;
-  if (rowBytes % 256 === 0) return { data, bytesPerRow: rowBytes };
+export function extractRegion(data: Uint8Array, size: number, rect: AtlasDirtyRect): { readonly data: Uint8Array; readonly bytesPerRow: number } {
+  const rowBytes = rect.width * 4;
   const stride = Math.ceil(rowBytes / 256) * 256;
-  const padded = new Uint8Array(stride * size);
-  for (let row = 0; row < size; row++) {
-    padded.set(data.subarray(row * rowBytes, (row + 1) * rowBytes), row * stride);
+  // A full-width rectangle whose rows already meet the alignment needs no copy at all.
+  if (rect.x === 0 && rect.width === size && stride === rowBytes) {
+    const start = rect.y * rowBytes;
+    return { data: data.subarray(start, start + rowBytes * rect.height), bytesPerRow: stride };
+  }
+  const padded = new Uint8Array(stride * rect.height);
+  for (let row = 0; row < rect.height; row++) {
+    const from = ((rect.y + row) * size + rect.x) * 4;
+    padded.set(data.subarray(from, from + rowBytes), row * stride);
   }
   return { data: padded, bytesPerRow: stride };
+}
+
+/** Pads one whole mip level's rows through `extractRegion`. */
+export function padMipRows(data: Uint8Array, size: number): { readonly data: Uint8Array; readonly bytesPerRow: number } {
+  return extractRegion(data, size, { x: 0, y: 0, width: size, height: size });
 }
 
 function packInto(packing: PagePacking, w: number, h: number, size: number): { x: number; y: number } | undefined {
