@@ -190,6 +190,18 @@ test("a bitmap glyph is outlined by sampling its mask in eight directions", asyn
   expect(channel(outlined, 12, 19, 0)).toBeLessThan(40);
 });
 
+test("a one-to-one distance field keeps as soft a rim as the coverage mask", async () => {
+  const build = (recorder: FrameRecorder): void => {
+    recorder.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
+  };
+  const bitmap = await render(build, identity, "bitmap");
+  const distance = await render(build, identity, "sdf");
+  // Both encodings describe the same shape at the same size, so their rims should carry the same
+  // partial-coverage pixels. A ramp narrower than a screen pixel leaves the distance field without
+  // them, which is what makes a rebuilt glyph read thinner and toothed next to a rasterised one.
+  expect(softCount(distance)).toBeGreaterThan(softCount(bitmap) * 0.8);
+});
+
 test("a magnified distance field keeps a tighter edge than the coverage mask", async () => {  const build = (recorder: FrameRecorder): void => {
     // 20 px glyphs at 0.1 units/px are 2 world units, about 64 px tall on this target — a 3x
     // magnification, which is where interpolating coverage smears and reconstructing a distance

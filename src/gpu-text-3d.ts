@@ -109,7 +109,13 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   //    pixel, which reads as a hard, comb-toothed edge.
   let unitRange = vec2f(2.0 * DISTANCE_RANGE) / vec2f(textureDimensions(atlas, 0));
   let screenTexSize = vec2f(1.0) / fwidth(input.uv);
-  let screenPxRange = max(dot(unitRange, screenTexSize), 1.0);
+  // Half the sum of both axes, which is what the reference shader does: Godot's canvas.glsl is
+  // "0.5 * dot(px_range / msdf_size, dest_size)", and Godot's MSDF comes from msdfgen. Each
+  // derivative already spans one screen pixel, so summing them counts it twice and leaves the ramp
+  // half a pixel wide. At that width the rim pixels a correct ramp puts at partial coverage land on
+  // 0 or 1 instead, and the glyph reads thinner and toothed than the same shape rasterised to the
+  // grid.
+  let screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
   let distance = screenPxRange * (${stored} - 0.5);
   let fill = clamp(distance + 0.5, 0.0, 1.0);
   // The outline reads the true distance in alpha rather than the median: the median is what keeps a
@@ -117,11 +123,13 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   // placed from it would dent inwards on every corner. An unused alpha channel saturates, which
   // leaves the ring at zero width.
   //
-  // The ring's width arrives in font pixels and the distance below is in the shader's own screen
-  // scale, so it goes through the same conversion the edge does: one screen pixel of that scale is
-  // 2 * DISTANCE_RANGE / screenPxRange of it.
+  // The ring's width arrives in font pixels and is added to a distance in the shader's own screen
+  // scale, so it goes through the same conversion the edge does. It is capped where the reference
+  // caps an outline — one texel short of the encoded band — because a wider ring has no distance
+  // left to read and would flood the quad instead of ringing it.
   let outlinePx = input.outlineWidth * RASTER_SCALE / atlasTexelsPerPixel(input.uv);
-  let outward = screenPxRange * (${trueDistance} - 0.5) + outlinePx * screenPxRange / (2.0 * DISTANCE_RANGE);
+  let outlineRange = clamp(outlinePx, 0.0, (DISTANCE_RANGE - 1.0) * screenPxRange / (2.0 * DISTANCE_RANGE));
+  let outward = screenPxRange * (${trueDistance} - 0.5) + outlineRange;
   let outer = clamp(outward + 0.5, 0.0, 1.0);
   // No width means no ring, whatever alpha happens to hold: a page baked before the encoder wrote
   // true distances there is opaque, and reading that as a distance would flood the whole quad.

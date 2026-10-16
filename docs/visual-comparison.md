@@ -47,6 +47,54 @@ sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶�
 
 两边相机/投影/分辨率相同，但场景数据、网格和 AA 不完全一致。因此本轮仍是**结构与视觉诊断**，不报告严格像素误差分数。
 
+## 文本渲染的外部参照（Godot + msdfgen）
+
+文本子系统没有 Godot 参考场景（addon 无文本 API），但**渲染机制**可以对照：Godot 4.7 内置 msdfgen
+（`thirdparty/msdfgen`），它的 MSDF 采样本身就是 msdfgen 的官方做法。据此搭了一个最小参照项目，
+用同一个字体（`~/src/bevy@bevyengine/assets/fonts/FiraMono-Medium.ttf`，本仓库的 subset 就是从它裁的）
+画同一个字符串，一行灰度栅格化、一行 MSDF。
+
+| 项 | 值 |
+| --- | --- |
+| 引擎 | Godot 4.7.2.stable，Vulkan / Forward+ / RTX 4070 SUPER |
+| 捕获脚本 | `scripts/capture-godot-text.gd`（离屏 SubViewport，1920×1080，不受窗口尺寸影响） |
+| 字体 / 字号 | FiraMono-Medium.ttf / 20 px |
+| MSDF 参数 | `msdf_pixel_range = 8`、`msdf_size = 48`（Godot 默认），即 range/size = 1/6 |
+| 栅格化开关 | `hinting = NONE`、`subpixel_positioning = DISABLED`、灰度抗锯齿 |
+| 背景 | `#1e1e1e`，与 gallery 画布一致 |
+
+```bash
+godot --path /tmp/vgpu-text-parity --display-driver x11 --audio-driver Dummy \
+  --script "$PWD/scripts/capture-godot-text.gd" -- \
+  ~/src/bevy@bevyengine/assets/fonts/FiraMono-Medium.ttf /tmp/godot-text.png 20
+```
+
+（`--script` 取绝对路径：`--path` 指向的是另一个项目，`res://` 解析不到本仓库的 `scripts/`。）
+
+### 指标（同一条扫描线，取 15 行平均）
+
+`mid` = 半覆盖像素，`full` = 全亮像素，`ink` = 等效全覆盖像素数，均为每行的平均值，列窗口相同：
+
+| 渲染 | mid | full | ink |
+| --- | --- | --- | --- |
+| Godot grayscale raster | 10.1 | 11.5 | 4.18 |
+| Godot MSDF size=48 | 12.7 | 13.0 | **4.70** |
+| vgpu bitmap 1x | 11.1 | 14.1 | 5.10 |
+| vgpu sdf 4x | 15.6 | 11.6 | 5.15 |
+| vgpu msdf baked 24px | 7.4 | 11.5 | **3.97** |
+| vgpu msdf 2x（40px 光栅） | 7.0 | 11.7 | 4.01 |
+
+### 结论
+
+- **同一引擎内自比才有效**：Godot 的 MSDF 比它自己的栅格化更实（4.70 vs 4.18，+12.4%），而 vgpu 的
+  MSDF 比 vgpu 的栅格化更虚（3.97 vs 5.10，−22.1%）。vgpu 的 `sdf` 路径趋势与 Godot 一致，所以差距
+  落在 MSDF 这条线。
+- 差距**不是**光栅尺寸（2 倍光栅只补回 6%），也**不是**编码器的距离偏差（对解析正方形逐 texel 校验，
+  边缘 0..1 texel 区域偏差 −0.014 texel）。仍未定位的候选：曲线折线化（`CURVE_STEPS = 8`）的弦误差、
+  自研误差修正的形式、atlas 的 uv 用小数 `inkWidth` 而纹素块用 rounding。
+- 参照公式同时修掉了一个真实缺陷：Godot 用 `0.5 * dot(px_range / msdf_size, dest_size)`，vgpu 原来
+  是纯 `dot`，过渡带因此窄一半（`mid` 从 2 提到 5；后来按上表口径复测为 7.4）。
+
 ## 第十轮：平面图元的逐顶点法向 + index/world_space_width 的列基向量
 
 第九轮收尾时判断“平面图元的 `_n` 列淡出恒为 1.0、不影响像素”是**错的**：参考的

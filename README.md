@@ -164,7 +164,8 @@ sources produce `msdf`, and both ship:
 
 - **On demand** — `OutlineGlyphRasterizer` parses the inlined TrueType with `opentype.js` and encodes
 the first time each glyph appears. Any character the face covers, and any face at all, at the cost
-of a runtime dependency and an encoder pass.
+of a runtime dependency and an encoder pass; `rasterScale` works here too, encoding at a multiple of
+the layout size while the quad stays put.
 - **Prebaked** — `BakedMsdfRasterizer` reads the page `bun scripts/bake-msdf-atlas.ts` produced: 586
 glyphs at a 24 px raster in a 512² page, gzipped to 313 KiB and carried as raw texels (not a PNG, so
 no image decoder has to run and the payload still loads under Node). No `opentype.js`, and no
@@ -178,7 +179,11 @@ it anti-aliases triangle edges, not texel contents. What is actually in play:
 - **Rasterisation coverage.** Canvas2D anti-aliases every glyph it draws. That is the whole of the
 `bitmap` path's AA, and the input `sdf` is derived from.
 - **Distance reconstruction.** `sdf` and `msdf` rebuild the edge with an `fwidth`-scaled ramp, so the
-transition stays one pixel wide however far the camera pushes the glyph.
+transition stays one pixel wide however far the camera pushes the glyph. The scale is the *average*
+of both axes' derivatives — the reference shader's `0.5 * dot(px_range / msdf_size, dest_size)` —
+because each derivative already spans one screen pixel: summing them counts it twice, and a ramp
+half a pixel wide drops the rim pixels a correct one leaves at partial coverage, which reads as a
+thinner, toothed glyph. `docs/visual-comparison.md` records the comparison that pinned this down.
 - **Error correction.** The median of the three channels only equals the distance to the *nearest*
 edge where two of them saturate, so inside a stroke it lands on the middle distance and the rebuilt
 edge drifts. `msdfFromOutline` therefore corrects each texel's median against the exact shape
@@ -272,7 +277,7 @@ because `opentype.js` cannot decompress WOFF2. The subset has **no CJK coverage*
 `fontFamily` — already loaded with the document — when Chinese labels are needed.
 
 `?scene=text-compare` and `?scene=text-hud` open the text scenes directly. `?text=<name>` narrows the
-gallery to a single glyph source (`bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, `baked`).
+gallery to a single glyph source (`bitmap`, `bitmap4x`, `sdf`, `sdf4x`, `msdf`, `msdf2x`, `baked`).
 
 ## Capabilities
 

@@ -55,6 +55,7 @@ test("real GPU renders every Godot example without errors", async () => {
           sdf: new SyntheticFont("sdf"),
           sdf4x: new SyntheticFont("sdf", 4),
           msdf: new SyntheticFont("msdf"),
+          msdf2x: new SyntheticFont("msdf", 2),
           baked: new SyntheticFont("msdf"),
         },
       },

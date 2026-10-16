@@ -2217,6 +2217,7 @@ function textHudScene(recorder: FrameRecorder): void {
     ["bitmap", "bitmap 1x"],
     ["sdf4x", "sdf 4x"],
     ["baked", "msdf baked"],
+    ["msdf2x", "msdf 2x"],
   ];
   for (let index = 0; index < encodings.length; index++) {
     const [source, label] = encodings[index]!;
@@ -2235,8 +2236,8 @@ function textHudScene(recorder: FrameRecorder): void {
     outlineWidth: 3,
     outlineColor: [0.04, 0.05, 0.08, 1],
   } as const;
-  recorder.text([24, 330, 0], "outlined msdf", { ...outlinedLabel, source: "baked" });
-  recorder.text([190, 330, 0], "outlined mask", { ...outlinedLabel, source: "bitmap" });
+  recorder.text([24, 400, 0], "outlined msdf", { ...outlinedLabel, source: "baked" });
+  recorder.text([190, 400, 0], "outlined mask", { ...outlinedLabel, source: "bitmap" });
 
   // Anchors: the marker is the position, and each block lands on it differently. Spread along one row
   // rather than a 3×3 grid, so the panel stays inside a modest viewport.

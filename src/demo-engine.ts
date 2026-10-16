@@ -858,6 +858,9 @@ async function createTextSources(params: URLSearchParams): Promise<TextSources> 
     sdf: new CanvasGlyphRasterizer({ encoding: "sdf" }),
     sdf4x: new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 }),
     msdf: new OutlineGlyphRasterizer(),
+    // The same encoder at twice the raster, with the range scaled to keep the 1/6 ratio the 24 px
+    // baked page uses — the lever against a magnified block showing its own raster.
+    msdf2x: new OutlineGlyphRasterizer({ rasterScale: 2, distanceRange: 8 }),
   };
 }
 
@@ -877,6 +880,8 @@ async function createTextSource(name: string): Promise<TextFontSource> {
       return new CanvasGlyphRasterizer({ encoding: "sdf", rasterScale: 4 });
     case "msdf":
       return new OutlineGlyphRasterizer();
+    case "msdf2x":
+      return new OutlineGlyphRasterizer({ rasterScale: 2, distanceRange: 8 });
     case "baked":
     default: {
       const font = new BakedMsdfRasterizer();
