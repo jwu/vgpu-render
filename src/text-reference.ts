@@ -101,7 +101,9 @@ const renderer = new GpuDebugDraw3D(gpu, {
   lines: 256,
   triangles: 256,
   joints: 256,
-  text: { sources: { bitmap: new CanvasGlyphRasterizer({ encoding: "bitmap" }) }, atlasSize: 1024 },
+  // Fixed raster on purpose: this page is compared against bevy glyph by glyph, so the glyphs have to
+  // be rasterised at exactly the size the case asks for rather than at the size the screen drives.
+  text: { sources: { bitmap: new CanvasGlyphRasterizer({ encoding: "bitmap", dynamicRaster: false }) }, atlasSize: 1024 },
 });
 
 const debug = new DebugDraw3D();

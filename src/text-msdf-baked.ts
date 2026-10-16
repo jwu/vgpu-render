@@ -38,6 +38,11 @@ export class BakedMsdfRasterizer implements GlyphRasterizer, TextMeasurer {
   readonly encoding = "msdf" as const;
   readonly distanceRange = BAKED_MSDF_DISTANCE_RANGE;
   readonly bakeSize = BAKED_MSDF_BAKE_SIZE;
+  /**
+   * Every glyph already sits in a page baked at `bakeSize`, so another raster size cannot be
+   * honoured: the renderer keeps this source on its own raster instead of following the screen.
+   */
+  readonly dynamicRaster = false;
   readonly #metrics = new Map<string, GlyphMetrics>();
   #page: Uint8Array | undefined;
 

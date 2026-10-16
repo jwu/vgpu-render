@@ -31,12 +31,19 @@ export type OutlineGlyphRasterizerOptions = {
   /** Distance in texels either side of the edge that the encoded field covers. */
   readonly distanceRange?: number;
   /**
-   * Rasterisation scale: glyphs are encoded at `fontSize * rasterScale` texels while layout and quads
-   * stay in font pixels, exactly as the Canvas2D sources do it. The atlas already asks for that
-   * larger size, so the same outline is encoded at a finer raster — which is the lever against a
-   * magnified block showing the raster it was reconstructed from.
+   * Default rasterisation scale: a request that names no scale of its own is encoded at
+   * `fontSize * rasterScale` texels while layout and quads stay in font pixels, exactly as the
+   * Canvas2D sources do it. The renderer overrides it per block with the size the block covers on
+   * screen (see `text-raster`), so the atlas asks for the finer size and the same outline is encoded
+   * at a raster that matches it.
    */
   readonly rasterScale?: number;
+  /**
+   * Whether the renderer drives this source's raster size from the size a block covers on screen.
+   * Outlines encode at any size, so it defaults to `true`; a fixed raster is only for a comparison
+   * that has to stay at one raster size on purpose.
+   */
+  readonly dynamicRaster?: boolean;
 };
 
 /** Turns a path's command list into outline segments, offset so the ink box starts at the origin. */
@@ -91,6 +98,8 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
   readonly encoding = "msdf" as const;
   readonly distanceRange: number;
   readonly rasterScale: number;
+  /** Whether the renderer drives this source's raster per block. See `dynamicRaster` in the options. */
+  readonly dynamicRaster: boolean;
   readonly #font: Font;
   readonly #metrics = new Map<string, GlyphMetrics>();
   readonly #vertical = new Map<string, VerticalMetrics>();
@@ -99,6 +108,7 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     this.#font = parse(options.font ?? decodeEmbeddedTrueTypeFont().buffer);
     this.distanceRange = options.distanceRange ?? DEFAULT_SDF_RANGE;
     this.rasterScale = options.rasterScale ?? 1;
+    this.dynamicRaster = options.dynamicRaster ?? true;
   }
 
   /** The face this source reads, for callers that want to name it. */
@@ -148,12 +158,12 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  rasterize(character: string, _fontFamily: string, fontSize: number): RasterizedGlyph | undefined {
-    const ink = this.#inkBox(character, fontSize);
+  rasterize(character: string, _fontFamily: string, rasterSize: number): RasterizedGlyph | undefined {
+    const ink = this.#inkBox(character, rasterSize);
     if (!(ink.width > 0) || !(ink.height > 0)) return undefined;
     const width = Math.max(1, Math.ceil(ink.width));
     const height = Math.max(1, Math.ceil(ink.height));
-    const path = this.#font.charToGlyph(character).getPath(0, 0, fontSize);
+    const path = this.#font.charToGlyph(character).getPath(0, 0, rasterSize);
     const segments = commandsToSegments(path.commands as readonly OutlineCommand[], ink.left, ink.top);
     return {
       width,
@@ -163,7 +173,7 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
       inkHeight: ink.height,
       bearingLeft: ink.left,
       bearingTop: ink.top,
-      advance: (this.#font.charToGlyph(character).advanceWidth ?? 0) * this.#scale(fontSize),
+      advance: (this.#font.charToGlyph(character).advanceWidth ?? 0) * this.#scale(rasterSize),
     };
   }
 }

@@ -23,6 +23,8 @@ export type GpuTextOptions = {
   readonly mipLevels?: number;
   /** Atlas pages per source. See `GpuText3DOptions.pages`. */
   readonly pages?: number;
+  /** What a glyph that no page can hold costs. See `GpuText3DOptions.onFull`. Defaults to `"skip"`. */
+  readonly onFull?: "throw" | "skip";
 };
 
 /**
@@ -638,6 +640,12 @@ export class GpuDebugDraw3D {
   #viewProjection: ArrayLike<number> = identity();
   /** World-to-view matrix, needed by the reference back-face fade on normal-aware strokes. */
   #view: ArrayLike<number> = identity();
+  /**
+   * Last target size seen in `draw`, in canvas pixels. Text preparation runs a pass earlier and
+   * needs it: a world block's screen size — and with it the raster rung its glyphs land on — depends
+   * on the viewport, and on the first frame that rung is only worth picking conservatively.
+   */
+  #viewportSize: readonly [number, number] = [0, 0];
   #pointCount = 0;
   #lineCount = 0;
   #triangleCount = 0;
@@ -767,7 +775,7 @@ export class GpuDebugDraw3D {
       else group.push(command);
     }
     for (const name of new Set([...this.#texts.keys(), ...groups.keys()])) {
-      this.#textRenderer(name).prepare(groups.get(name) ?? [], camera);
+      this.#textRenderer(name).prepare(groups.get(name) ?? [], { ...camera, viewportSize: this.#viewportSize });
     }
   }
 
@@ -786,6 +794,7 @@ export class GpuDebugDraw3D {
       ...(options.atlasSize === undefined ? {} : { atlasSize: options.atlasSize }),
       ...(options.mipLevels === undefined ? {} : { mipLevels: options.mipLevels }),
       ...(options.pages === undefined ? {} : { pages: options.pages }),
+      ...(options.onFull === undefined ? {} : { onFull: options.onFull }),
     });
     this.#texts.set(name, renderer);
     return renderer;
@@ -806,6 +815,7 @@ export class GpuDebugDraw3D {
   }
 
   draw(pass: FramePass): void {
+    this.#viewportSize = pass.target.size;
     const camera = { viewProjection: this.#viewProjection, viewportSize: pass.target.size };
     const normalCamera = { viewProjection: this.#viewProjection, view: this.#view, viewportSize: pass.target.size };
     this.#pointDraw.set({ camera });

@@ -231,13 +231,13 @@ test("an empty block draws nothing", async () => {
 });
 
 /** Render one screen-space block with a bounded atlas and read the pixels back. */
-async function renderWithAtlas(pages: number, text: string): Promise<Uint8Array> {
+async function renderWithAtlas(pages: number, text: string, onFull: "throw" | "skip" = "skip"): Promise<Uint8Array> {
   const gpu = await init();
   try {
     const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
     // A 64px page holds 36 of the synthetic 16px glyphs (six 10px shelves of six), so 40 distinct
     // characters cannot fit one page.
-    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont("bitmap") }, atlasSize: 64, pages } });
+    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont("bitmap") }, atlasSize: 64, pages, onFull } });
     const debug = new DebugDraw3D();
     const recorder = debug.beginFrame();
     recorder.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
@@ -258,8 +258,14 @@ test("draws text that spills onto a second atlas page", async () => {
   expect(litCount(await renderWithAtlas(4, OVERFLOWING))).toBeGreaterThan(30);
 });
 
-test("reports a full atlas rather than dropping glyphs", async () => {
-  await expect(renderWithAtlas(1, OVERFLOWING)).rejects.toThrow(RangeError);
+test("reports a full atlas rather than dropping glyphs when the caller asks it to", async () => {
+  await expect(renderWithAtlas(1, OVERFLOWING, "throw")).rejects.toThrow(RangeError);
+});
+
+test("drops the glyphs a full atlas cannot hold instead of taking the frame down", async () => {
+  // One page holds 36 of the 40 glyphs, so the frame is missing characters but still draws — which is
+  // what a live game wants from a cache it sized too small. `GpuText3D.skippedGlyphs` reports the cost.
+  expect(litCount(await renderWithAtlas(1, OVERFLOWING))).toBeGreaterThan(20);
 });
 
 test("keeps drawing after a page is recycled between frames", async () => {

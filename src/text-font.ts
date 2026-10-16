@@ -129,16 +129,32 @@ export interface GlyphRasterizer {
    */
   readonly distanceRange?: number;
   /**
-   * Rasterisation scale: glyphs are requested at `fontSize × rasterScale` texels while layout and
-   * quads stay in font pixels. Larger costs atlas area quadratically and keeps a magnified block
-   * from showing the texel grid its distance field was reconstructed from.
+   * Default rasterisation scale for this source: a request that names no scale of its own is
+   * rasterised at `fontSize × rasterScale` texels while layout and quads stay in font pixels.
+   * Larger costs atlas area quadratically and keeps a magnified block from showing the texel grid
+   * its distance field was reconstructed from.
    *
    * It belongs to the source rather than to the renderer because two sources of the same encoding
-   * can coexist in one frame — which is exactly what a side-by-side quality comparison needs.
+   * can coexist in one frame — which is exactly what a side-by-side quality comparison needs. The
+   * renderer overrides it per block with the size the block occupies on screen; see `text-raster`.
    */
   readonly rasterScale?: number;
-  /** Returns `undefined` for characters with no ink, such as whitespace. */
-  rasterize(character: string, fontFamily: string, fontSize: number): RasterizedGlyph | undefined;
+  /**
+   * Whether the source can rasterise at whatever size the renderer asks for.
+   *
+   * A source that reads outlines or a Canvas2D face can, so the renderer hands it the size the block
+   * covers on screen and the glyph stays sharp at every font size. A prebaked page cannot: its glyphs
+   * were rasterised once at a fixed size, so the renderer leaves it on `rasterScale` instead.
+   */
+  readonly dynamicRaster?: boolean;
+  /**
+   * Returns `undefined` for characters with no ink, such as whitespace.
+   *
+   * `rasterSize` is the size in texels the glyph is rasterised at, which is *not* the layout font
+   * size: the atlas asks for the size the glyph will cover on screen, so the same character stays
+   * sharp at any font size while still being rasterised once per size rung.
+   */
+  rasterize(character: string, fontFamily: string, rasterSize: number): RasterizedGlyph | undefined;
   /** Vertical metrics for a `fontSize`-sized face of `fontFamily`. */
   verticalMetrics(fontFamily: string, fontSize: number): VerticalMetrics;
 }
@@ -164,14 +180,21 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
   readonly encoding: CoverageEncoding;
   readonly distanceRange: number;
   readonly rasterScale: number;
+  /**
+   * Whether the renderer drives this source's raster size from the size a block covers on screen.
+   * A Canvas2D face can be asked for any size, so it defaults to `true`; a source that needs a fixed
+   * raster — a pixel-accurate comparison against another renderer, say — turns it off.
+   */
+  readonly dynamicRaster: boolean;
   #surface: Surface | undefined;
   readonly #metrics = new Map<string, GlyphMetrics>();
   readonly #vertical = new Map<string, VerticalMetrics>();
 
-  constructor(options: { encoding?: CoverageEncoding; distanceRange?: number; rasterScale?: number } = {}) {
+  constructor(options: { encoding?: CoverageEncoding; distanceRange?: number; rasterScale?: number; dynamicRaster?: boolean } = {}) {
     this.encoding = options.encoding ?? "bitmap";
     this.distanceRange = options.distanceRange ?? DEFAULT_SDF_RANGE;
     this.rasterScale = options.rasterScale ?? 1;
+    this.dynamicRaster = options.dynamicRaster ?? true;
   }
 
   #ensureSurface(): Surface {
@@ -226,8 +249,10 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  rasterize(character: string, fontFamily: string, fontSize: number): RasterizedGlyph | undefined {
-    const glyph = this.glyphMetrics(character, fontFamily, fontSize);
+  rasterize(character: string, fontFamily: string, rasterSize: number): RasterizedGlyph | undefined {
+    // The raster size *is* the face size here: `measureText` and the fill both work in the texels the
+    // atlas will store, and the layout's own measurements never pass through this path.
+    const glyph = this.glyphMetrics(character, fontFamily, rasterSize);
     if (!(glyph.width > 0) || !(glyph.height > 0)) return undefined;
     // The ink box is fractional; the mask rounds up so no edge pixel is lost.
     const width = Math.max(1, Math.ceil(glyph.width));
@@ -238,7 +263,7 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
       canvas.height = Math.max(canvas.height, height);
     }
     context.clearRect(0, 0, width, height);
-    context.font = this.#font(fontFamily, fontSize);
+    context.font = this.#font(fontFamily, rasterSize);
     context.textAlign = "left";
     context.textBaseline = "alphabetic";
     context.fillStyle = "#fff";

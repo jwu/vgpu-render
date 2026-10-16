@@ -50,6 +50,12 @@ export type AtlasGlyph = {
   readonly width: number;
   readonly height: number;
   readonly advance: number;
+  /**
+   * Texels per layout font pixel this entry was rasterised at, `rasterPx / fontSize`. One atlas holds
+   * entries from several rungs of the raster ladder, so the shader reads the ratio per glyph rather
+   * than from a constant; it is what converts a font-pixel outline width into sampled texels.
+   */
+  readonly rasterScale: number;
   /** Frame this glyph was last requested in. Glyphs older than the current frame are recyclable. */
   lastFrame: number;
   /** Packed rectangle in page texels, padding included, so eviction can hand the space back. */
@@ -97,6 +103,8 @@ export class GlyphAtlas {
   readonly #size: number;
   readonly #padding: number;
   readonly #maxPages: number;
+  readonly #onFull: "throw" | "skip";
+  #skipped = 0;
   readonly #pages: AtlasPage[] = [];
   readonly #packing: PagePacking[] = [];
   readonly #glyphs = new Map<string, AtlasGlyph>();
@@ -107,11 +115,15 @@ export class GlyphAtlas {
   readonly #free: ({ readonly page: number } & AtlasDirtyRect)[] = [];
   #frame = 0;
 
-  constructor(rasterizer: GlyphRasterizer, options: { size?: number; padding?: number; maxPages?: number } = {}) {
+  constructor(
+    rasterizer: GlyphRasterizer,
+    options: { size?: number; padding?: number; maxPages?: number; onFull?: "throw" | "skip" } = {},
+  ) {
     this.#rasterizer = rasterizer;
     this.#size = options.size ?? DEFAULT_ATLAS_SIZE;
     this.#padding = options.padding ?? DEFAULT_ATLAS_PADDING;
     this.#maxPages = options.maxPages ?? Number.POSITIVE_INFINITY;
+    this.#onFull = options.onFull ?? "throw";
     if (!Number.isInteger(this.#size) || this.#size <= 0) throw new RangeError("atlas size must be a positive integer");
     if (!Number.isInteger(this.#padding) || this.#padding < 0) throw new RangeError("atlas padding must be a non-negative integer");
     if (this.#maxPages < 1) throw new RangeError("atlas maxPages must be at least one");
@@ -138,6 +150,15 @@ export class GlyphAtlas {
   }
 
   /**
+   * Glyphs dropped because the atlas was full and no page could be recycled, which only happens when
+   * the caller chose `onFull: "skip"`. A renderer reports it so a frame that is quietly missing a
+   * character can be told apart from one the font never had.
+   */
+  get skipped(): number {
+    return this.#skipped;
+  }
+
+  /**
    * Marks the start of a frame. Glyphs that were not requested in the current frame become
    * recyclable, so a bounded atlas stops being a hard failure once on-screen text changes shape.
    * Call it once per frame, before the frame's glyphs are requested.
@@ -150,21 +171,38 @@ export class GlyphAtlas {
    * Returns the atlas entry for a character, rasterising and packing it on first use.
    * `undefined` means the character has no ink (whitespace) or the rasteriser has nothing for
    * it; the layout layer has already dropped those glyphs, so callers treat it as a skip.
+   *
+   * `rasterScale` defaults to the source's own scale, which keeps a fixed-raster source drawing
+   * exactly as it did. The renderer passes the size the block covers on screen instead, so the entry
+   * that comes back is rasterised for the rung that face asked for.
    */
-  glyph(character: string, fontFamily: string, fontSize: number): AtlasGlyph | undefined {
-    const key = `${fontFamily}|${fontSize}|${character}`;
+  glyph(character: string, fontFamily: string, fontSize: number, rasterScale?: number): AtlasGlyph | undefined {
+    const scale = rasterScale !== undefined && rasterScale > 0 ? rasterScale : this.rasterScale;
+    // The key carries the size the glyph was *rasterised* at rather than the layout font size: two
+    // font sizes that land on the same rung share one rasterisation, which is what keeps a block
+    // whose size changes every frame from rasterising the same character over and over.
+    const rasterPx = Math.max(1, Math.round(fontSize * scale));
+    const key = `${fontFamily}|${rasterPx}|${character}`;
     const cached = this.#glyphs.get(key);
     if (cached !== undefined) {
       cached.lastFrame = this.#frame;
       return cached;
     }
     if (this.#missing.has(key)) return undefined;
-    const rasterized = this.#rasterizer.rasterize(character, fontFamily, fontSize * this.rasterScale);
+    const rasterized = this.#rasterizer.rasterize(character, fontFamily, rasterPx);
     if (rasterized === undefined) {
       this.#missing.add(key);
       return undefined;
     }
     const placement = this.#pack(rasterized.width, rasterized.height);
+    if (placement === undefined) {
+      if (this.#onFull === "throw") {
+        throw new RangeError(`the glyph atlas is full: ${this.#pages.length} page(s) of ${this.#size}px no longer fit a new glyph; raise the atlas size or the page count`);
+      }
+      // Capacity, not the font: the next frame may have room again, so this is not cached as missing.
+      this.#skipped++;
+      return undefined;
+    }
     const page = this.#pages[placement.page]!;
     this.#blit(page, placement.x, placement.y, rasterized.width, rasterized.height, rasterized.texels);
     const glyph: AtlasGlyph = {
@@ -181,6 +219,7 @@ export class GlyphAtlas {
       width: rasterized.inkWidth,
       height: rasterized.inkHeight,
       advance: rasterized.advance,
+      rasterScale: rasterPx / fontSize,
       lastFrame: this.#frame,
       atlasX: placement.x,
       atlasY: placement.y,
@@ -308,10 +347,12 @@ export class GlyphAtlas {
   /**
    * Shelf packing: glyphs fill a row until it runs out of width, then a new row starts below.
    * bevy uses a rectangle packer, but for the handful of sizes a debug frame draws, shelves
-   * waste little and keep placement deterministic. When every page is full and none can be
-   * evicted the atlas reports itself full instead of silently dropping glyphs.
+   * waste little and keep placement deterministic.
+   *
+   * `undefined` means every page is full and nothing on them was recyclable. The caller decides what
+   * that costs; see `onFull`.
    */
-  #pack(width: number, height: number): { page: number; x: number; y: number } {
+  #pack(width: number, height: number): { page: number; x: number; y: number } | undefined {
     const w = width + this.#padding;
     const h = height + this.#padding;
     if (w > this.#size || h > this.#size) {
@@ -331,7 +372,7 @@ export class GlyphAtlas {
     const recycled = this.#recycleGlyphs(w, h);
     if (recycled !== undefined) return recycled;
     if (this.#pages.length >= this.#maxPages) {
-      throw new RangeError(`the glyph atlas is full: ${this.#pages.length} page(s) of ${this.#size}px no longer fit a new glyph; raise the atlas size or the page count`);
+      return undefined;
     }
     const index = this.#createPage();
     const placement = packInto(this.#packing[index]!, w, h, this.#size);

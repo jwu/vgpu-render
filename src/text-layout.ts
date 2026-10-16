@@ -190,6 +190,50 @@ function isWhitespace(character: string): boolean {
   return character === " " || character === "\t";
 }
 
+/**
+ * Characters that break between themselves rather than at spaces.
+ *
+ * UAX #14 calls these classes ID (ideographic) and the punctuation around them. Without this a whole
+ * Chinese sentence arrives as one word token, so `word` breaking can only move it as a block and a
+ * bounded block overflows its bounds instead of wrapping.
+ */
+function isCjkCharacter(character: string): boolean {
+  const code = character.codePointAt(0) ?? 0;
+  return (
+    (code >= 0x2e80 && code <= 0x303f) || // CJK radicals, symbols and punctuation
+    (code >= 0x3040 && code <= 0x30ff) || // hiragana, katakana
+    (code >= 0x3400 && code <= 0x4dbf) || // CJK unified ideographs extension A
+    (code >= 0x4e00 && code <= 0x9fff) || // CJK unified ideographs
+    (code >= 0xf900 && code <= 0xfaff) || // CJK compatibility ideographs
+    (code >= 0xff00 && code <= 0xffef) || // full-width forms
+    (code >= 0xac00 && code <= 0xd7af) || // hangul syllables
+    (code >= 0x20000 && code <= 0x3ffff) // extensions B and beyond
+  );
+}
+
+/**
+ * Kinsoku (禁则) sets: punctuation that may not open a line, and brackets that may not close one.
+ *
+ * The line breaker only knows how to move a token, so the rule is expressed by gluing the character
+ * to its neighbour instead: a closing mark joins the run before it, an opening mark the run after.
+ */
+const NO_LINE_START = new Set([
+  ",", ".", "!", "?", ":", ";", ")", "]", "}", ".", ")", "]", "}", "%",
+  "\u3001", "\u3002", "\uff0c", "\uff0e", "\uff01", "\uff1f", "\uff1a", "\uff1b", "\uff09", "\uff3d", "\uff5d", "\uff05",
+  "\u300d", "\u300f", "\u3011", "\u300b", "\u3009", "\u3015", "\u2019", "\u201d",
+]);
+const NO_LINE_END = new Set(["(", "[", "{", "\uff08", "\uff3b", "\uff5b", "\u300c", "\u300e", "\u3010", "\u300a", "\u3008", "\u3014", "\u2018", "\u201c"]);
+
+/** Appends one character to the token that is already open, or starts a new one. */
+function glueToLastToken(tokens: Token[], character: StyledCharacter): void {
+  const last = tokens[tokens.length - 1];
+  if (last === undefined || last.kind === "break") {
+    tokens.push({ kind: "word", characters: [character] });
+    return;
+  }
+  tokens[tokens.length - 1] = { kind: last.kind, characters: [...last.characters, character] };
+}
+
 /** Splits the flattened block into word / spaces / hard-break tokens. */
 function tokenize(items: readonly StyledCharacter[]): Token[] {
   const tokens: Token[] = [];
@@ -204,6 +248,23 @@ function tokenize(items: readonly StyledCharacter[]): Token[] {
     if (item.character === "\n") {
       flush();
       tokens.push({ kind: "break", characters: [] });
+      continue;
+    }
+    // CJK text carries no spaces to break at, so each ideograph becomes its own token and the greedy
+    // breaker can wrap between any two of them. Kinsoku is applied here rather than in the breaker
+    // because it can only move a whole token: a mark that may not open a line is glued to the run it
+    // belongs to, and one that may not close a line to the character that follows it.
+    if (!item.isSpace && isCjkCharacter(item.character)) {
+      const previous = current[current.length - 1] ?? tokens[tokens.length - 1]?.characters.at(-1);
+      const glue = previous !== undefined && (NO_LINE_START.has(item.character) || NO_LINE_END.has(previous.character));
+      if (glue) {
+        if (current.length > 0) current.push(item);
+        else glueToLastToken(tokens, item);
+        kind = "word";
+        continue;
+      }
+      flush();
+      tokens.push({ kind: "word", characters: [item] });
       continue;
     }
     const next: "word" | "space" = item.isSpace ? "space" : "word";

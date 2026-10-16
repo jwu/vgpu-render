@@ -143,6 +143,26 @@ describe("layoutText", () => {
     expect(result.lineCount).toBe(1);
   });
 
+  test("wraps CJK between characters instead of treating a sentence as one word", () => {
+    // There are no spaces to break at, so without CJK handling the whole sentence arrives as one word
+    // token and a bounded block overflows its bounds instead of wrapping.
+    const result = layoutText([{ text: "中文字" }], options({ bounds: [ADVANCE * 2, Number.POSITIVE_INFINITY] }), font);
+    expect(result.lineCount).toBe(2);
+    expect(result.glyphs[2]!.center[0]).toBeCloseTo(INK / 2, 6);
+    expect(result.glyphs[2]!.center[1]).toBeCloseTo(LINE_HEIGHT + FIRST_LINE_CENTER_Y, 6);
+  });
+
+  test("keeps a closing CJK mark off the start of a line", () => {
+    const result = layoutText([{ text: "中文，字" }], options({ bounds: [ADVANCE * 2, Number.POSITIVE_INFINITY] }), font);
+    const index = result.glyphs.findIndex((glyph) => glyph.character === "，");
+    expect(index).toBeGreaterThan(0);
+    const mark = result.glyphs[index]!;
+    const before = result.glyphs[index - 1]!;
+    // Kinsoku: the mark stays on the line of the ideograph it belongs to rather than opening a line.
+    expect(mark.center[1]).toBeCloseTo(before.center[1], 6);
+    expect(mark.center[0]).toBeCloseTo(before.center[0] + ADVANCE, 6);
+  });
+
   test("rejects an unknown anchor name", () => {
     expect(() => resolveTextAnchor("middle" as never)).toThrow(RangeError);
   });

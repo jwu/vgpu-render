@@ -41,6 +41,7 @@ import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world,
 import { DISTANCE_CHANNELS, DEFAULT_ATLAS_SIZE, buildMipChain, dirtyAtLevel, downsampleDistancePage, downsamplePage, extractRegion, GlyphAtlas, type GlyphEncoding } from "./text-atlas.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";
 import { layoutText, resolveTextAnchor, type TextMeasurer } from "./text-layout.js";
+import { quantizeRasterPx, rasterScaleFor, screenPixelsPerWorldUnit } from "./text-raster.js";
 import type { GlyphRasterizer } from "./text-font.js";
 
 /** Both halves of a font: metrics for layout and pixels for the atlas. */
@@ -61,6 +62,12 @@ export type GpuText3DOptions = {
    * worth of texels split across the page size chosen: 4 pages at 512 px, one at 1024 px.
    */
   readonly pages?: number;
+  /**
+   * What a glyph that no page can hold costs. `"skip"` (the default) drops it and counts it in
+   * `skippedGlyphs`, which keeps a live frame drawing; `"throw"` raises instead, which is what a test
+   * or a tool that would rather fail loudly asks for.
+   */
+  readonly onFull?: "throw" | "skip";
   /** Depth bias baked into the shader, matching the reference primitive bias. */
   readonly depthBias?: number;
   /**
@@ -90,7 +97,7 @@ const SPACE_SCREEN = 2;
 /** Third flag bit: skip depth comparison entirely and sit at the near plane. */
 const FLAG_NO_DEPTH = 4;
 
-function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: number, rasterScale: number, atlasSize: number, maxLod: number): string {
+function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: number, atlasSize: number, maxLod: number): string {
   // The atlas holds either an anti-aliased coverage mask (bevy's `FontAtlas` layout) or a distance
   // field. Coverage is already the answer; a distance has to be turned back into it, and the
   // screen-space derivative is what keeps that transition one pixel wide however far the camera
@@ -129,7 +136,7 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   // scale, so it goes through the same conversion the edge does. It is capped where the reference
   // caps an outline — one texel short of the encoded band — because a wider ring has no distance
   // left to read and would flood the quad instead of ringing it.
-  let outlinePx = input.outlineWidth * RASTER_SCALE / atlasTexelsPerPixel(input.uv);
+  let outlinePx = input.outlineWidth * input.rasterScale / atlasTexelsPerPixel(input.uv);
   let outlineRange = clamp(outlinePx, 0.0, (DISTANCE_RANGE - 1.0) * screenPxRange / (2.0 * DISTANCE_RANGE));
   let outward = screenPxRange * (${trueDistance} - 0.5) + outlineRange;
   let outer = clamp(outward + 0.5, 0.0, 1.0);
@@ -143,11 +150,12 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
 `;
   // Every sample reads one layer of the atlas array: one page per layer, so a glyph beyond the first
   // page costs no extra draw call.
-  const sample = (): string => "textureSample(atlas, atlasSampler, input.uv, i32(input.layer + 0.5))";
-  // A coverage mask can use the implicit level — averaging it is the minification filter it wants, so
-  // whatever the hardware picks is right. A distance field cannot: its levels are built in coverage
-  // and decoded against the range of the level they came from, so it samples the level this shader
-  // already computed for that range.
+  //
+  // A coverage mask picks its level from the raster ladder rather than from the hardware: the ladder
+  // oversamples by at most one step, and blending that against a half-resolution level is exactly what
+  // would soften a stem that is already the right size. A distance field reads an explicit level too,
+  // but for the opposite reason — its levels are built in coverage and decoded against the range of the
+  // level they came from, so it has to sample the level this shader computed for that range.
   const sampleLod = (): string => "textureSampleLevel(atlas, atlasSampler, input.uv, i32(input.layer + 0.5), lod)";
   const fragment =
     encoding === "sdf"
@@ -165,12 +173,18 @@ fn median3(value: vec3f) -> f32 {
           )
         : `@fragment fn fs_main(input: Out) -> @location(0) vec4f {
   let layer = i32(input.layer + 0.5);
-  let texel = ${sample()};
+  // The raster ladder oversamples by at most one step, so a glyph is usually magnified by less than
+  // a mip level — and at that scale blending level 0 with level 1 is what softens a stem that is
+  // already the right size. Flooring the level samples the stored raster until the block really has
+  // shrunk into the chain, which is the direction the chain exists for.
+  let texelsPerPixel = atlasTexelsPerPixel(input.uv);
+  let lod = clamp(floor(log2(max(texelsPerPixel, 1.0))), 0.0, MAX_LOD);
+  let texel = textureSampleLevel(atlas, atlasSampler, input.uv, layer, lod);
   // A coverage mask carries no distance, so the ring is the furthest coverage any of eight
   // directions reports at the outline's radius. Each step is taken through the screen derivative,
   // so the ring stays round when the quad is stretched, and at width zero every sample lands back
   // on the centre and leaves no ring at all.
-  let step = fwidth(input.uv) * (input.outlineWidth * RASTER_SCALE / atlasTexelsPerPixel(input.uv));
+  let step = fwidth(input.uv) * (input.outlineWidth * input.rasterScale / atlasTexelsPerPixel(input.uv));
   const DIAGONAL: f32 = 0.70710678;
   var expanded = texel.a;
   expanded = max(expanded, textureSample(atlas, atlasSampler, input.uv + vec2f(step.x, 0.0), layer).a);
@@ -193,7 +207,7 @@ struct Camera { viewProjection: mat4x4f, view: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var atlas: texture_2d_array<f32>;
 @group(0) @binding(2) var atlasSampler: sampler;
-${depthBiasHelpers(depthBias)}\nconst RASTER_SCALE: f32 = ${rasterScale};\nconst ATLAS_SIZE: f32 = ${atlasSize}.0;\nconst MAX_LOD: f32 = ${maxLod}.0;${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
+${depthBiasHelpers(depthBias)}\nconst ATLAS_SIZE: f32 = ${atlasSize}.0;\nconst MAX_LOD: f32 = ${maxLod}.0;${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
 struct In {
   @location(0) position: vec3f,
   @location(1) world0: vec4f, @location(2) world1: vec4f,
@@ -210,8 +224,11 @@ struct In {
   // The outline: a width in font pixels and the ring's colour, straight from the block's style.
   @location(12) outlineWidth: f32,
   @location(13) outlineColor: vec4f,
+  // Atlas texels per font pixel for the rung this glyph was rasterised on. Blocks in one frame can
+  // sit on different rungs, so it travels with the glyph instead of being a shader constant.
+  @location(14) rasterScale: f32,
 }
-struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) color: vec4f, @location(2) layer: f32, @location(3) outlineWidth: f32, @location(4) outlineColor: vec4f }
+struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1) color: vec4f, @location(2) layer: f32, @location(3) outlineWidth: f32, @location(4) outlineColor: vec4f, @location(5) rasterScale: f32 }
 
 @vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
   let corners = array<vec2f, 6>(vec2f(0,0), vec2f(1,0), vec2f(0,1), vec2f(0,1), vec2f(1,0), vec2f(1,1));
@@ -248,11 +265,13 @@ struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1
   out.layer = input.layer;
   out.outlineWidth = input.outlineWidth;
   out.outlineColor = input.outlineColor;
+  out.rasterScale = input.rasterScale;
   return out;
 }
 
-// One font pixel is RASTER_SCALE atlas texels and a screen pixel covers this many of them, which is
-// what turns an outline width in font pixels into the screen pixels the reconstruction works in.
+// Each glyph carries how many atlas texels one of its font pixels spans, and a screen pixel covers
+// this many of them, which is what turns an outline width in font pixels into the screen pixels the
+// reconstruction works in.
 fn atlasTexelsPerPixel(uv: vec2f) -> f32 {
   return max(f32(textureDimensions(atlas, 0).x) * max(fwidth(uv).x, fwidth(uv).y), 1e-5);
 }
@@ -292,7 +311,9 @@ export class GpuText3D {
     // no extra draw call and no extra indirect buffer. The caller can still raise `atlasSize`
     // instead, which costs memory for every page either way.
     // The source owns the rasterisation scale, so two sources of one encoding can coexist in a frame.
-    this.#atlas = new GlyphAtlas(options.font, { size: atlasSize, maxPages: pageCount });
+    // `onFull: "skip"` by default: a live cache that runs out of room should drop a glyph, not take the
+    // frame down. `skippedGlyphs` reports how many that cost.
+    this.#atlas = new GlyphAtlas(options.font, { size: atlasSize, maxPages: pageCount, onFull: options.onFull ?? "skip" });
     // A chain cannot outrun the page: a 512 px atlas only has ten levels down to 1×1.
     this.#mipLevels = Math.max(1, Math.min(options.mipLevels ?? DEFAULT_MIP_LEVELS, Math.floor(Math.log2(atlasSize)) + 1));
     // A distance field's levels have to be filtered in coverage, or thin ink fades as the chain
@@ -318,12 +339,15 @@ export class GpuText3D {
         // screen derivative, which is what keeps the ring proportional to the glyphs.
         outlineWidth: "float32",
         outlineColor: "float32x4",
+        // Atlas texels per font pixel for the rung this glyph landed on. It is per glyph because one
+        // frame mixes rungs: two blocks of the same font can be drawn at different screen sizes.
+        rasterScale: "float32",
       },
     });
     const mesh = zeroGeometry(gpu);
     this.#bridge = instanceGeometry(gpu, this.#glyphs, { mesh });
     this.#draw = draw(gpu, {
-      shader: prepareShader(textShader(options.depthBias ?? DEFAULT_TEXT_DEPTH_BIAS, this.#atlas.encoding, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE, this.#atlas.rasterScale, atlasSize, this.#mipLevels - 1)),
+      shader: prepareShader(textShader(options.depthBias ?? DEFAULT_TEXT_DEPTH_BIAS, this.#atlas.encoding, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE, atlasSize, this.#mipLevels - 1)),
       geometry: this.#bridge.geometry,
       instances: 0,
       blend: "alpha",
@@ -350,8 +374,22 @@ export class GpuText3D {
     });
   }
 
-  /** Lays out every block, fills the glyph atlas, and refreshes the instance buffer. */
-  prepare(commands: readonly TextCommand[], camera: { readonly viewProjection: ArrayLike<number>; readonly view: ArrayLike<number> }): void {
+  /**
+   * Glyphs dropped so far because every page was full. Non-zero means the atlas is too small for the
+   * frame — raise `atlasSize` or `pages` — and characters are quietly missing until it is fixed.
+   */
+  get skippedGlyphs(): number {
+    return this.#atlas.skipped;
+  }
+
+  /**
+   * Lays out every block, fills the glyph atlas, and refreshes the instance buffer.
+   *
+   * `viewportSize` is what turns a world block's font pixels into screen pixels, and that ratio is
+   * what the raster rung follows. A caller with no target to measure (the text-reference page) can
+   * leave it out; world blocks then fall back to one pixel per unit and only lose sharpness.
+   */
+  prepare(commands: readonly TextCommand[], camera: { readonly viewProjection: ArrayLike<number>; readonly view: ArrayLike<number>; readonly viewportSize?: readonly [number, number] }): void {
     // One frame per call, so the atlas knows which pages it may recycle. See `GlyphAtlas.beginFrame`.
     this.#atlas.beginFrame();
     let index = 0;
@@ -382,8 +420,25 @@ export class GpuText3D {
       // any size, and a prebaked page stores every glyph at one fixed raster whatever font size is
       // asked for, so only the UV rectangle is tied to the stored texels.
       const scale = space === SPACE_SCREEN ? 1 : command.pixelSize;
+      // One layout font pixel of a screen block covers one canvas pixel, so the atlas can ask for
+      // exactly what the display shows. A world block's font pixels cover however many screen pixels
+      // the camera gives them, and that is the number the raster rung has to follow — it is what keeps
+      // a block sharp at any distance instead of only at the size its source was rasterised at.
+      const screenPxPerFontPx = space === SPACE_SCREEN
+        ? 1
+        : command.pixelSize * screenPixelsPerWorldUnit(camera.viewProjection, command.position, camera.viewportSize?.[1] ?? 0);
+      // A source that rasterises on demand follows the screen; a prebaked page cannot, and a source
+      // that named a scale of its own never falls below it (see `GlyphRasterizer.rasterScale`).
+      const dynamicRaster = this.#font.dynamicRaster ?? false;
+      const rasterFloor = this.#font.rasterScale ?? 1;
       for (const glyph of layout.glyphs) {
-        const entry = this.#atlas.glyph(glyph.character, glyph.fontFamily, glyph.fontSize);
+        const rasterScale = dynamicRaster
+          ? rasterScaleFor(
+              quantizeRasterPx(Math.max(glyph.fontSize * screenPxPerFontPx, glyph.fontSize * rasterFloor)),
+              glyph.fontSize,
+            )
+          : undefined;
+        const entry = this.#atlas.glyph(glyph.character, glyph.fontFamily, glyph.fontSize, rasterScale);
         if (entry === undefined) continue;
         const id = this.#ids[index] ?? this.#addInstance(index);
         this.#glyphs.set(id, {
@@ -394,6 +449,7 @@ export class GpuText3D {
           color: glyph.color,
           flags,
           layer: entry.page,
+          rasterScale: entry.rasterScale,
           outlineWidth: command.outlineWidth,
           outlineColor: command.outlineColor,
         });
@@ -409,7 +465,7 @@ export class GpuText3D {
   }
 
   #addInstance(index: number): InstanceId {
-    const id = this.#glyphs.add({ origin: [0, 0, 0], offset: [0, 0], size: [0, 0], uv: [0, 0, 0, 0], color: [0, 0, 0, 0], flags: 0, layer: 0, outlineWidth: 0, outlineColor: [0, 0, 0, 0] });
+    const id = this.#glyphs.add({ origin: [0, 0, 0], offset: [0, 0], size: [0, 0], uv: [0, 0, 0, 0], color: [0, 0, 0, 0], flags: 0, layer: 0, rasterScale: 1, outlineWidth: 0, outlineColor: [0, 0, 0, 0] });
     world(this.#glyphs, id);
     this.#ids[index] = id;
     return id;
