@@ -27,6 +27,16 @@ export const DEFAULT_ATLAS_PADDING = 2;
 /** Re-exported so a caller can name an encoding without reaching into the font module. */
 export type { GlyphEncoding };
 
+/**
+ * Which channels hold a distance, per encoding. A mip chain has to resample those through coverage
+ * rather than averaging the values; everything else in a texel is signal that averages.
+ */
+export const DISTANCE_CHANNELS: Record<GlyphEncoding, readonly number[]> = {
+  bitmap: [],
+  sdf: [0],
+  msdf: [0, 1, 2],
+};
+
 /** Where one glyph lives in the atlas, plus the metrics needed to place its quad. */
 export type AtlasGlyph = {
   readonly page: number;
@@ -383,26 +393,74 @@ export function downsamplePage(data: Uint8Array, size: number): Uint8Array {
   const result = new Uint8Array(half * half * 4);
   for (let y = 0; y < half; y++) {
     for (let x = 0; x < half; x++) {
-      let red = 0;
-      let green = 0;
-      let blue = 0;
-      let alpha = 0;
+      const sums = [0, 0, 0, 0];
       for (let dy = 0; dy < 2; dy++) {
         const sourceY = Math.min(y * 2 + dy, size - 1);
         for (let dx = 0; dx < 2; dx++) {
           const sourceX = Math.min(x * 2 + dx, size - 1);
           const index = (sourceY * size + sourceX) * 4;
-          red += data[index]!;
-          green += data[index + 1]!;
-          blue += data[index + 2]!;
-          alpha += data[index + 3]!;
+          for (let channel = 0; channel < 4; channel++) sums[channel] += data[index + channel]!;
         }
       }
       const target = (y * half + x) * 4;
-      result[target] = Math.round(red / 4);
-      result[target + 1] = Math.round(green / 4);
-      result[target + 2] = Math.round(blue / 4);
-      result[target + 3] = Math.round(alpha / 4);
+      for (let channel = 0; channel < 4; channel++) result[target + channel] = Math.round(sums[channel]! / 4);
+    }
+  }
+  return result;
+}
+
+/** The coverage an encoded distance reads back as, given the field's range in texels. */
+function readCoverage(value: number, range: number): number {
+  const coverage = (value / 255 - 0.5) * 2 * range + 0.5;
+  return coverage < 0 ? 0 : coverage > 1 ? 1 : coverage;
+}
+
+/** The encoded value that reads back as a given coverage. */
+function encodeCoverage(coverage: number, range: number): number {
+  const value = Math.round(((coverage - 0.5) / (2 * range) + 0.5) * 255);
+  return value < 0 ? 0 : value > 255 ? 255 : value;
+}
+
+/**
+ * Box-downsamples one mip level of a distance field.
+ *
+ * Averaging stored distances is not the same filter. A distance is the signed distance to the nearest
+ * edge, so where the field saturates its magnitude carries no information — a block that is half
+ * deeply-inside ink and half just-outside ink averages to a value that says "far inside" while its
+ * real coverage is a half — and a level that feeds that back through `clamp(distance + 0.5)` loses or
+ * invents ink. Measured against the geometric coverage of the same glyphs, a level built this way
+ * reads about 10% light. Decoding each value as the coverage it implies, averaging that, and
+ * encoding the result back is the filter that behaves like the coverage mask's own.
+ *
+ * The stored value keeps meaning "distance in level-0 texels, range `range`", which is what the
+ * shader's decode assumes once it scales its range by the level it sampled.
+ *
+ * `distanceChannels` says which channels this applies to, since a texel may mix the two.
+ */
+export function downsampleDistancePage(data: Uint8Array, size: number, range: number, distanceChannels: readonly number[]): Uint8Array {
+  const isDistance = [false, false, false, false];
+  for (const channel of distanceChannels) isDistance[channel] = true;
+  const half = Math.max(1, size >> 1);
+  const result = new Uint8Array(half * half * 4);
+  for (let y = 0; y < half; y++) {
+    for (let x = 0; x < half; x++) {
+      const sums = [0, 0, 0, 0];
+      for (let dy = 0; dy < 2; dy++) {
+        const sourceY = Math.min(y * 2 + dy, size - 1);
+        for (let dx = 0; dx < 2; dx++) {
+          const sourceX = Math.min(x * 2 + dx, size - 1);
+          const index = (sourceY * size + sourceX) * 4;
+          for (let channel = 0; channel < 4; channel++) {
+            const value = data[index + channel]!;
+            sums[channel] += isDistance[channel] ? readCoverage(value, range) : value;
+          }
+        }
+      }
+      const target = (y * half + x) * 4;
+      for (let channel = 0; channel < 4; channel++) {
+        const mean = sums[channel]! / 4;
+        result[target + channel] = isDistance[channel] ? encodeCoverage(mean, range) : Math.round(mean);
+      }
     }
   }
   return result;
@@ -414,13 +472,19 @@ export type MipLevel = {
   readonly data: Uint8Array;
 };
 
-/** Builds a square page's mip chain, stopping early at 1×1 or once `levels` are reached. */
-export function buildMipChain(data: Uint8Array, size: number, levels: number): readonly MipLevel[] {
+/**
+ * Builds a square page's mip chain, stopping early at 1×1 or once `levels` are reached.
+ *
+ * `downsample` defaults to the coverage box filter. A distance-field page passes
+ * `downsampleDistancePage` instead, so its levels keep reporting coverage rather than an average
+ * distance.
+ */
+export function buildMipChain(data: Uint8Array, size: number, levels: number, downsample: (data: Uint8Array, size: number) => Uint8Array = downsamplePage): readonly MipLevel[] {
   const chain: MipLevel[] = [{ size, data }];
   let current = data;
   let currentSize = size;
   while (chain.length < levels && currentSize > 1) {
-    current = downsamplePage(current, currentSize);
+    current = downsample(current, currentSize);
     currentSize = Math.max(1, currentSize >> 1);
     chain.push({ size: currentSize, data: current });
   }

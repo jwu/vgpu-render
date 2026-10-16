@@ -200,15 +200,14 @@ stay put — the lever that matters for `bitmap` and for high-DPR displays.
 reads: the true distance for `sdf`/`msdf`, eight samples of the mask for `bitmap`. It is not part of
 the edge reconstruction and does not change it.
 - **Mip chain.** WebGPU has no `generateMipmap` and vgpu exposes none, so levels are filtered on the
-CPU (the coverage channel averages correctly) and uploaded level by level. `mipLevels` defaults to
-4, taking a 512 px page down to 64 px; deeper chains start bleeding through the 2 px packing
-padding, and averaging is not a distance field's own filter, so `sdf`/`msdf` lose a little edge
-precision as levels shrink. `bun scripts/measure-mip-error.ts` puts a number on how much: 0.014 mean
-alpha against the coverage a level's block actually covered, which is inside the noise of the two
-alternatives — filtering the levels in coverage, and scaling the decode range by the level the
-sample came from. Pairing one filter with the other's range is what costs an order of magnitude.
-The part that matters visually is locked in `tests/text.gpu.test.ts`: a minified block's saturated
-interior stays opaque.
+CPU and uploaded level by level. `mipLevels` defaults to 4, taking a 512 px page down to 64 px;
+deeper chains start bleeding through the 2 px packing padding. A coverage mask averages; a distance
+field is resampled **through coverage** (`downsampleDistancePage`) instead, and the shader scales its
+decode range by the level it sampled, because a level's value describes one texel of that level.
+Those two have to agree — averaging distances and then decoding with a level-scaled range, or the
+reverse, each measured an order of magnitude worse. `bun scripts/measure-glyph-accuracy.ts` measures
+the result as total ink against the geometric coverage of the same glyphs: every source lands within
+about 3% of it, where sampling a level with the level-0 range lost about a tenth.
 - **Atlas pages and uploads.** Pages are layers of one 2D array texture, so a glyph that lands
 outside the first page costs no extra draw call. The page count defaults to a fixed texel budget —
 four 512 px pages' worth — so a 1024 px page set stays one page deep instead of quadrupling the

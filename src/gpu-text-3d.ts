@@ -38,7 +38,7 @@ import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
 import type { TextCommand } from "./frame-recorder.js";
 import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
-import { DEFAULT_ATLAS_SIZE, buildMipChain, dirtyAtLevel, extractRegion, GlyphAtlas, type GlyphEncoding } from "./text-atlas.js";
+import { DISTANCE_CHANNELS, DEFAULT_ATLAS_SIZE, buildMipChain, dirtyAtLevel, downsampleDistancePage, downsamplePage, extractRegion, GlyphAtlas, type GlyphEncoding } from "./text-atlas.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";
 import { layoutText, resolveTextAnchor, type TextMeasurer } from "./text-layout.js";
 import type { GlyphRasterizer } from "./text-font.js";
@@ -90,7 +90,7 @@ const SPACE_SCREEN = 2;
 /** Third flag bit: skip depth comparison entirely and sit at the near plane. */
 const FLAG_NO_DEPTH = 4;
 
-function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: number, rasterScale: number): string {
+function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: number, rasterScale: number, atlasSize: number, maxLod: number): string {
   // The atlas holds either an anti-aliased coverage mask (bevy's `FontAtlas` layout) or a distance
   // field. Coverage is already the answer; a distance has to be turned back into it, and the
   // screen-space derivative is what keeps that transition one pixel wide however far the camera
@@ -98,23 +98,25 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   // an outline: a distance field reads the true distance the encoder left in alpha, a coverage mask
   // has none to read and is sampled instead.
   const reconstruct = (stored: string, trueDistance: string, helper: string): string => `${helper}@fragment fn fs_main(input: Out) -> @location(0) vec4f {
-  let texel = ${sample()};
-  // One screen pixel of edge is the goal. Two separate things have to be right for that:
+  // One screen pixel of edge is the goal. Four separate things have to be right for that:
   //
   // 1. The derivative is taken on the UV coordinate, not on the decoded distance. The stored distance
   //    is quantised to 8 bits, so its own derivative jumps between zero and a quantisation step and
   //    stencils a regular dot pattern over the glyph. UV interpolation is smooth.
   // 2. The range spans the whole encoded field, not half of it: stored 0 to 1 covers
-  //    2 * DISTANCE_RANGE texels, and getting that factor wrong makes the transition narrower than a
-  //    pixel, which reads as a hard, comb-toothed edge.
-  let unitRange = vec2f(2.0 * DISTANCE_RANGE) / vec2f(textureDimensions(atlas, 0));
+  //    2 * DISTANCE_RANGE texels.
+  // 3. The range is the average of both axes' derivatives, not their sum — the reference shader's
+  //    0.5 * dot(...). Each derivative already spans one screen pixel, so a sum counts it twice and
+  //    leaves the ramp half a pixel wide, which drops the rim pixels a correct ramp puts at partial
+  //    coverage.
+  // 4. The level the sample comes from scales the range back up: the chain is built in coverage, so a
+  //    level's value describes one level-L texel, which already spans 2^L level-0 texels. Decoding it
+  //    with the level-0 range costs about a tenth of a glyph's coverage at a minification step.
+  let texelsPerPixel = ATLAS_SIZE * max(fwidth(input.uv).x, fwidth(input.uv).y);
+  let lod = clamp(log2(max(texelsPerPixel, 1.0)), 0.0, MAX_LOD);
+  let texel = ${sampleLod()};
+  let unitRange = vec2f(2.0 * DISTANCE_RANGE * exp2(lod)) / vec2f(ATLAS_SIZE);
   let screenTexSize = vec2f(1.0) / fwidth(input.uv);
-  // Half the sum of both axes, which is what the reference shader does: Godot's canvas.glsl is
-  // "0.5 * dot(px_range / msdf_size, dest_size)", and Godot's MSDF comes from msdfgen. Each
-  // derivative already spans one screen pixel, so summing them counts it twice and leaves the ramp
-  // half a pixel wide. At that width the rim pixels a correct ramp puts at partial coverage land on
-  // 0 or 1 instead, and the glyph reads thinner and toothed than the same shape rasterised to the
-  // grid.
   let screenPxRange = max(0.5 * dot(unitRange, screenTexSize), 1.0);
   let distance = screenPxRange * (${stored} - 0.5);
   let fill = clamp(distance + 0.5, 0.0, 1.0);
@@ -142,6 +144,11 @@ function textShader(depthBias: number, encoding: GlyphEncoding, distanceRange: n
   // Every sample reads one layer of the atlas array: one page per layer, so a glyph beyond the first
   // page costs no extra draw call.
   const sample = (): string => "textureSample(atlas, atlasSampler, input.uv, i32(input.layer + 0.5))";
+  // A coverage mask can use the implicit level — averaging it is the minification filter it wants, so
+  // whatever the hardware picks is right. A distance field cannot: its levels are built in coverage
+  // and decoded against the range of the level they came from, so it samples the level this shader
+  // already computed for that range.
+  const sampleLod = (): string => "textureSampleLevel(atlas, atlasSampler, input.uv, i32(input.layer + 0.5), lod)";
   const fragment =
     encoding === "sdf"
       ? reconstruct("texel.r", "texel.a", "")
@@ -186,7 +193,7 @@ struct Camera { viewProjection: mat4x4f, view: mat4x4f, viewportSize: vec2f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var atlas: texture_2d_array<f32>;
 @group(0) @binding(2) var atlasSampler: sampler;
-${depthBiasHelpers(depthBias)}\nconst RASTER_SCALE: f32 = ${rasterScale};${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
+${depthBiasHelpers(depthBias)}\nconst RASTER_SCALE: f32 = ${rasterScale};\nconst ATLAS_SIZE: f32 = ${atlasSize}.0;\nconst MAX_LOD: f32 = ${maxLod}.0;${encoding === "bitmap" ? "" : `\nconst DISTANCE_RANGE: f32 = ${distanceRange};`}
 struct In {
   @location(0) position: vec3f,
   @location(1) world0: vec4f, @location(2) world1: vec4f,
@@ -266,6 +273,7 @@ export class GpuText3D {
   readonly #atlasTexture: Texture;
   readonly #sampler: GPUSampler;
   readonly #mipLevels: number;
+  readonly #mipDownsample: (data: Uint8Array, size: number) => Uint8Array;
   readonly #uploadedRevisions: number[] = [];
   #viewProjection: ArrayLike<number> = identity();
   #view: ArrayLike<number> = identity();
@@ -287,6 +295,13 @@ export class GpuText3D {
     this.#atlas = new GlyphAtlas(options.font, { size: atlasSize, maxPages: pageCount });
     // A chain cannot outrun the page: a 512 px atlas only has ten levels down to 1×1.
     this.#mipLevels = Math.max(1, Math.min(options.mipLevels ?? DEFAULT_MIP_LEVELS, Math.floor(Math.log2(atlasSize)) + 1));
+    // A distance field's levels have to be filtered in coverage, or thin ink fades as the chain
+    // shrinks; a coverage mask's already are. See `downsampleDistancePage`.
+    const distanceChannels = DISTANCE_CHANNELS[this.#atlas.encoding];
+    this.#mipDownsample =
+      distanceChannels.length === 0
+        ? downsamplePage
+        : (data, size) => downsampleDistancePage(data, size, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE, distanceChannels);
     this.#glyphs = instances({
       capacity,
       attributes: {
@@ -308,7 +323,7 @@ export class GpuText3D {
     const mesh = zeroGeometry(gpu);
     this.#bridge = instanceGeometry(gpu, this.#glyphs, { mesh });
     this.#draw = draw(gpu, {
-      shader: prepareShader(textShader(options.depthBias ?? DEFAULT_TEXT_DEPTH_BIAS, this.#atlas.encoding, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE, this.#atlas.rasterScale)),
+      shader: prepareShader(textShader(options.depthBias ?? DEFAULT_TEXT_DEPTH_BIAS, this.#atlas.encoding, this.#atlas.distanceRange ?? DEFAULT_SDF_RANGE, this.#atlas.rasterScale, atlasSize, this.#mipLevels - 1)),
       geometry: this.#bridge.geometry,
       instances: 0,
       blend: "alpha",
@@ -407,7 +422,7 @@ export class GpuText3D {
     for (const page of this.#atlas.pages) {
       if (page.revision === (this.#uploadedRevisions[page.index] ?? -1)) continue;
       const dirty = page.dirty;
-      const chain = buildMipChain(page.data, page.size, this.#mipLevels);
+      const chain = buildMipChain(page.data, page.size, this.#mipLevels, this.#mipDownsample);
       for (let level = 0; level < chain.length; level++) {
         const mip = chain[level]!;
         const rect = dirty === undefined ? { x: 0, y: 0, width: mip.size, height: mip.size } : dirtyAtLevel(dirty, level, page.size);

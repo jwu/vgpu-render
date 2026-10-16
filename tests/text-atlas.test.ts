@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildMipChain, dirtyAtLevel, downsamplePage, extractRegion, GlyphAtlas, padMipRows } from "../src/text-atlas.js";
+import { buildMipChain, dirtyAtLevel, downsampleDistancePage, downsamplePage, extractRegion, GlyphAtlas, padMipRows } from "../src/text-atlas.js";
 import { SyntheticFont } from "./support/synthetic-font.js";
 
 const font = new SyntheticFont();
@@ -92,6 +92,24 @@ describe("GlyphAtlas", () => {
 });
 
 describe("atlas mip chain", () => {
+  test("downsamples a distance field through coverage instead of averaging distances", () => {
+    // Three texels deeply inside and one outside. Averaging the stored distances answers "a quarter of
+    // the range inside", which decodes as nearly full coverage; the block's real coverage is three
+    // quarters, and the level has to say so.
+    const page = new Uint8Array(2 * 2 * 4);
+    for (const [index, value] of [255, 255, 255, 0].entries()) {
+      page[index * 4] = value;
+      page[index * 4 + 3] = value;
+    }
+    const averaged = downsamplePage(page, 2);
+    const throughCoverage = downsampleDistancePage(page, 2, 4, [0, 3]);
+    expect(averaged[0]).toBe(191);
+    // (0.75 - 0.5) / (2 * 4) + 0.5 = 0.53125, i.e. 135 of 255.
+    expect(throughCoverage[0]).toBe(135);
+    // A channel that is not a distance keeps the plain box average.
+    expect(throughCoverage[1]).toBe(0);
+  });
+
   test("box-downsamples coverage and leaves the constant RGB alone", () => {
     // 2×2 page: three fully covered texels and one empty one.
     const page = new Uint8Array([

@@ -93,8 +93,11 @@ export class BakedMsdfRasterizer implements GlyphRasterizer, TextMeasurer {
     const pageSize = BAKED_MSDF_PAGE_SIZE;
     const left = Math.round(baked[0] * pageSize);
     const top = Math.round(baked[1] * pageSize);
-    const width = Math.round((baked[2] - baked[0]) * pageSize);
-    const height = Math.round((baked[3] - baked[1]) * pageSize);
+    // `ceil`, not `round`: the atlas maps the ink box exactly (`inkWidth` below), so the texels it
+    // stores have to be at least as large as that box. Rounding down lets the UV rectangle read past
+    // the columns this slice wrote, which pulls the glyph's edge inwards.
+    const width = Math.ceil((baked[2] - baked[0]) * pageSize);
+    const height = Math.ceil((baked[3] - baked[1]) * pageSize);
     // Whitespace is in the table for its advance, but there is no ink box to slice out of the page.
     if (width <= 0 || height <= 0) return undefined;
 

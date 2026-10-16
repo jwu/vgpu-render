@@ -46,11 +46,17 @@ async function render(
   view: Float32Array = identity,
   encoding: GlyphEncoding = "bitmap",
   rasterScale = 1,
+  mipLevels?: number,
 ): Promise<Uint8Array> {
   const gpu = await init();
   try {
     const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
-    const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont(encoding, rasterScale) } } });
+    const renderer = new GpuDebugDraw3D(gpu, {
+      text: {
+        sources: { default: new SyntheticFont(encoding, rasterScale) },
+        ...(mipLevels === undefined ? {} : { mipLevels }),
+      },
+    });
     const debug = new DebugDraw3D();
     const recorder = debug.beginFrame();
     build(recorder);
@@ -120,9 +126,10 @@ test("distant text still resolves through the mip chain", async () => {
 });
 
 test("a minified distance field keeps its ink opaque through the mip chain", async () => {
-  // The source rasterises at 16x, so the atlas holds sixteen texels per screen pixel and the chain
-  // has to minify. Whatever a level does to the edge, the interior of the blob is saturated ink and
-  // has to stay opaque — the reference answer is the block's coverage, and that is one.
+  // The source rasterises at 16x, so the atlas holds sixteen texels per screen pixel and the chain has
+  // to minify — which needs five levels, i.e. more than the four-level default reaches. With the levels
+  // it needs, the interior of the blob is saturated ink and has to stay opaque: the reference answer is
+  // the block's coverage, and that is one.
   const pixels = await render(
     (recorder) => {
       recorder.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
@@ -130,6 +137,7 @@ test("a minified distance field keeps its ink opaque through the mip chain", asy
     identity,
     "sdf",
     16,
+    5,
   );
   // The 8×8 ink box sits at x 8..16, y 15..23, so (12, 19) is four texels inside the blob's rim.
   expect(channel(pixels, 12, 19, 1)).toBeGreaterThan(230);
