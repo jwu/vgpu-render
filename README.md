@@ -187,6 +187,12 @@ source: one that can rasterise on demand is asked for the size the block covers 
 `fontSize × rasterScale`. Layout options follow the reference layout model: `justify`, `lineBreak`,
 `bounds` (`TextBounds`, in font pixels), `anchor`, `lineHeight` and `letterSpacing`.
 
+`rotation` turns a `world-plane` block away from the XY plane, with the reference `Label3D.rotation`
+Euler order (Y, then X, then Z) in radians. `[-Math.PI / 2, 0, 0]` lays a block flat on the XZ plane
+so it reads from above, which is what the reference example labels do; the two camera-relative
+spaces ignore it. The basis travels in the instance world matrix, so the text pipeline stays inside
+the device's vertex attribute budget.
+
 `lineHeight` is the absolute pixel form when you pass one, and the default is a `1.2` multiple of the
 font size otherwise — which means a line's box is that multiple of **the line's own
 largest span**, so a line holding a bigger span is taller. `lineHeightScale` names that multiple
@@ -391,7 +397,10 @@ actually names it, so registering sources you never draw costs nothing.
 
 Seven scenes exercise text end to end, and none of them is a port — the reference addon has no text
 API; the layout they run follows the reference layout model, and `docs/text-reference.md` records how
-that was verified.
+that was verified. The geometry examples also draw their own labels, because the reference scenes
+own `Label3D` captions for every column and row; those go through the same pipeline, lying flat on
+the ground with `rotation: [-Math.PI / 2, 0, 0]`. A `GpuDebugDraw3D` built without a `text` option
+skips those blocks instead of failing, so geometry-only callers keep working.
 
 `text-compare` is the parity matrix, in the shape of the line/circle examples: rows are glyph sources,
 columns are font sizes, transposed relative to those because text grows sideways. The six

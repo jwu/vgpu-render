@@ -14,9 +14,14 @@ screenshots; the grid, the round/bevel/miter line joints, the curve control-poin
 markers, the Sphere/Cone/Cylinder/Capsule wireframes and the normal-aware line and
 joint shading are ported, while AA is still incomplete.
 Text rendering is vgpu's own capability rather than part of the port: the labels in the reference
-examples are `Label3D` nodes owned by those scenes, not output of the addon. See the README's
-Text section for the three placement spaces, the inlined Fira Mono subset, the `text-compare`
-matrix and the `text-*` screen-space pages.
+examples are `Label3D` nodes owned by those scenes, not output of the addon. The port redraws them
+anyway, because they are part of what an example looks like: `src/labels-3d.ts` carries the
+reference column/row strings and `src/scenes-3d.ts` places them at the reference coordinates, on
+the ground plane (`rotation: [-PI/2, 0, 0]`) at the reference `font_size`/`pixel_size`, so the
+gallery and its sidebar finally agree with the reference text. The fonts differ, so glyph shapes
+are not pixel-identical. See the README's Text section for the three placement spaces, the
+`world-plane` rotation, the inlined Fira Mono subset, the `text-compare` matrix and the `text-*`
+screen-space pages.
 The two 2D pages (`2d-gizmos`, `2d-shapes`) are likewise not reference ports: the addon has no 2D
 API, so they follow bevy's `2d_gizmos` and `2d_shapes` examples and use the 2D layer documented in
 [2d-parity.md](2d-parity.md).

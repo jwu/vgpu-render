@@ -6,12 +6,14 @@
 不能证明图元、参数矩阵、布局或像素一致。已经做忠实移植并逐像素验收的部分：Circle/Line、
 全场景布局、infinite grid、色彩空间、round/bevel/miter 接头、曲线控制点标记、
 sphere/capsule/cone/cylinder 线框拓扑，normal-aware 线与接头的逐顶点法向（第九轮），以及
-平面图元的逐顶点法向与 `index`/`world_space_width` 的列基向量（第十轮）。
+平面图元的逐顶点法向与 `index`/`world_space_width` 的列基向量（第十轮），以及 3D 列/行标签
+（第十一轮）。
 仍然不对齐：AA（Godot MSAA vs 无 AA）、world-space 宽度的 3D 侧向、`demo.gd`。
 参考样例的列/行标签是场景自带的 `Label3D`，不是 addon 输出；vgpu 另行实现了文字渲染
-（见 README 的 Text 节）并新增 `text-compare`（对照矩阵）与六个屏幕空间文字页
-（`text-encodings` / `text-scale` / `text-world-zoom` / `text-layout` / `text-anchor` / `text-cjk`），
-但未逐列对齐参考标签。
+（见 README 的 Text 节），并用它在 3D 空间按参考的文本、坐标、字号与朝向重画了这些标签。
+字体不是 Godot 的默认字体，所以字形不逐像素相同。
+另有 `text-compare`（对照矩阵）与六个屏幕空间文字页
+（`text-encodings` / `text-scale` / `text-world-zoom` / `text-layout` / `text-anchor` / `text-cjk`）。
 文字的**布局语义**另有以 bevy 为参照的逐 glyph 验收，方法与结论见 `docs/text-reference.md`。
 
 ## 产物
@@ -299,7 +301,8 @@ rect 0.08、box 0.08、circle 0.08、arc 0.08、arrow 0.13（≤3 像素均 ≥9
 - 平面图元（`line`/`ray`/`arrow`/`axes`/`curve`/`grid`）的 `_n` 列仍传单一法向。这些列的
   参考调用本身只传一个法向（`draw_line_n` / `NORMAL_VALUES[row]` 等），所以已经一致；
   `circle`/`arc`/`rect`/`box` 的逐顶点法向已在第十轮补齐。
-- world-space 宽度的侧向近似（第五轮 P0）与 AA、3D 标签仍与之前记录相同。
+- world-space 宽度的侧向近似（第五轮 P0）与 AA 仍与之前记录相同。
+- 3D 列/行标签已在第十一轮补齐（见该轮）。
 
 ## 第八轮：sphere / capsule / cone / cylinder 线框拓扑移植
 
@@ -362,7 +365,7 @@ VGPU_URL=http://127.0.0.1:5177 bun /tmp/capture-vgpu-shapes.ts sphere capsule co
 - `*_n` / `*_n(joint)` / `*_n_d` / `*_n_d(joint)` 列仍是单一代表法向（见上表 P1）。
   逐顶点法向需要 `LineCommand` / `JointCommand` 携带法向，并且 normal-aware 接头
   （`debug_normal_line_joint_*`）尚未移植，本轮未改动该契约。
-- AA（Godot MSAA vs 无 AA）、3D 标签、world-space 侧向近似仍与第五轮记录相同。
+- AA（Godot MSAA vs 无 AA）、world-space 侧向近似仍与第五轮记录相同；3D 列/行标签已在第十一轮补齐。
 
 ## 第三轮：infinite grid 忠实移植（已完成）
 
@@ -503,10 +506,33 @@ bun scripts/capture-vgpu.ts circle line
 | ~~P1~~ | ~~`sphere(y axis)` / `sphere(z axis)` 列~~ | **已修复（第八轮）**：改为参考的纬线环 + 经线大圆拓扑 |
 | ~~P1~~ | ~~`cone`/`cylinder` 的 base/side 分段~~ | **已修复（第八轮）**：两个参数已独立，side 线数量由 `side_segment_count` 控制 |
 | ~~P1~~ | ~~`_n` 列法向~~ | **已修复（第九、十轮）**：逐顶点法向 + 接头法向插值；平面图元的逐顶点法向与 `index`/`world_space_width` 的取景基向量均在第十轮补齐 |
-| P1 | 3D 列/行标签未对齐 | 参考的标签是示例场景自带的 `Label3D` 节点，不是 addon 能力；vgpu 已实现文字渲染（README 的 Text 节）与 `text-compare` 及六个屏幕空间文字页，但没有逐列对齐参考标签的字号/像素尺寸/朝向 |
+| ~~P1~~ | ~~3D 列/行标签未对齐~~ | **已修复（第十一轮）**：标签文本、列标题/行标签坐标、字号（20/28 px）、`pixel_size`（0.004）、`modulate` 与平躺朝向（`rotation.x = -PI/2`）均按参考 `examples/*.gd` 的 `_create_labels` 移植；字体仍不同，不声称字形等价 |
 | P1 | AA 不同 | 未统一 MSAA/边缘模式 |
 | P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
 | P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `recorder.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
+
+## 第十一轮：3D 列/行标签
+
+参考的每个 `examples/*.gd` 在 `_ready()` 里调 `_create_labels()`：每列一个居中的 `Label3D` 标题、
+每个样本一个右对齐的行标签，位置分别是 `(column_label_x, LABEL_Y, TITLE_Z)` 与
+`_get_sample_label_position(column, row)`。这些节点不是 addon 输出，但属于参考场景的呈现，
+所以 vgpu 用自己的文字渲染在同一批坐标上重画：
+
+- 文本：`src/labels-3d.ts` 逐场景转录 `_get_column_label` / `_get_sample_label`，包括格式
+  （`w = 1.0`、`ROUND`、`s:0.93  r:-22°  h:216°`）与 curve 的 construction band 标题。
+  侧栏 `src/scene-examples.ts` 从同一张表派生，两处不会再漂移。
+- 位置：`src/scenes-3d.ts` 的 `SCENE_LABEL_SPECS` 按参考的 x 包围盒（`_get_*_x_bounds`）
+  把行标签右端放在样本左侧 `SAMPLE_LABEL_GAP = 0.12` 处，列标题按 bounds 中点居中；
+  `LABEL_Y = <scene>_Y + 0.01`，`index` / `world_space_width` 用它们自己的 0.08 / 18 px / 24 px。
+- 朝向：`world-plane` 新增 `rotation` 选项（基向量走实例 world 矩阵），示例用
+  `[-PI/2, 0, 0]` 复刻 `label.rotation.x = -PI * 0.5`，文字平躺在 XZ 平面、从上往下读。
+
+验收：`tests/reference-scenes.test.ts` 的 `Scene labels` 组检查每个 3D 场景都产出标签、
+朝向/空间/深度测试一致、标题与行标签坐标符合参考公式，且参考表里的每个字符串都真的被绘制；
+GPU 侧 `tests/text.gpu.test.ts` 用俯视相机验证平躺与未旋转的投影差异。
+
+已知残差：字体不同（vgpu 用自带的 Fira Mono 子集，Godot 用默认字体），字形与字宽不逐像素相同。
+这是字体差异，不是布局差异。
 
 ## 第六轮：round/bevel/miter 接头忠实移植
 
@@ -577,7 +603,7 @@ bun scripts/capture-vgpu.ts circle line
 | P1 | solid Circle 颜色与透明度错误 | Godot 蓝色半透明 (0.25,0.65,1,0.45)；vgpu 金色不透明 |
 | P1 | infinite grid 差异显著 | 已修复：见「第三轮：infinite grid 忠实移植」 |
 | P1 | AA 与粗线边缘不同 | vgpu 粗线出现明显锯齿；Godot MSAA 与参考 line/joint shader 尚未对齐 |
-| P1 | 3D 列/行标签未对齐 | Godot 样例的标签是场景自带的 `Label3D`；vgpu 现已有自己的文字渲染（README 的 Text 节）与 `text-compare` 及六个屏幕空间文字页，但未逐列对齐参考标签 |
+| ~~P1~~ | ~~3D 列/行标签未对齐~~ | **已修复（第十一轮）**：参考是场景自带的 `Label3D`，vgpu 用自己的文字渲染按同一文本/坐标/字号/朝向重画，字体差异保留 |
 
 ## vgpu 对比模式
 
