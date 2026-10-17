@@ -77,6 +77,13 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   "text-cjk": "textCjkScene",
   "2d-gizmos": "gizmos2D",
   "2d-shapes": "shapes2D",
+  "2d-lines": "lines2D",
+  "2d-curves": "curves2D",
+  "2d-markers": "markers2D",
+  "2d-outlines": "outlines2D",
+  "2d-fill": "fill2D",
+  "2d-spaces": "spaces2D",
+  "2d-grid": "grid2D",
 };
 
 /**

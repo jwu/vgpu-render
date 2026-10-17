@@ -2752,9 +2752,16 @@ const SCENE_LABEL_SPECS: Readonly<Record<string, SceneLabelSpec>> = {
   capsule: CAPSULE_LABELS,
 };
 
-export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
-  // The 2D pages live in their own module and own their camera space entirely.
-  if (buildScene2D(id, recorder, time)) return;
+export function buildScene(
+  id: string,
+  recorder: FrameRecorder,
+  time: number,
+  lineJoint?: SceneContext["lineJoint"],
+  viewport?: readonly [number, number],
+): void {
+  // The 2D pages live in their own module and own their camera space entirely. `screen` space is
+  // top-left canvas pixels, so those pages also read the viewport the frame targets.
+  if (buildScene2D(id, recorder, time, viewport)) return;
   const context: SceneContext = lineJoint === undefined ? { time } : { time, lineJoint };
   // Reference: every example's first `_process()` line is
   // `draw_axes(Vector3.ZERO, IDENTITY, 0.75, 2.0)`. `DebugDraw3D` is a child of the scene

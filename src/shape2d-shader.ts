@@ -214,8 +214,9 @@ fn shape_distance(shape: u32, p: vec2f, size: vec2f, vertexB: vec2f, vertexC: ve
     case SHAPE_ROUNDED_RECT: { return sd_rounded_box(p, size, cornerRadius); }
     case SHAPE_CIRCLE: { return sd_ellipse(p, size); }
     case SHAPE_ELLIPSE: { return sd_ellipse(p, size); }
-    // An arc has no interior: its distance is unsigned, so filling one yields a hairline.
-    case SHAPE_ARC: { return abs(length(p) - size.x); }
+    // An arc has no interior: the ring alone ignores the angles, so it is clipped to the swept
+    // wedge. Filling one still yields a hairline, because the distance stays unsigned.
+    case SHAPE_ARC: { return max(abs(length(p) - size.x), sd_sector(p, size.x, startAngle, sweep)); }
     case SHAPE_ANNULUS: { return sd_annulus(p, size.y, size.x); }
     case SHAPE_CAPSULE: { return sd_capsule(p, size.y, size.x); }
     case SHAPE_POLYGON: { return sd_regular_polygon(p, size.x, sides); }

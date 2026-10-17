@@ -8,7 +8,7 @@
 
 import { effect, frame, init, sampler, surface, target } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
-import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
+import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, world2dProjection, type Camera2D, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
 import { SCENE_EXAMPLES, type SceneExample } from "./scene-examples.js";
 import { buildScene } from "./scenes-3d.js";
 import { linearClearColor } from "./color-space.js";
@@ -133,6 +133,12 @@ const CAMERA_2D_ZOOM_MIN = 0.05;
 const CAMERA_2D_ZOOM_MAX = 40;
 /** How much of the fitted `view2d` extent a 2D page leaves as margin. */
 const CAMERA_2D_FIT_MARGIN = 0.94;
+
+/**
+ * Stand-in view matrix for a 2D page. `world-plane` and `world-billboard` text read it, and a 2D
+ * page draws neither: its labels are placed by the 2D projection alone.
+ */
+const IDENTITY_VIEW = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
 /**
  * Presentation shader for the linear scene pass.
@@ -515,7 +521,9 @@ export class DemoEngine {
       );
 
       const recorder = debug.beginFrame();
-      buildScene(this.selected.id, recorder, this.time, this.config.view.lineJoint);
+      // The 2D pages place `screen` content in top-left canvas pixels, so they need the size of the
+      // target this frame renders into; 3D pages ignore it.
+      buildScene(this.selected.id, recorder, this.time, this.config.view.lineJoint, output.size);
       const raw = debug.finishFrame(recorder);
       // The width scale must cover joints as well: they are the same stroke as the segments
       // they join, so scaling only `line` commands would leave the wedges at full size.
@@ -527,8 +535,19 @@ export class DemoEngine {
       );
 
       // The 2D camera is independent from the 3D one: the projection comes from pan/zoom and the
-      // viewport, while the 3D matrices above only feed the grid and any world-space text.
-      renderer.prepare(commands, { viewProjection: this.viewProjection, view: this.view }, { pan: [c.pan[0], c.pan[1]], zoom: c.zoom });
+      // viewport, while the 3D matrices above only feed the grid and any world-space text. On a 2D
+      // page the world-plane text must share the primitives' projection instead: its labels are
+      // placed in `world2d` units, so the 2D matrix is what makes them pan and zoom with the
+      // strokes they annotate. The 3D grid, the other consumer of these matrices, is off there.
+      const camera2d: Camera2D = { pan: [c.pan[0], c.pan[1]], zoom: c.zoom };
+      renderer.prepare(
+        commands,
+        {
+          viewProjection: c.mode === "2d" ? world2dProjection(camera2d, output.size) : this.viewProjection,
+          view: c.mode === "2d" ? IDENTITY_VIEW : this.view,
+        },
+        camera2d,
+      );
       const showGrid3D = c.mode !== "2d" && this.config.view.showGrid;
       // The 2D grid is part of what a 2D page shows rather than an optional overlay: the pages
       // exist to demonstrate it, and there is no 3D grid on them to confuse it with. The opacity

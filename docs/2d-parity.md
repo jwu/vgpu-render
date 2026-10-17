@@ -55,6 +55,28 @@
 | `Polyline2d` | `lineStrip` | |
 | `to_ring` / `Ring` | `fill: false` + `strokeWidth` | 任意形状的轮廓 |
 
+## 页面分类
+
+`2D Graphics` 分组下有九页，结构对齐 3D 场景：两页总览，七页参数矩阵。
+
+| 页面 | 形态 | 内容 |
+| --- | --- | --- |
+| `2d-gizmos` | 总览拼贴 | bevy `2d_gizmos` 的 line / ray / grid / strip / rect / roundedRect / circle / ellipse / arc / cross / arrow / curve |
+| `2d-shapes` | 图元总览 | `2d_shapes` 的十二个图元，填充行与描边行 |
+| `2d-lines` | 矩阵 | 线宽、透明度、渐变、虚线、strip joint、ray 方向 |
+| `2d-curves` | 矩阵 | arc 的 sweep / startAngle、short / long arc between、采样曲线与渐变曲线 |
+| `2d-markers` | 矩阵 | cross、方点 / 圆点、arrow 角度与 tip 长度、axes 长度 |
+| `2d-outlines` | 矩阵 | 六个图元的描边形态，每行一个 `strokeWidth` |
+| `2d-fill` | 矩阵 | 旋转、sweep、边数、capsule 长度作为行参数 |
+| `2d-spaces` | 矩阵 | `world2d` / `screen` 对照，以及 `widthMode` / `sizeMode` |
+| `2d-grid` | 矩阵 | grid 的 cell 数作为列、线宽作为行，四列覆盖同一尺度 |
+
+矩阵页的列标题与行标签由 `scenes-2d.ts` 的 `LABELS_2D` 提供，`scene-examples.ts` 直接读同一张表生成
+侧栏列，所以页面和侧栏不会出现对方没有的列。标签是 `world-plane` 文本、`pixelSize: 1`，即一个字体
+像素等于一个 `world2d` 单位；`demo-engine.ts` 在 2D 页把传给文本渲染器的 `viewProjection` 换成
+`world2dProjection`，标签因此与图元同处一套坐标，随拖拽和缩放一起移动（3D 页仍用 3D 相机投影）。
+每一页的 `view2d` 也由同一张表推出，新增列或行不会把内容挤到 fit 范围外。
+
 ## 渲染实现
 
 - 每个 space 一个独立 bucket（`world2d` / `screen`）：一次 draw 只能绑定一个 uniform，而两种空间
@@ -63,9 +85,11 @@
   `w = 1`），现有 shader 本来就在投影之后完成全部屏幕空间几何（像素宽度、dash 相位、接头楔形、
   近平面裁剪）。世界宽度通过 `viewProjection[1][1] * viewportSize.y * 0.5` 自动得到 `width × zoom`。
 - 形状：一个 instanced quad + 每实例 SDF 参数，fragment 求有符号距离并用 `fwidth` 做 1 像素
-  抗锯齿；描边就是 `abs(d) - strokeWidth / 2`。
+  抗锯齿；描边就是 `abs(d) - strokeWidth / 2`。`arc` 的距离是环带与 `startAngle`/`sweep` 扇形
+  求 `max`，所以描边只覆盖扫过的弧段，不再整圆。
 - 混绘：2D 在全部 3D 图元之后、text 之前绘制；不写深度并 pin 到近平面，因此是无条件覆盖
-  3D 的 overlay。
+  3D 的 overlay。2D 页的 `world-plane` 标签也走 2D 相机矩阵（`demo-engine.ts`），与图元同一套
+  坐标；`screen` 标题仍是固定像素，不受 pan / zoom 影响。
 - 兼容性约束（真实 GPU 测试暴露过）：
   - 设备运行在 WebGPU **compatibility mode**，整型 varying 必须写
     `@interpolate(flat, either)`，默认的 `first` 采样会被拒绝。
@@ -79,8 +103,8 @@
 | `tests/camera-2d.test.ts` | 两种空间的矩阵、`world2dToScreen` ↔ `screenToWorld2d` 互逆、零尺寸视口、非法 zoom |
 | `tests/frame-recorder-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal |
 | `tests/line2d.gpu.test.ts` | 像素宽度、点定位、zoom、dash、round joint、2D 覆盖 3D |
-| `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/screen 空间/AA |
-| `tests/scenes-2d.test.ts` | 两个页面只产生 2D 命令、形状集合覆盖、时间动画、3D 场景不受影响 |
+| `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/弧裁剪/screen 空间/AA |
+| `tests/scenes-2d.test.ts` | 九个页面只产生 2D 命令与标签、矩阵页列/行标签与侧栏一致、标签落在 fit 范围内、`2d-spaces` 两个空间都出现、形状集合覆盖、时间动画、3D 场景不受影响 |
 | `tests/scenes.test.ts` | 所有示例（含 2D 页）在真实 GPU 上渲染无错误 |
 
 ## 2D 无限网格
@@ -109,7 +133,8 @@
 - `ellipse` 使用 iq 的近似 SDF，长轴端点附近误差在 1 像素以内，不是精确距离场。
 - `polygon` 用"最近边中点方向上的边线距离"，顶点外侧会略微内缩（视觉上顶点略钝），与 bevy
   的三角化 mesh 轮廓有亚像素差异。
-- `arc` 的 `fill: true` 退化为约 1 像素宽的曲线（弧没有内部）；描边才是它的正常用法。
+- `arc` 的描边按 `startAngle` / `sweep` 裁剪，但 `fill: true` 仍退化为约 1 像素宽的曲线
+  （弧没有内部）；描边才是它的正常用法。
 - `triangle` 的 `rotation` 围绕质心旋转；bevy 的 `Triangle2d` 是绝对顶点，旋转中心由
   `Transform` 决定。
 - 没有 bevy 的 `Sprite`、`Mesh2d`、材质、纹理、tilemap、2D 光照等；这一层是 debug 绘制，
@@ -125,7 +150,8 @@
 bun test tests/camera-2d.test.ts tests/frame-recorder-2d.test.ts \
   tests/line2d.gpu.test.ts tests/shape2d.gpu.test.ts tests/scenes-2d.test.ts
 bun run dev -- --host 127.0.0.1 --port 5174
-# gallery: ?scene=2d-gizmos  /  ?scene=2d-shapes
+# gallery: ?scene=2d-gizmos / ?scene=2d-shapes / ?scene=2d-lines / ?scene=2d-curves
+#          ?scene=2d-markers / ?scene=2d-outlines / ?scene=2d-fill / ?scene=2d-spaces / ?scene=2d-grid
 ```
 
 2D 页面在 gallery 里是独立的 `2D Graphics` 分组（与 `3D Graphics`、`Text` 并列）。2D 无限网格

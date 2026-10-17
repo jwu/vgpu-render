@@ -22,9 +22,11 @@ gallery and its sidebar finally agree with the reference text. The fonts differ,
 are not pixel-identical. See the README's Text section for the three placement spaces, the
 `world-plane` rotation, the inlined Fira Mono subset, the `text-compare` matrix and the `text-*`
 screen-space pages.
-The two 2D pages (`2d-gizmos`, `2d-shapes`) are likewise not reference ports: the addon has no 2D
-API, so they follow bevy's `2d_gizmos` and `2d_shapes` examples and use the 2D layer documented in
-[2d-parity.md](2d-parity.md).
+The 2D pages are likewise not reference ports: the addon has no 2D API, so they follow bevy's
+`2d_gizmos` and `2d_shapes` examples and use the 2D layer documented in [2d-parity.md](2d-parity.md).
+They are now classified like the 3D scenes rather than as two collages: `2d-gizmos` and `2d-shapes`
+stay as overviews, and seven matrix pages (`2d-lines`, `2d-curves`, `2d-markers`, `2d-outlines`,
+`2d-fill`, `2d-spaces`, `2d-grid`) give each API family a column-by-row table with world-space labels.
 `demo.gd` is absent from the manifest, and text rendering is not a reference
 port. The current 17 entries
 render geometry, but that is not proof of scene or visual equivalence. GPU scene

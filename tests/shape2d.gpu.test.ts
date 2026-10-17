@@ -133,6 +133,27 @@ test("real GPU renders the 2D shape primitives", async () => {
     expect(lit(curved, pixel(80, 24))).toBe(true);
     expect(lit(curved, pixel(80, 34))).toBe(false);
 
+    // An arc keeps only the swept part of its rim: the ring is clipped to the wedge, so the three
+    // quadrants past the 90° sweep stay empty instead of drawing a full circle.
+    const arcs = await shot([
+      shape({
+        ...base,
+        shape: "arc",
+        center: [0, 0],
+        size: [20, 20],
+        thickness: 4,
+        filled: false,
+        startAngle: 0,
+        sweep: Math.PI / 2,
+      }),
+    ]);
+    expect(lit(arcs, pixel(20, 0))).toBe(true);
+    expect(lit(arcs, pixel(14, 14))).toBe(true);
+    expect(lit(arcs, pixel(0, 20))).toBe(true);
+    expect(lit(arcs, pixel(-20, 0))).toBe(false);
+    expect(lit(arcs, pixel(0, -20))).toBe(false);
+    expect(lit(arcs, pixel(0, 0))).toBe(false);
+
     // Screen space starts at the top-left corner instead of the canvas centre.
     const screen = await shot([
       shape({ ...base, shape: "rect", center: [20, 15], size: [10, 5], space: "screen" }),

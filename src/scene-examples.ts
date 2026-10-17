@@ -1,4 +1,5 @@
 import { SCENE_LABELS } from "./labels-3d.js";
+import { LABELS_2D, page2DView } from "./scenes-2d.js";
 
 export type ExampleColumn = {
   readonly label: string;
@@ -55,6 +56,33 @@ const jointNote = "Round, bevel and miter joins are rebuilt in the vertex stage 
  */
 const columnsOf = (id: string): readonly ExampleColumn[] =>
   (SCENE_LABELS[id]?.columns ?? []).map((entry) => column(entry.title, entry.samples));
+
+/**
+ * A 2D matrix page's columns come from the same label table `scenes-2d.ts` draws its column titles
+ * and sample labels from, so the sidebar cannot name a column the page does not draw.
+ */
+const columns2D = (id: string): readonly ExampleColumn[] =>
+  (LABELS_2D[id]?.columns ?? []).map((entry) => column(entry.title, entry.samples));
+
+/**
+ * One 2D matrix page: its camera extent is derived from the same table, so adding a column or a
+ * row cannot leave the new content outside the fitted view.
+ */
+const page2D = (id: string, description: string, notes: string): SceneExample => {
+  const labels = LABELS_2D[id];
+  if (labels === undefined) throw new Error(`no 2D label table for "${id}"`);
+  return {
+    id,
+    title: labels.title,
+    description,
+    notes,
+    implemented: true,
+    family: "2d",
+    hideGrid: false,
+    view2d: page2DView(id),
+    columns: columns2D(id),
+  };
+};
 
 // Column structure copied from the reference scenes. Capsule has no `_s` column.
 const solidExamples: SceneExample[] = [
@@ -144,4 +172,39 @@ export const SCENE_EXAMPLES: readonly SceneExample[] = [
       column("ring", ["circle", "sector", "segment", "ellipse", "annulus", "capsule", "rhombus", "rect", "polygon", "triangle"]),
     ],
   },
+  page2D(
+    "2d-lines",
+    "Line and ray variants: width, alpha, gradient, dash, strip joints and ray directions.",
+    "A matrix page in the shape of the 3D reference scenes, not another collage. Column titles and sample labels are world2d text, so they pan and zoom with the strokes they annotate. Every sample is one `frame.d2` call: the width and alpha columns come from the same triple bevy's gizmo config uses, the gradient uses `colorEnd`, and the joint column rebuilds the wedge from the three path points.",
+  ),
+  page2D(
+    "2d-curves",
+    "Arc sweep, start angle, short and long arcs between points, and sampled curves.",
+    "`short_arc_2d_between` and `long_arc_2d_between` are not separate calls in this layer: the page computes the sweep from the two directions and draws one `arc`, which is what makes the pair comparable. The curve columns sample a sine into a strip; the gradient column interpolates the segment colours itself, because a strip's `colorEnd` repeats per segment.",
+  ),
+  page2D(
+    "2d-markers",
+    "Crosses, points, arrows with configurable tips, and axes.",
+    "The markers bevy's 2D gizmos draw as bespoke helpers. A point's `size` is in canvas pixels by default and `sizeMode: \"world\"` opts into zoom-scaled units; crosses, arrows and axes are composed from strokes and a filled triangle, exactly as the overview page composes them.",
+  ),
+  page2D(
+    "2d-outlines",
+    "Six shape primitives in their stroked form, one stroke width per row.",
+    "The same SDF quad the filled shapes use, shaded as an outline: `fill: false` plus `strokeWidth` measures the ring in canvas pixels at any zoom, so the row values stay comparable. This is the 2D counterpart of bevy's `to_ring` outline row on the shapes page.",
+  ),
+  page2D(
+    "2d-fill",
+    "Filled shapes with their parameters as rows: rotation, sweep, side count and capsule length.",
+    "Where `2d-shapes` shows one primitive per column at fixed parameters, this page varies one parameter down each column. Rotation is anticlockwise in world2d; a sector and a segment share the angle pair but differ in what they enclose.",
+  ),
+  page2D(
+    "2d-spaces",
+    "world2d versus screen, plus the width and size modes of each.",
+    "The left column is `world2d` and moves with pan and zoom; the middle column is top-left origin canvas pixels and stays put, which is the point of the comparison. The right column shows a nominal width under `widthMode: \"screen\"` (constant pixels) and `widthMode: \"world\"` (scaled by zoom), and the same split for point sizes. The screen column is placed from the viewport, so it keeps its corner on any canvas size, and its labels are drawn in screen space rather than in the world matrix.",
+  ),
+  page2D(
+    "2d-grid",
+    "The grid primitive: cell count per column, line width per row, one fixed extent.",
+    "`grid` is a line-family primitive, so every grid here is drawn from individual strokes and inherits the line width. Cell count changes spacing rather than extent, which is what makes the four columns comparable; bevy's `outer_edges` toggle has no counterpart in this layer.",
+  ),
 ];
