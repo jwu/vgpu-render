@@ -1,5 +1,7 @@
 # vgpu-render
 
+**[Examples gallery →](https://jwu.github.io/vgpu-render/)**
+
 A 3D debug-draw and gizmo layer built on top of `vgpu`, porting the
 [godot-debug-draw](https://github.com/hardpixel/godot-debug-draw) examples and
 [godot-infinite-grid](https://github.com/hardpixel/godot-infinite-grid) shader
@@ -462,6 +464,11 @@ bun test
 bun run build
 bun run dev
 ```
+
+`bun run build` emits the static gallery that `.github/workflows/deploy-pages.yml` publishes to
+GitHub Pages (<https://jwu.github.io/vgpu-render/>) on every push to `main`. Only the production
+build is re-based to `/vgpu-render/` — override it with `VGPU_BASE` if the site path changes — while
+the dev server and the capture scripts below keep addressing the app from `/`.
 
 `bun run dev` serves the gallery; open the printed URL in a WebGPU-capable browser. On Linux, Chrome
 only creates a hardware WebGPU adapter when its Vulkan feature is on — without it
