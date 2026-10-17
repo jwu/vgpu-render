@@ -17,6 +17,9 @@ Text rendering is vgpu's own capability rather than part of the port: the labels
 examples are `Label3D` nodes owned by those scenes, not output of the addon. See the README's
 Text section for the three placement spaces, the inlined Fira Mono subset, the `text-compare`
 matrix and the `text-*` screen-space pages.
+The two 2D pages (`2d-gizmos`, `2d-shapes`) are likewise not reference ports: the addon has no 2D
+API, so they follow bevy's `2d_gizmos` and `2d_shapes` examples and use the 2D layer documented in
+[bevy-2d-parity.md](bevy-2d-parity.md).
 `demo.gd` is absent from the manifest, and text rendering is not a reference
 port. The current 17 entries
 render geometry, but that is not proof of scene or visual equivalence. GPU scene
@@ -73,7 +76,9 @@ reference layout; what is still approximate per scene is listed under *Known app
   (64 radial segments / 32 rings) and `CylinderMesh` (64 radial segments).
 - Infinite shader grid ported from `godot-infinite-grid`: decimal LOD layers with
   de-duplicated alpha, screen-space line width, and edge/grazing/center/far fades
-  driven by the reference camera-state rules.
+  driven by the reference camera-state rules. The addon's 2D grid is ported too, as
+  `InfiniteGrid2D`: a full-viewport shader quad with the same decimal LOD scheme but without
+  the 3D-only fades (see [bevy-2d-parity.md](bevy-2d-parity.md)).
 - Layer filtering and alpha blend on a linear `rgba16float` target with an sRGB
   present pass (matching Godot `blend_mix` and bevy's `Rgba16Float` + `add_srgb_suffix`).
 - Depth write for every primitive (`depth_draw_always`), a `-0.001` depth bias, and manual

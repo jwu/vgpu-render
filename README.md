@@ -104,11 +104,58 @@ FrameRecorder -> FrameCommand[] -> GpuDebugDraw3D
   lines     -> screen-space or world-space quads, dash + normal aware
   triangles -> transient solid meshes
   text      -> per-glyph instanced quads sampling a generated glyph atlas
+  2D        -> GpuDebugDraw2D: 2D lines/points/joints + SDF shape quads, drawn as an overlay
 ```
 
 Points and lines are instanced; the CPU never expands a line into triangles. The
 infinite grid is a single finite plane whose fragment shader derives minor/major
 LOD grid lines.
+
+## 2D
+
+`frame.d2` records 2D primitives into the same frame and layer mask as the 3D calls:
+
+```ts
+const frame = debug.beginFrame();
+frame.d2.line([0, 0], [120, 40], { width: 2, color: [1, 0, 0, 1] });
+frame.d2.lineStrip([[0, 0], [40, 80], [90, 10]], { width: 4, joint: "round" });
+frame.d2.grid([0, 0], [8, 5], [40, 40], { color: [0.4, 0.4, 0.5, 1] });
+frame.d2.rect([0, 0], [80, 40], { fill: false, strokeWidth: 2 });
+frame.d2.roundedRect([0, -60], [120, 40], 12, { color: [1, 0.7, 0.3, 1] });
+frame.d2.circle([0, 120], 60, { color: [0, 0.5, 1, 1] });
+frame.d2.arc([0, 120], 80, { fill: false, strokeWidth: 3, startAngle: 0, sweep: Math.PI / 2 });
+const commands = debug.finishFrame(frame);
+// The third argument is the 2D camera; omit it and the last one stays in effect.
+renderer.prepare(commands, { viewProjection, view }, { pan: [0, 0], zoom: 1 });
+```
+
+Two coordinate spaces share one pixel-based pipeline:
+
+| `space` | Origin | +y | Unit | Affected by the 2D camera |
+| --- | --- | --- | --- | --- |
+| `world2d` (default) | canvas centre | up | one canvas pixel at `zoom = 1` | yes |
+| `screen` | top-left corner | down | one canvas pixel | no |
+
+`world2d` mirrors bevy's `Camera2d`: the origin is the centre of the target, `+y` points up and
+`zoom` is canvas pixels per world unit. `2d_shapes`' `X_EXTENT = 1000` is a pixel-scale world
+coordinate in that sense, not a top-left one — the top-left, +y-down space is bevy's UI space,
+and here it is `screen`, the same one `TextSpace "screen"` already uses.
+
+- Strokes: `line`, `ray`, `lineStrip`/`polyline`, `grid`, `point`; screen-pixel or world widths,
+dashes with the same phase accumulation as the 3D paths, and round/bevel/miter joints.
+- Shapes: `rect`, `roundedRect`, `circle`, `ellipse`, `arc`, `annulus`, `capsule`, `polygon`,
+`triangle`, `rhombus`, `sector`, `segment`. Each is one instanced quad evaluated as a signed
+distance field in the fragment stage, so nothing is triangulated on the CPU and an outline
+width stays a pixel count at any zoom. `fill: false` plus `strokeWidth` turns any of them into
+an outline.
+- The layer is an overlay: it draws after every 3D primitive, pins itself to the near plane and
+does not write depth. Screen-space text remains the last thing drawn.
+- `InfiniteGrid2D` renders the addon's 2D grid as a full-viewport shader quad: decimal LOD levels,
+  screen-space line width and the same three-layer alpha de-duplication as the 3D grid. It reads
+  `cellSize`, `lineWidthPixels`, `minPixelsBetweenCells`, the LOD range and both line colors from
+  the gallery's grid panel, and draws as the 2D layer's background.
+- The 2D camera is independent of the 3D one (`mode: "3d" | "2d"` in the gallery config); the
+`2d-*` pages fit their declared `view2d` extent, drag to pan and scroll to zoom.
 
 ## Text
 
@@ -373,6 +420,10 @@ gallery to a single glyph source (`auto`, `bitmap`, `bitmap4x`, `sdf`, `sdf4x`, 
 ## Capabilities
 
 - Points (screen/world size), lines (screen/world width, dash, normal), triangles.
+- 2D layer (`frame.d2`): `world2d` and `screen` spaces, strokes with dashes and joints, and
+  twelve SDF shape primitives with fill or pixel-width outlines, drawn as a depth-free overlay.
+- `InfiniteGrid2D`: the addon's full-viewport 2D grid (decimal LOD, screen-space width, debug
+  palette), driven by the same grid panel as the 3D one.
 - Text blocks: three placement spaces, wrapping (latin words and CJK characters), justification, span
   styling, per-block anchor, line height, letter spacing and a per-block outline, drawn from an inlined
   Fira Mono subset that falls back to the system for scripts it does not cover. The atlas can hold
