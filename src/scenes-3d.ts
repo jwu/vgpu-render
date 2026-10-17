@@ -1345,9 +1345,20 @@ const INDEX_CURVE: Curve3D = curve([
   { position: [0.65, -0.15, 0.45], in: [-0.25, -0.35, 0], out: [0, 0, 0] },
 ]);
 
-/** `draw_line_list`: independent segments taken as consecutive point pairs. */
-function drawLineList(recorder: FrameRecorder, points: readonly Vec3[], options: LineOptions): void {
-  for (let index = 0; index + 1 < points.length; index += 2) recorder.line(points[index]!, points[index + 1]!, options);
+/**
+ * `draw_line_list`: independent segments taken as consecutive point pairs. `normals`, when given,
+ * is one normal per pair, matching the reference `_emit_normal_line_list`.
+ */
+function drawLineList(
+  recorder: FrameRecorder,
+  points: readonly Vec3[],
+  options: LineOptions,
+  normals?: readonly Vec3[],
+): void {
+  for (let index = 0; index + 1 < points.length; index += 2) {
+    const normal = normals?.[index / 2];
+    recorder.line(points[index]!, points[index + 1]!, normal === undefined ? options : { ...options, normal });
+  }
 }
 
 type ApiMatrixConfig = {
@@ -1390,15 +1401,24 @@ function apiMatrix(recorder: FrameRecorder, config: ApiMatrixConfig): void {
   drawAxes(recorder, indexPath(3, 0, 0.5), IDENTITY_BASIS, 0.55, w(2), widthMode);
   drawAxesN(recorder, indexPath(3, 1, 0.5), rotateBasis(IDENTITY_BASIS, INDEX_UP, Math.PI * 0.25), 0.55, w(2), widthMode);
 
-  // line_list
+  // line_list: four independent point pairs — horizontal, vertical and two opposed diagonals —
+  // instead of the reference's two. The pairs cross without joining, which is what makes the
+  // "consecutive pairs, not a path" semantics visible; the reference's two short parallel pairs
+  // read as one stroke at gallery distance. `_n` gives each pair its own normal so the back-face
+  // fade shows up as a brightness difference.
   const listPoints = (column: number, row: number): Vec3[] => [
-    indexPath(column, row),
-    indexPath(column, row, 0.8, 0, 0.85),
-    indexPath(column, row, 0.1, 0.35),
-    indexPath(column, row, 0.9, 0.35, 0.85),
+    indexPath(column, row, 0, 0, 0.55),
+    indexPath(column, row, 0.7, 0, 0.55),
+    indexPath(column, row, 0.35, 0, 0.55),
+    indexPath(column, row, 0.35, 0, 0.95),
+    indexPath(column, row, 0.05, 0.35, 0.55),
+    indexPath(column, row, 0.75, 0.35, 0.85),
+    indexPath(column, row, 0.75, 0.5, 0.85),
+    indexPath(column, row, 0.05, 0.5, 0.55),
   ];
+  const listNormals: readonly Vec3[] = [[0, -1, 0], [0, 1, 0], [1, 0, 0], [0, 0, -1]];
   drawLineList(recorder, listPoints(4, 0), { color: WHITE, width: w(2), widthMode });
-  drawLineList(recorder, listPoints(4, 1), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode, normal: INDEX_UP });
+  drawLineList(recorder, listPoints(4, 1), { color: INDEX_BRIGHT_CYAN, width: w(2), widthMode }, listNormals);
 
   // strip
   const stripPoints = (column: number, row: number): Vec3[] => [indexPath(column, row), indexPath(column, row, 0.45, 0.18, 0.95), indexPath(column, row, 1, 0, 0.7)];

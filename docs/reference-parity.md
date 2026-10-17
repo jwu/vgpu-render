@@ -95,6 +95,11 @@ reference layout; what is still approximate per scene is listed under *Known app
 
 These are deliberately not claimed as exact parity:
 
+- **Index / World Space Width `line_list`**: the reference draws two short parallel point pairs.
+  The port draws four pairs (horizontal, vertical and two opposed diagonals) and gives each
+  `line_list_n` pair its own normal. At gallery distance the reference's two pairs overlap into
+  what reads as one stroke and hide the back-face fade; the column, its row labels and its
+  position are unchanged.
 - **Grid**: `InfiniteGrid3D` mirrors `addons/infinite_grid/infinite_grid_3d`
   (parameter names, LOD range, fade stack, camera LOD distance). The earlier
   brightness gap is fixed: primitives blend on a linear `rgba16float` target and a
