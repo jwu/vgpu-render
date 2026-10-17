@@ -13,9 +13,10 @@ import { GODOT_EXAMPLES } from "./godot-examples.js";
 import { sourceForExample, tokenizeSource, type SourceToken } from "./demo-source.js";
 import sceneSource from "./godot-scenes.ts?raw";
 import textSceneSource from "./text-scenes.ts?raw";
+import scene2dSource from "./bevy-scenes-2d.ts?raw";
 
-/** Both scene modules, so the source preview can find an implementation in either one. */
-const SCENE_SOURCE = `${textSceneSource}\n${sceneSource}`;
+/** All scene modules, so the source preview can find an implementation in any one of them. */
+const SCENE_SOURCE = `${textSceneSource}\n${sceneSource}\n${scene2dSource}`;
 
 export function useEngineSnapshot(engine: DemoEngine) {
   const subscribe = useCallback((listener: () => void) => engine.subscribe(listener), [engine]);

@@ -254,6 +254,9 @@ export type DemoControlsProps = {
 
 /** Display section: background, camera projection, animation and visibility. */
 function DisplayControls({ config, handlers }: DemoControlsProps) {
+  // The projection, the infinite grid and the orbit presets only describe the 3D camera; a 2D
+  // page pans and zooms instead, so those controls would be dead weight.
+  const is3D = config.camera.mode === "3d";
   return (
     <>
       <ColorRow
@@ -263,39 +266,43 @@ function DisplayControls({ config, handlers }: DemoControlsProps) {
         value={backgroundHex(config)}
         onValueChange={handlers.onBackgroundChange}
       />
-      <ControlRow label="投影" name="projection">
-        <Select
-          value={config.camera.projection}
-          onValueChange={(value) => handlers.onProjectionChange(value as ProjectionMode)}
-        >
-          <SelectTrigger id="projection" className="w-full">
-            {/* Without an explicit formatter Base UI prints the raw value
-             * (`perspective`); map it back to the localized option label. */}
-            <SelectValue>
-              {(value: ProjectionMode) => PROJECTIONS.find((option) => option.value === value)?.label ?? value}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {PROJECTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </ControlRow>
+      {is3D ? (
+        <ControlRow label="投影" name="projection">
+          <Select
+            value={config.camera.projection}
+            onValueChange={(value) => handlers.onProjectionChange(value as ProjectionMode)}
+          >
+            <SelectTrigger id="projection" className="w-full">
+              {/* Without an explicit formatter Base UI prints the raw value
+               * (`perspective`); map it back to the localized option label. */}
+              <SelectValue>
+                {(value: ProjectionMode) => PROJECTIONS.find((option) => option.value === value)?.label ?? value}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {PROJECTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ControlRow>
+      ) : null}
       <ToggleRow
         label="动画"
         name="animate"
         checked={config.view.animate}
         onCheckedChange={handlers.onAnimateChange}
       />
-      <ToggleRow
-        label="显示网格"
-        name="grid"
-        checked={config.view.showGrid}
-        onCheckedChange={handlers.onShowGridChange}
-      />
+      {is3D ? (
+        <ToggleRow
+          label="显示网格"
+          name="grid"
+          checked={config.view.showGrid}
+          onCheckedChange={handlers.onShowGridChange}
+        />
+      ) : null}
       <SliderInputRow
         id="grid-opacity"
         label="网格不透明度"
@@ -307,29 +314,34 @@ function DisplayControls({ config, handlers }: DemoControlsProps) {
         onValueChange={handlers.onGridOpacityChange}
         format={(value) => value.toFixed(2)}
       />
-      <ControlRow label="视角预设" name="camera">
-        {/* The buttons keep their own widths (`Button` is `shrink-0`), so the row wraps in the
-         * 224px sidebar instead of pushing the page wider than the viewport. */}
-        <div className="flex flex-wrap gap-2">
-          {CAMERA_PRESETS.map((option) => (
-            <Button
-              key={option.value}
-              id={`camera-${option.value}`}
-              type="button"
-              variant="outline"
-              onClick={() => handlers.onCameraPresetChange(option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      </ControlRow>
+      {is3D ? (
+        <ControlRow label="视角预设" name="camera">
+          {/* The buttons keep their own widths (`Button` is `shrink-0`), so the row wraps in the
+           * 224px sidebar instead of pushing the page wider than the viewport. */}
+          <div className="flex flex-wrap gap-2">
+            {CAMERA_PRESETS.map((option) => (
+              <Button
+                key={option.value}
+                id={`camera-${option.value}`}
+                type="button"
+                variant="outline"
+                onClick={() => handlers.onCameraPresetChange(option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </ControlRow>
+      ) : null}
     </>
   );
 }
 
 /** Geometry section: line width scaling and joint handling of the debug-draw layer. */
 function GeometryControls({ config, handlers }: DemoControlsProps) {
+  // The 2D pages pick their own joins per strip, so the joint control only describes the 3D
+  // layer; the width scale applies to both.
+  const is3D = config.camera.mode === "3d";
   return (
     <>
       <SliderInputRow
@@ -343,25 +355,27 @@ function GeometryControls({ config, handlers }: DemoControlsProps) {
         onValueChange={handlers.onLineWidthScaleChange}
         format={(value) => `${value.toFixed(2)}×`}
       />
-      <ControlRow label="拐角" name="joint">
-        <Select
-          value={config.view.lineJoint}
-          onValueChange={(value) => handlers.onLineJointChange(value as LineJoint)}
-        >
-          <SelectTrigger id="line-joint" className="w-full">
-            <SelectValue>
-              {(value: LineJoint) => JOINTS.find((option) => option.value === value)?.label ?? value}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {JOINTS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </ControlRow>
+      {is3D ? (
+        <ControlRow label="拐角" name="joint">
+          <Select
+            value={config.view.lineJoint}
+            onValueChange={(value) => handlers.onLineJointChange(value as LineJoint)}
+          >
+            <SelectTrigger id="line-joint" className="w-full">
+              <SelectValue>
+                {(value: LineJoint) => JOINTS.find((option) => option.value === value)?.label ?? value}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {JOINTS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ControlRow>
+      ) : null}
     </>
   );
 }
@@ -373,10 +387,14 @@ function GeometryControls({ config, handlers }: DemoControlsProps) {
  * name as a hint.
  */
 function GridControls({ config, handlers }: DemoControlsProps) {
+  // The 2D grid reads a subset of the same panel: the addon's 2D shader has no finite quad,
+  // edge/grazing/centre fades or stipple, and it has one field the 3D one does not.
+  const is2D = config.camera.mode === "2d";
   const grid = config.grid;
   const patch = handlers.onGridOptionsChange;
   return (
     <>
+      {!is2D && (
       <NumberRow
         id="grid-size"
         label="网格范围"
@@ -387,6 +405,7 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         value={grid.gridSize}
         onValueChange={(value) => patch({ gridSize: value })}
       />
+      )}
       <NumberRow
         id="grid-cell-size"
         label="单元尺寸"
@@ -408,6 +427,18 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         onValueChange={(value) => patch({ lineWidthPixels: value })}
         format={(value) => `${value.toFixed(2)}px`}
       />
+      {is2D && (
+        <NumberRow
+          id="grid-min-pixels"
+          label="最小像素间距"
+          name="min_pixels_between_cells"
+          min={0.1}
+          max={100}
+          step={0.1}
+          value={grid.minPixelsBetweenCells}
+          onValueChange={(value) => patch({ minPixelsBetweenCells: value })}
+        />
+      )}
       <NumberRow
         id="grid-lod-finer"
         label="精细层级数"
@@ -430,6 +461,7 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         integer
         onValueChange={(value) => patch({ lodTotalLevels: value })}
       />
+      {!is2D && (<>
       <NumberRow
         id="grid-center-fade-lines"
         label="中心淡出线条数"
@@ -502,6 +534,7 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         checked={grid.enableStippleDiscard}
         onCheckedChange={(checked) => patch({ enableStippleDiscard: checked })}
       />
+      </>)}
       <ToggleRow
         label="LOD 调试配色"
         name="debug_lod_colors"
@@ -648,8 +681,8 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
         </ControlSection>
         <ControlSection
           id="geometry"
-          title="3D 图形"
-          subtitle="Geometry 3D"
+          title={config.camera.mode === "2d" ? "2D 图形" : "3D 图形"}
+          subtitle={config.camera.mode === "2d" ? "Geometry 2D" : "Geometry 3D"}
           open={open.geometry}
           onOpenChange={setOpen}
         >
@@ -657,8 +690,8 @@ export function DemoControls({ config, handlers }: DemoControlsProps) {
         </ControlSection>
         <ControlSection
           id="infinite-grid"
-          title="无限网格"
-          subtitle="Infinite Grid"
+          title={config.camera.mode === "2d" ? "2D 网格" : "无限网格"}
+          subtitle={config.camera.mode === "2d" ? "Infinite Grid 2D" : "Infinite Grid"}
           open={open["infinite-grid"]}
           onOpenChange={setOpen}
         >

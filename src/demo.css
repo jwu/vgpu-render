@@ -284,6 +284,16 @@ canvas {
   padding: 14px 10px;
   overflow: auto;
 }
+/* One reference family: its own heading and its own two-pixel row gap, so the
+ * families read as separate lists inside the scrolling column. */
+.example-group {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+.example-group-title {
+  padding: 12px 12px 4px;
+}
 .example-button {
   display: grid;
   gap: 4px;

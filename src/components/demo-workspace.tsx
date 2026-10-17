@@ -45,6 +45,7 @@ function SourcePreview({ exampleId }: { readonly exampleId: string }) {
 export function DemoWorkspace({ snapshot, canvasRef }: DemoWorkspaceProps) {
   const { selected, status, statusDetail, counts } = snapshot;
   const description = selected.notes ? `${selected.description} — ${selected.notes}` : selected.description;
+  const hint = selected.family === "2d" ? "拖拽平移 · 滚轮缩放" : "拖拽旋转 · 滚轮缩放";
 
   return (
     <section className="workspace" aria-label="示例预览">
@@ -75,7 +76,7 @@ export function DemoWorkspace({ snapshot, canvasRef }: DemoWorkspaceProps) {
               {counts}
             </span>
           </div>
-          <span className="hint">拖拽旋转 · 滚轮缩放</span>
+          <span className="hint">{hint}</span>
         </div>
         <Separator />
         <SourcePreview exampleId={selected.id} />

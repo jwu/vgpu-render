@@ -75,6 +75,8 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   "text-layout": "textLayoutScene",
   "text-anchor": "textAnchorScene",
   "text-cjk": "textCjkScene",
+  "2d-gizmos": "gizmos2D",
+  "2d-shapes": "shapes2D",
 };
 
 /**
