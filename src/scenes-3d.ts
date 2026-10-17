@@ -1,6 +1,7 @@
 import type { FrameRecorder, LineOptions, Vec3, Color } from "./frame-recorder.js";
-import { rotatePoint, type Curve3D } from "./curve.js";
+import { rotatePoint, sampleCurve, type Curve3D } from "./curve.js";
 import { buildScene2D } from "./scenes-2d.js";
+import { drawSceneLabels, INDEX_LABEL_PLACEMENT, LABEL_PLACEMENT, SCENE_LABELS, type SceneLabels, type SceneLabelSpec } from "./labels-3d.js";
 import {
   arcNormals,
   box,
@@ -198,7 +199,7 @@ function circleCenterLocal(column: number, row: number): Vec3 {
   return [circleColumnX(column), CIRCLE_Y, CIRCLE_SAMPLE_START_Z - row * circleRowSpacing(column)];
 }
 
-/** Raw reference layout data, exported so tests and future 3D labels share one source. */
+/** Raw reference layout data, exported so tests and the 3D labels share one source. */
 export const CIRCLE_REFERENCE = {
   columns: 11,
   columnSpacing: CIRCLE_COLUMN_SPACING,
@@ -1311,7 +1312,6 @@ function boxMatrix(recorder: FrameRecorder, context: SceneContext): void {
 // whether solid columns are included.
 //
 // Approximations (also noted in `docs/reference-parity.md`):
-// - `Label3D` column and sample labels are omitted; the gallery draws its own.
 // - `draw_curve` uses a fixed `tolerance` instead of adaptive `max_stages` sampling.
 // - Arrow heads keep the flat X-strip approximation shared with `arrow.gd`.
 // - `draw_grid`/`draw_grid_n` use the library grid, whose skew shear and outer
@@ -2163,6 +2163,595 @@ function textCompareScene(recorder: FrameRecorder): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 3D labels.
+//
+// Every reference example owns one `Label3D` per column title and one per sample. They are not
+// addon output, but they are part of the picture the example defines, so the port draws them with
+// vgpu's own text renderer at the reference coordinates: a centred title in front of the column and
+// a right-aligned label beside each row, both lying flat on the ground plane
+// (`label.rotation.x = -PI/2`) at `LABEL_Y = <scene>_Y + 0.01`.
+//
+// A row label's right edge sits at its sample's x bounds minus `SAMPLE_LABEL_GAP`, which is why each
+// scene needs its own bounds function: the reference measures what the geometry actually spans, so
+// a rotated or shrinking tunnel column keeps its labels clear of the shape.
+// ---------------------------------------------------------------------------
+
+const LABEL_GAP = LABEL_PLACEMENT.sampleGap;
+
+/** `LABEL_Y := <scene>_Y + 0.01`. */
+function labelHeight(baseY: number): number {
+  return baseY + LABEL_PLACEMENT.labelYOffset;
+}
+
+/** A local X before the capture harness translates the scene root. */
+function sceneX(localX: number): number {
+  return localX + REFERENCE_OFFSET[0];
+}
+
+/** A local Z before the capture harness translates the scene root. */
+function sceneZ(localZ: number): number {
+  return localZ + REFERENCE_OFFSET[2];
+}
+
+function boundsX(points: readonly Vec3[]): readonly [number, number] {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point[0]);
+    maxX = Math.max(maxX, point[0]);
+  }
+  return [minX, maxX];
+}
+
+/** `LABEL_Y` of the two all-API matrices is a literal, not `<scene>_Y + 0.01`. */
+const MATRIX_LABEL_Y = 0.08;
+
+/** `index.gd` / `world_space_width.gd`: `_column_x(column) + 0.5` over `ORIGIN_X = 1`. */
+const MATRIX_LABELS: SceneLabelSpec = {
+  placement: INDEX_LABEL_PLACEMENT,
+  titlePosition: (column) => [sceneX(INDEX_LAYOUT.columnX(column) + 0.5), MATRIX_LABEL_Y, sceneZ(INDEX_LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [sceneX(INDEX_LAYOUT.columnX(column) - LABEL_GAP), MATRIX_LABEL_Y, sceneZ(INDEX_LAYOUT.rowZ(column, row))],
+};
+
+/** `line.gd`: titles centre over the 1.1-long sample, labels sit `SAMPLE_LABEL_OFFSET_X` left of the column. */
+const LINE_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [sceneX(lineColumnX(column) + LINE_SAMPLE_LENGTH * 0.5), labelHeight(LINE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [sceneX(lineColumnX(column) - LABEL_GAP), labelHeight(LINE_Y), sceneZ(lineRowZ(row))],
+};
+
+/** `rect.gd` `_get_column_max_rect_width`: the widest rect of the column. */
+function rectColumnMaxWidth(column: number): number {
+  if (column === 1) return Math.max(...RECT_SIZE_VALUES.map(([width]) => width));
+  if (column === 9) return RECT_S_TUNNEL_WIDTH;
+  return RECT_WIDTH;
+}
+
+const RECT_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [sceneX(RECT_LAYOUT.columnX(column)), labelHeight(SCENE_LAYOUTS.rect.baseY), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => {
+    const depthStep = column === 2 ? RECT_ROTATION_TUNNEL_DEPTH_STEP : column === 9 ? RECT_S_TUNNEL_DEPTH_STEP : 0;
+    const localZ = RECT_LAYOUT.rowZ(column, row) - row * depthStep;
+    return [sceneX(RECT_LAYOUT.columnX(column) - rectColumnMaxWidth(column) * 0.5 - LABEL_GAP), labelHeight(SCENE_LAYOUTS.rect.baseY), sceneZ(localZ)];
+  },
+};
+
+/** `box.gd` `_get_box_x_bounds`: the eight rotated corners, projected onto x. */
+function boxLabelBounds(column: number, row: number): readonly [number, number] {
+  const center = boxCenter(column, row);
+  const size = boxColumnSize(column, row);
+  const basis = column === 2 ? boxRotationTunnelBasis(row) : column === 6 ? boxSolidBasis(row) : IDENTITY_BASIS;
+  const points: Vec3[] = [];
+  for (const x of [-1, 1]) {
+    for (const y of [-1, 1]) {
+      for (const z of [-1, 1]) {
+        points.push([
+          center[0] + (basis.x[0] * x * size[0] + basis.y[0] * y * size[1] + basis.z[0] * z * size[2]) * 0.5,
+          center[1],
+          center[2],
+        ]);
+      }
+    }
+  }
+  return boundsX(points);
+}
+
+function boxLabelZ(column: number, row: number): number {
+  if (column === 2) return boxTunnelCenter(2, row, BOX_ROTATION_TUNNEL_Y, BOX_ROTATION_TUNNEL_DEPTH_STEP)[2];
+  if (column === 6) return boxTunnelCenter(6, row, BOX_S_TUNNEL_Y, BOX_S_TUNNEL_DEPTH_STEP)[2];
+  return sceneZ(BOX_LAYOUT.rowZ(column, row));
+}
+
+const BOX_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(boxLabelTitleX(column)), labelHeight(BOX_BASE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [boxLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(BOX_BASE_Y), boxLabelZ(column, row)],
+};
+
+function boxLabelTitleX(column: number): number {
+  const rowCount = SCENE_LABELS.box!.columns[column]!.samples.length;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let row = 0; row < rowCount; row++) {
+    const [min, max] = boxLabelBounds(column, row);
+    minX = Math.min(minX, min);
+    maxX = Math.max(maxX, max);
+  }
+  return (minX + maxX) * 0.5;
+}
+
+/** `axes.gd` `_get_column_length`: the length row plus the shrinking rotation tunnel. */
+function axesColumnLength(column: number, row: number): number {
+  if (column === 0 || column === 3) return AXES_LENGTH_VALUES[row]!;
+  if (column === 2 || column === 5) return AXES_ROTATION_TUNNEL_LENGTH * (1 - row * AXES_ROTATION_TUNNEL_SCALE_STEP);
+  return AXES_LENGTH;
+}
+
+function axesLabelBounds(column: number, row: number): readonly [number, number] {
+  const tunnel = column === 2 || column === 5;
+  const origin = tunnel ? axesTunnelPos(column, row) : AXES_LAYOUT.at(column, row);
+  const basis = tunnel ? axesRotationTunnelBasis(row) : IDENTITY_BASIS;
+  const length = axesColumnLength(column, row);
+  return boundsX([origin, offsetAlong(origin, basis.x, length), offsetAlong(origin, basis.y, length), offsetAlong(origin, basis.z, length)]);
+}
+
+function axesLabelZ(column: number, row: number): number {
+  if (column === 2 || column === 5) return axesTunnelPos(column, row)[2];
+  return sceneZ(AXES_LAYOUT.rowZ(column, row));
+}
+
+const AXES_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(axesLabelTitleX(column)), labelHeight(SCENE_LAYOUTS.axes.baseY), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [axesLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(SCENE_LAYOUTS.axes.baseY), axesLabelZ(column, row)],
+};
+
+function axesLabelTitleX(column: number): number {
+  const rowCount = SCENE_LABELS.axes!.columns[column]!.samples.length;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let row = 0; row < rowCount; row++) {
+    const [min, max] = axesLabelBounds(column, row);
+    minX = Math.min(minX, min);
+    maxX = Math.max(maxX, max);
+  }
+  return (minX + maxX) * 0.5;
+}
+
+const GRID_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(gridLabelTitleX(column)), labelHeight(GRID_SCENE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => {
+    const bounds = gridSceneBounds(column, row);
+    const center = gridSceneCenter(column, row);
+    return [center[0] + bounds.minX - LABEL_GAP, labelHeight(GRID_SCENE_Y), center[2]];
+  },
+};
+
+function gridLabelTitleX(column: number): number {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let row = 0; row < gridSceneRowCount(column); row++) {
+    const bounds = gridSceneBounds(column, row);
+    const center = gridSceneCenter(column, row);
+    minX = Math.min(minX, center[0] + bounds.minX);
+    maxX = Math.max(maxX, center[0] + bounds.maxX);
+  }
+  return (minX + maxX) * 0.5;
+}
+
+/** `circle.gd` `_get_column_max_radius`. */
+function circleColumnMaxRadius(column: number): number {
+  if (column === 1) return Math.max(...RADIUS_VALUES);
+  if (column === 3) return CIRCLE_TUNNEL_RADIUS;
+  return CIRCLE_RADIUS;
+}
+
+const CIRCLE_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [sceneX(circleColumnX(column)), labelHeight(CIRCLE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => {
+    const depthStep = column === 3 ? CIRCLE_TUNNEL_DEPTH_STEP : 0;
+    const localZ = CIRCLE_SAMPLE_START_Z - row * circleRowSpacing(column) - row * depthStep;
+    return [sceneX(circleColumnX(column) - circleColumnMaxRadius(column) - LABEL_GAP), labelHeight(CIRCLE_Y), sceneZ(localZ)];
+  },
+};
+
+/** `arc.gd` `_get_column_radius`. */
+function arcColumnRadius(column: number, row: number): number {
+  if (column === 1) return RADIUS_VALUES[row]!;
+  if (column === 4) return ARC_TUNNEL_RADIUS * (1 - row * ARC_TUNNEL_SCALE_STEP);
+  return ARC_RADIUS;
+}
+
+/** `arc.gd` `_get_column_angle`. */
+function arcColumnAngle(column: number, row: number): number {
+  return column === 2 ? ARC_ANGLE_VALUES[row]! : ARC_ANGLE;
+}
+
+/** `arc.gd` `_get_column_segment_count`. */
+function arcColumnSegments(column: number, row: number): number {
+  if (column === 3) return SEGMENT_VALUES[row]!;
+  if (column === 5 || column === 7 || column === 10) return ARC_JOINT_SEGMENT_COUNT;
+  return ARC_SEGMENT_COUNT;
+}
+
+function arcLabelBounds(column: number, row: number): readonly [number, number] {
+  const tunnel = column === 4;
+  const center = tunnel ? arcTunnelCenter(column, row) : ARC_LAYOUT.at(column, row);
+  const basis = tunnel ? arcTunnelBasis(row) : FLAT_BASIS;
+  const radius = arcColumnRadius(column, row);
+  const angle = arcColumnAngle(column, row);
+  const steps = Math.max(8, arcColumnSegments(column, row));
+  const points: Vec3[] = [];
+  for (let step = 0; step <= steps; step++) {
+    const sweep = angle * step / steps;
+    const cos = Math.cos(sweep) * radius;
+    const sin = Math.sin(sweep) * radius;
+    points.push([
+      center[0] + basis.x[0] * cos + basis.y[0] * sin,
+      center[1],
+      center[2] + basis.x[2] * cos + basis.y[2] * sin,
+    ]);
+  }
+  return boundsX(points);
+}
+
+function arcLabelZ(column: number, row: number): number {
+  if (column === 4) return arcTunnelCenter(column, row)[2];
+  return sceneZ(ARC_LAYOUT.rowZ(column, row));
+}
+
+const ARC_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(arcLabelTitleX(column)), labelHeight(SCENE_LAYOUTS.arc.baseY), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [arcLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(SCENE_LAYOUTS.arc.baseY), arcLabelZ(column, row)],
+};
+
+function arcLabelTitleX(column: number): number {
+  const rowCount = SCENE_LABELS.arc!.columns[column]!.samples.length;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let row = 0; row < rowCount; row++) {
+    const [min, max] = arcLabelBounds(column, row);
+    minX = Math.min(minX, min);
+    maxX = Math.max(maxX, max);
+  }
+  return (minX + maxX) * 0.5;
+}
+
+/** `curve.gd` `_get_sample_curve`. */
+function curveSampleShape(column: number, row: number): Curve3D {
+  if (column === 1) return CURVE_SHAPES[row]!;
+  if (column === 4) return CURVE_CLOSED[row]!;
+  if (column === 5 || column === 7) return CURVE_CORNER;
+  return CURVE_BASE;
+}
+
+/** `curve.gd` `_get_sample_tolerance`. */
+function curveSampleTolerance(column: number, row: number): number {
+  if (column === 3) return CURVE_TOLERANCE_VALUES[row]!;
+  if (column === 5 || column === 7) return CURVE_JOINT_TOLERANCE_LENGTH;
+  return CURVE_TOLERANCE_LENGTH;
+}
+
+/** `curve.gd` `_get_curve_x_bounds`, sampled the same way the renderer tessellates the curve. */
+function curveLabelBounds(column: number, row: number): readonly [number, number] {
+  const shape = curveSampleShape(column, row);
+  const tolerance = curveSampleTolerance(column, row);
+  if (column === 2) {
+    const local = CURVE_LAYOUT.atLocal(2, row);
+    const center: Vec3 = [local[0], local[1] + 0.35, local[2] - row * CURVE_TUNNEL_DEPTH_STEP];
+    const scale = 1 - row * CURVE_TUNNEL_SCALE_STEP;
+    return boundsX(sampleCurve(scaleCurve(shape, scale, curveTunnelBasis(row)), tolerance, { center }));
+  }
+  return boundsX(sampleCurve(shape, tolerance, { center: CURVE_LAYOUT.atLocal(column, row) }));
+}
+
+function curveLabelZ(column: number, row: number): number {
+  if (column === 2) return sceneZ(CURVE_LAYOUT.rowZ(column, row) - row * CURVE_TUNNEL_DEPTH_STEP);
+  return sceneZ(CURVE_LAYOUT.rowZ(column, row));
+}
+
+/** `curve.gd` uses `EXAMPLE_TITLE_Z = -1.2`, ahead of the example rows that start at -2. */
+const CURVE_EXAMPLE_TITLE_Z = -1.2;
+const CURVE_CONSTRUCTION_TITLE_Z = 0.35;
+
+const CURVE_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(curveLabelTitleX(column)), labelHeight(CURVE_Y), sceneZ(CURVE_EXAMPLE_TITLE_Z)],
+  samplePosition: (column, row) => [sceneX(curveLabelBounds(column, row)[0] - LABEL_GAP), labelHeight(CURVE_Y), curveLabelZ(column, row)],
+  constructionPosition: (index) => {
+    const center: Vec3 = [CURVE_LAYOUT.columnX(index), CURVE_Y, CONSTRUCTION_SAMPLE_Z];
+    const [min, max] = boundsX(sampleCurve(CURVE_CONSTRUCTION[index]!, CURVE_TOLERANCE_LENGTH, { center }));
+    return [sceneX((min + max) * 0.5), labelHeight(CURVE_Y), sceneZ(CURVE_CONSTRUCTION_TITLE_Z)];
+  },
+};
+
+function curveLabelTitleX(column: number): number {
+  const rowCount = SCENE_LABELS.curve!.columns[column]!.samples.length;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let row = 0; row < rowCount; row++) {
+    const [min, max] = curveLabelBounds(column, row);
+    minX = Math.min(minX, min);
+    maxX = Math.max(maxX, max);
+  }
+  return sceneX((minX + maxX) * 0.5);
+}
+
+/** `sphere.gd` `_get_sphere_x_bounds`: a rotated sphere spans ±radius on every basis axis. */
+function sphereLabelBounds(column: number, row: number): readonly [number, number] {
+  const tunnel = column === 5 || column === 13;
+  const center = column === 5
+    ? sphereTunnelCenter(column, row, SPHERE_ROTATION_TUNNEL_Y, SPHERE_ROTATION_TUNNEL_DEPTH_STEP)
+    : column === 13
+      ? sphereTunnelCenter(column, row, SPHERE_S_TUNNEL_Y, SPHERE_S_TUNNEL_DEPTH_STEP)
+      : sphereCenter(column, row);
+  const basis = tunnel ? sphereTunnelBasis(row) : IDENTITY_BASIS;
+  const radius = sphereColumnRadius(column, row);
+  const points: Vec3[] = [];
+  for (const axis of [basis.x, basis.y, basis.z]) {
+    points.push(offsetAlong(center, axis, radius), offsetAlong(center, axis, -radius));
+  }
+  return boundsX(points);
+}
+
+function sphereLabelZ(column: number, row: number): number {
+  if (column === 5) return sphereTunnelCenter(column, row, SPHERE_ROTATION_TUNNEL_Y, SPHERE_ROTATION_TUNNEL_DEPTH_STEP)[2];
+  if (column === 13) return sphereTunnelCenter(column, row, SPHERE_S_TUNNEL_Y, SPHERE_S_TUNNEL_DEPTH_STEP)[2];
+  return sceneZ(SPHERE_LAYOUT.rowZ(column, row));
+}
+
+const SPHERE_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(shapeLabelTitleX(SCENE_LABELS.sphere!, column, sphereLabelBounds)), labelHeight(SPHERE_BASE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [sphereLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(SPHERE_BASE_Y), sphereLabelZ(column, row)],
+};
+
+/** `cone.gd` `_get_column_segment_count` / `_get_column_side_segment_count`. */
+function coneColumnSegments(column: number, row: number): number {
+  if (column === 3) return SHAPE_SEGMENT_VALUES[row]!;
+  if (column === 6 || column === 8) return CONE_JOINT_SEGMENT_COUNT;
+  return CONE_SEGMENT_COUNT;
+}
+
+function coneColumnSideSegments(column: number, row: number): number {
+  if (column === 4) return SHAPE_SEGMENT_VALUES[row]!;
+  if (column === 6 || column === 8) return CONE_JOINT_SIDE_SEGMENT_COUNT;
+  return CONE_SIDE_SEGMENT_COUNT;
+}
+
+function coneTunnelValues(column: number): { readonly y: number; readonly depth: number } {
+  return column === 9
+    ? { y: CONE_S_TUNNEL_Y, depth: CONE_S_TUNNEL_DEPTH_STEP }
+    : { y: CONE_ROTATION_TUNNEL_Y, depth: CONE_ROTATION_TUNNEL_DEPTH_STEP };
+}
+
+function coneLabelBounds(column: number, row: number): readonly [number, number] {
+  const tunnel = column === 5 || column === 9;
+  const values = coneTunnelValues(column);
+  const center = tunnel ? coneTunnelCenter(column, row, values.y, values.depth) : coneCenter(column, row);
+  const basis = tunnel ? coneTunnelBasis(row) : IDENTITY_BASIS;
+  const radius = coneColumnRadius(column, row);
+  const height = coneColumnHeight(column, row);
+  const apex = offsetAlong(center, basis.y, height * 0.5);
+  const baseCenter = offsetAlong(center, basis.y, -height * 0.5);
+  const points: Vec3[] = [apex];
+  const ring = (count: number): void => {
+    for (let index = 0; index < count; index++) {
+      const angle = Math.PI * 2 * index / count;
+      const cos = Math.cos(angle) * radius;
+      const sin = Math.sin(angle) * radius;
+      points.push([
+        baseCenter[0] + basis.x[0] * cos + basis.z[0] * sin,
+        baseCenter[1],
+        baseCenter[2] + basis.x[2] * cos + basis.z[2] * sin,
+      ]);
+    }
+  };
+  ring(Math.max(8, coneColumnSegments(column, row)));
+  ring(Math.max(1, coneColumnSideSegments(column, row)));
+  return boundsX(points);
+}
+
+function coneLabelZ(column: number, row: number): number {
+  if (column === 5 || column === 9) {
+    const values = coneTunnelValues(column);
+    return coneTunnelCenter(column, row, values.y, values.depth)[2];
+  }
+  return sceneZ(CONE_LAYOUT.rowZ(column, row));
+}
+
+const CONE_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(shapeLabelTitleX(SCENE_LABELS.cone!, column, coneLabelBounds)), labelHeight(CONE_BASE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [coneLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(CONE_BASE_Y), coneLabelZ(column, row)],
+};
+
+/** `cylinder.gd` `_get_column_segment_count` / `_get_column_side_segment_count`. */
+function cylinderColumnSegments(column: number, row: number): number {
+  if (column === 3) return SHAPE_SEGMENT_VALUES[row]!;
+  if (column === 6 || column === 8) return CYLINDER_JOINT_SEGMENT_COUNT;
+  return CYLINDER_SEGMENT_COUNT;
+}
+
+function cylinderColumnSideSegments(column: number, row: number): number {
+  if (column === 4) return SHAPE_SEGMENT_VALUES[row]!;
+  if (column === 6 || column === 8) return CYLINDER_JOINT_SIDE_SEGMENT_COUNT;
+  return CYLINDER_SIDE_SEGMENT_COUNT;
+}
+
+function cylinderTunnelValues(column: number): { readonly y: number; readonly depth: number } {
+  return column === 9
+    ? { y: CYLINDER_S_TUNNEL_Y, depth: CYLINDER_S_TUNNEL_DEPTH_STEP }
+    : { y: CYLINDER_ROTATION_TUNNEL_Y, depth: CYLINDER_ROTATION_TUNNEL_DEPTH_STEP };
+}
+
+function cylinderLabelBounds(column: number, row: number): readonly [number, number] {
+  const tunnel = column === 5 || column === 9;
+  const values = cylinderTunnelValues(column);
+  const center = tunnel ? cylinderTunnelCenter(column, row, values.y, values.depth) : cylinderCenter(column, row);
+  const basis = tunnel ? cylinderTunnelBasis(row) : IDENTITY_BASIS;
+  const radius = cylinderColumnRadius(column, row);
+  const halfHeight = cylinderColumnHalfHeight(column, row);
+  const bottom = offsetAlong(center, basis.y, -halfHeight);
+  const top = offsetAlong(center, basis.y, halfHeight);
+  const points: Vec3[] = [];
+  const ring = (ringCenter: Vec3, count: number): void => {
+    for (let index = 0; index < count; index++) {
+      const angle = Math.PI * 2 * index / count;
+      const cos = Math.cos(angle) * radius;
+      const sin = Math.sin(angle) * radius;
+      points.push([
+        ringCenter[0] + basis.x[0] * cos + basis.z[0] * sin,
+        ringCenter[1],
+        ringCenter[2] + basis.x[2] * cos + basis.z[2] * sin,
+      ]);
+    }
+  };
+  ring(bottom, Math.max(8, cylinderColumnSegments(column, row)));
+  ring(top, Math.max(8, cylinderColumnSegments(column, row)));
+  ring(bottom, Math.max(1, cylinderColumnSideSegments(column, row)));
+  ring(top, Math.max(1, cylinderColumnSideSegments(column, row)));
+  return boundsX(points);
+}
+
+function cylinderLabelZ(column: number, row: number): number {
+  if (column === 5 || column === 9) {
+    const values = cylinderTunnelValues(column);
+    return cylinderTunnelCenter(column, row, values.y, values.depth)[2];
+  }
+  return sceneZ(CYLINDER_LAYOUT.rowZ(column, row));
+}
+
+const CYLINDER_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(shapeLabelTitleX(SCENE_LABELS.cylinder!, column, cylinderLabelBounds)), labelHeight(CYLINDER_BASE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [cylinderLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(CYLINDER_BASE_Y), cylinderLabelZ(column, row)],
+};
+
+/** `capsule.gd` `_get_capsule_x_bounds`: the two cap centres, widened by the radius. */
+function capsuleLabelBounds(column: number, row: number): readonly [number, number] {
+  const tunnel = column === 5;
+  const center = tunnel
+    ? capsuleTunnelCenter(column, row, CAPSULE_ROTATION_TUNNEL_Y, CAPSULE_ROTATION_TUNNEL_DEPTH_STEP)
+    : capsuleCenter(column, row);
+  const basis = tunnel ? capsuleTunnelBasis(row) : IDENTITY_BASIS;
+  const radius = capsuleColumnRadius(column, row);
+  const halfHeight = capsuleColumnHalfHeight(column, row);
+  const bottom = offsetAlong(center, basis.y, -halfHeight);
+  const top = offsetAlong(center, basis.y, halfHeight);
+  return [Math.min(bottom[0], top[0]) - radius, Math.max(bottom[0], top[0]) + radius];
+}
+
+function capsuleLabelZ(column: number, row: number): number {
+  if (column === 5) return capsuleTunnelCenter(column, row, CAPSULE_ROTATION_TUNNEL_Y, CAPSULE_ROTATION_TUNNEL_DEPTH_STEP)[2];
+  return sceneZ(CAPSULE_LAYOUT.rowZ(column, row));
+}
+
+const CAPSULE_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(shapeLabelTitleX(SCENE_LABELS.capsule!, column, capsuleLabelBounds)), labelHeight(CAPSULE_BASE_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [capsuleLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(CAPSULE_BASE_Y), capsuleLabelZ(column, row)],
+};
+
+/** Union of a column's bounds, centred like the reference `_get_column_label_x`. */
+function shapeLabelTitleX(labels: SceneLabels, column: number, bounds: (column: number, row: number) => readonly [number, number]): number {
+  const rowCount = labels.columns[column]!.samples.length;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (let row = 0; row < rowCount; row++) {
+    const [min, max] = bounds(column, row);
+    minX = Math.min(minX, min);
+    maxX = Math.max(maxX, max);
+  }
+  return (minX + maxX) * 0.5;
+}
+
+/** `arrow.gd` `_get_column_head_length` / `_get_column_head_angle` / `_get_column_dir_length`. */
+function arrowColumnDirLength(column: number): number {
+  return column === 3 || column === 5 ? ARROW_JOINT_HEAD_LENGTH : ARROW_HEAD_LENGTH;
+}
+
+function arrowColumnHeadLength(column: number, row: number): number {
+  if (column === 7) return ARROW_HEAD_LENGTH_VALUES[row]!;
+  if (column === 10 || column === 12 || column === 14 || column === 16) return ARROW_JOINT_HEAD_LENGTH;
+  return ARROW_HEAD_LENGTH;
+}
+
+function arrowColumnHeadAngle(column: number, row: number): number {
+  if (column === 2 || column === 8) return ARROW_HEAD_ANGLE_VALUES[row]!;
+  if (column === 3 || column === 5 || column === 10 || column === 12 || column === 14 || column === 16) return ARROW_JOINT_HEAD_ANGLE;
+  return ARROW_BASE_HEAD_ANGLE;
+}
+
+/** `arrow.gd` `_get_sample_x_bounds`. */
+function arrowLabelBounds(column: number, row: number): readonly [number, number] {
+  if (column <= 5) {
+    const tip = arrowTip(column, row);
+    const dir: Vec3 = column === 1 ? arrowDirection(row) : [arrowColumnDirLength(column), 0, 0];
+    const headLength = Math.hypot(dir[0], dir[1], dir[2]);
+    const forward = scaleVec(dir, 1 / headLength);
+    const reference: Vec3 = Math.abs(forward[1]) > 0.95 ? [0, 0, 1] : [0, 1, 0];
+    const tangent = normalizeVector(crossVector(forward, reference));
+    const bitangent = normalizeVector(crossVector(forward, tangent));
+    const headRadius = Math.tan(arrowColumnHeadAngle(column, row)) * headLength;
+    const headCenter = offsetAlong(tip, forward, -headLength);
+    return boundsX([
+      tip,
+      offsetAlong(headCenter, tangent, headRadius),
+      offsetAlong(headCenter, tangent, -headRadius),
+      offsetAlong(headCenter, bitangent, headRadius),
+      offsetAlong(headCenter, bitangent, -headRadius),
+    ]);
+  }
+  const start = arrowLineStart(column, row);
+  const end = arrowLineEnd(column, row);
+  const dx = end[0] - start[0];
+  const dy = end[1] - start[1];
+  const dz = end[2] - start[2];
+  const length = Math.hypot(dx, dy, dz);
+  const forward = scaleVec([dx, dy, dz], 1 / length);
+  const headLength = arrowColumnHeadLength(column, row);
+  const headRadius = Math.tan(arrowColumnHeadAngle(column, row)) * headLength;
+  const headCenter = offsetAlong(end, forward, -headLength);
+  return [
+    Math.min(start[0], end[0], headCenter[0] - headRadius),
+    Math.max(start[0], end[0], headCenter[0] + headRadius),
+  ];
+}
+
+function arrowLabelZ(column: number, row: number): number {
+  return column === 9 ? arrowLineStart(column, row)[2] : sceneZ(ARROW_LAYOUT.rowZ(column, row));
+}
+
+const ARROW_LABELS: SceneLabelSpec = {
+  placement: LABEL_PLACEMENT,
+  titlePosition: (column) => [(shapeLabelTitleX(SCENE_LABELS.arrow!, column, arrowLabelBounds)), labelHeight(ARROW_Y), sceneZ(LABEL_PLACEMENT.titleZ)],
+  samplePosition: (column, row) => [arrowLabelBounds(column, row)[0] - LABEL_GAP, labelHeight(ARROW_Y), arrowLabelZ(column, row)],
+};
+
+const SCENE_LABEL_SPECS: Readonly<Record<string, SceneLabelSpec>> = {
+  index: MATRIX_LABELS,
+  world_space_width: MATRIX_LABELS,
+  line: LINE_LABELS,
+  arrow: ARROW_LABELS,
+  axes: AXES_LABELS,
+  grid: GRID_LABELS,
+  rect: RECT_LABELS,
+  box: BOX_LABELS,
+  circle: CIRCLE_LABELS,
+  arc: ARC_LABELS,
+  curve: CURVE_LABELS,
+  sphere: SPHERE_LABELS,
+  cone: CONE_LABELS,
+  cylinder: CYLINDER_LABELS,
+  capsule: CAPSULE_LABELS,
+};
+
 export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
   // The 2D pages live in their own module and own their camera space entirely.
   if (buildScene2D(id, recorder, time)) return;
@@ -2212,6 +2801,9 @@ export function buildScene(id: string, recorder: FrameRecorder, time: number, li
     case "text-cjk": textScene(id, recorder); break;
     default: break;
   }
+  const labelSpec = SCENE_LABEL_SPECS[id];
+  const labels = SCENE_LABELS[id];
+  if (labelSpec !== undefined && labels !== undefined) drawSceneLabels(recorder, labels, labelSpec);
 }
 
 /** `world_space_width.gd`: the same matrix with world-space widths and no solid columns. */

@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import type { FrameCommand } from "../src/frame-recorder.js";
+import { FrameRecorder, type FrameCommand } from "../src/frame-recorder.js";
+import { buildScene } from "../src/scenes-3d.js";
 
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -103,6 +104,25 @@ test("real GPU fills triangles from transient solid commands", async () => {
     let count = 0;
     for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (lit(x, y)) count++;
     expect(count).toBeGreaterThan(1000);
+    renderer.destroy();
+  } finally { gpu.dispose(); }
+});
+
+test("a renderer without text sources draws geometry-only example scenes", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [64, 64], depth: true });
+    // `buildScene` now emits the reference `Label3D`-equivalent blocks. A caller that never asked for
+    // text must still be able to draw the scene, so those commands are skipped rather than thrown on.
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4096, triangles: 64 });
+    const recorder = new FrameRecorder();
+    buildScene("line", recorder, 0);
+    const commands = recorder.commands();
+    expect(commands.some((command) => command.kind === "text")).toBe(true);
+    renderer.prepare(commands, { viewProjection: identity, view: identity });
+    frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (p) => renderer.draw(p)));
+    const pixels = await output.color.read({ mipLevel: 0, region: "all" });
+    expect(pixels.some((value, index) => index % 4 !== 3 && value > 20)).toBe(true);
     renderer.destroy();
   } finally { gpu.dispose(); }
 });

@@ -769,8 +769,10 @@ export class GpuDebugDraw3D {
     this.#viewProjection = camera.viewProjection;
     this.#view = camera.view;
     // Every renderer that exists is prepared, even with an empty list: that is what drops the
-    // previous frame's glyphs instead of leaving them on screen.
-    if (textCommands.length > 0 || this.#texts.size > 0) {
+    // previous frame's glyphs instead of leaving them on screen. A caller that never configured a
+    // text source asked for geometry only, so the example scenes' own labels are drawn by nobody
+    // rather than failing the frame — a named source that is missing still throws.
+    if (this.#textOptions !== undefined && (textCommands.length > 0 || this.#texts.size > 0)) {
       this.#prepareText(textCommands, camera);
     }
     // Always prepared, even with an empty list: that is what drops the previous frame's 2D

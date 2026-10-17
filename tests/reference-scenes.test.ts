@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { FrameRecorder, type JointCommand, type LineCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
+import { FrameRecorder, type JointCommand, type LineCommand, type TextCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
 import { buildScene, CIRCLE_REFERENCE, LINE_REFERENCE } from "../src/scenes-3d.js";
+import { SCENE_LABELS } from "../src/labels-3d.js";
 
 function commandsFor(id: string): readonly (LineCommand | JointCommand | TriangleCommand | { kind: "point" })[] {
   const recorder = new FrameRecorder();
@@ -19,7 +20,6 @@ function trianglesOf(id: string): TriangleCommand[] {
 function jointsOf(id: string): JointCommand[] {
   return commandsFor(id).filter((command): command is JointCommand => command.kind === "joint");
 }
-
 function near(actual: readonly number[], expected: readonly number[], epsilon = 1e-6): boolean {
   return actual.length === expected.length && actual.every((value, index) => Math.abs(value - expected[index]!) < epsilon);
 }
@@ -215,6 +215,74 @@ describe("Line reference scene", () => {
       [0, 1, 0],
       [0, 0, -1],
     ]);
+  });
+});
+
+describe("Scene labels", () => {
+  const labelled = ["index", "line", "arrow", "axes", "grid", "rect", "box", "circle", "arc", "curve", "sphere", "cone", "cylinder", "capsule", "world_space_width"];
+
+  function textsOf(id: string): readonly TextCommand[] {
+    const recorder = new FrameRecorder();
+    buildScene(id, recorder, 0);
+    return recorder.texts;
+  }
+
+  test("every 3D example lays its labels flat on the ground plane", () => {
+    for (const id of labelled) {
+      const texts = textsOf(id);
+      expect(texts.length, `${id} has no labels`).toBeGreaterThan(0);
+      for (const text of texts) {
+        // `label.rotation.x = -PI * 0.5` in every reference `_create_label`.
+        expect(text.rotation, `${id} text rotation`).toEqual([-Math.PI / 2, 0, 0]);
+        expect(text.space, `${id} text space`).toBe("world-plane");
+        expect(text.depthTest, `${id} text depth`).toBe(true);
+      }
+    }
+  });
+
+  test("titles are centred over their column and rows are right-aligned", () => {
+    const texts = textsOf("line");
+    const titles = texts.filter((text) => text.fontSize === 28);
+    const rows = texts.filter((text) => text.fontSize === 20);
+    // line.gd: title at `_get_column_x(column) + SAMPLE_LENGTH * 0.5`, label at `column_x - 0.12`,
+    // both at `LABEL_Y = LINE_Y + 0.01` and shifted by the capture translation (-10, 0, 1.5).
+    expect(titles).toHaveLength(7);
+    expect(titles[0]!.position[0]).toBeCloseTo(-10 + 1.1 * 0.5, 6);
+    expect(titles[0]!.position[1]).toBeCloseTo(0.11, 6);
+    expect(titles[0]!.position[2]).toBeCloseTo(1.5 + 0.35, 6);
+    expect(rows[0]!.position[0]).toBeCloseTo(-10 - 0.12, 6);
+    expect(rows[0]!.position[2]).toBeCloseTo(1.5 - 0.45, 6);
+    expect(titles[0]!.anchor).toBe("center");
+    expect(rows[0]!.anchor).toBe("center-right");
+  });
+
+  test("every reference row label survives into the scene text", () => {
+    for (const id of labelled) {
+      const texts = textsOf(id);
+      const drawn = new Set(texts.map((text) => text.spans.map((span) => span.text).join("")));
+      for (const column of SCENE_LABELS[id]!.columns) {
+        expect(drawn.has(column.title), `${id} title ${column.title}`).toBe(true);
+        for (const sample of column.samples) {
+          expect(drawn.has(sample), `${id} sample ${sample}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  test("solid rows carry the reference scale, twist and hue text", () => {
+    expect(SCENE_LABELS.rect!.columns[9]!.samples[0]).toBe("s:1.00  r:0°  h:216°");
+    expect(SCENE_LABELS.rect!.columns[9]!.samples[1]).toBe("s:0.94  r:22°  h:261°");
+    expect(SCENE_LABELS.box!.columns[6]!.samples[1]).toBe("s:0.95  r:18°  h:261°");
+    // `%d deg` from `_get_angle_label`, and the uppercase joint names.
+    expect(SCENE_LABELS.arc!.columns[2]!.samples).toEqual(["90 deg", "180 deg", "270 deg", "360 deg"]);
+    expect(SCENE_LABELS.circle!.columns[4]!.samples).toEqual(["NONE", "ROUND", "BEVEL", "MITER"]);
+    expect(SCENE_LABELS.curve!.construction).toEqual(["straight", "smooth", "flat handles", "broken", "one-sided", "y curve", "closed"]);
+  });
+
+  test("the curve scene labels its construction band too", () => {
+    const texts = textsOf("curve");
+    const drawn = new Set(texts.map((text) => text.spans.map((span) => span.text).join("")));
+    for (const title of SCENE_LABELS.curve!.construction!) expect(drawn.has(title)).toBe(true);
   });
 });
 
