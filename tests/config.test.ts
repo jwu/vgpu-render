@@ -361,7 +361,10 @@ describe("per-example display config", () => {
 
   test("parseDisplayConfig falls back per field and rejects invalid values", () => {
     const base = displayConfigFrom(DEFAULT_DEMO_CONFIG);
+    // `grid2d` is the one field that does not fall back to `base`: an absent marker means the
+    // record predates the 2D grid, which the migration needs to be able to tell apart.
     expect(parseDisplayConfig({}, base)).toEqual(base);
+    expect(parseDisplayConfig({ grid2d: true }, base)).toEqual(base);
     expect(parseDisplayConfig({ animate: false }, base).animate).toBe(false);
     expect(() => parseDisplayConfig({ animate: "yes" }, base)).toThrow();
     expect(() => parseDisplayConfig({ gridOpacity: 5 }, base)).toThrow();
@@ -399,5 +402,38 @@ describe("per-example display config", () => {
     const { store, storage } = withStorage();
     saveDisplayConfig("circle", displayConfigFrom(DEFAULT_DEMO_CONFIG), storage);
     expect([...store.keys()]).toEqual([DEMO_DISPLAY_CONFIG_KEY]);
+  });
+});
+
+describe("2D camera config", () => {
+  test("defaults to the 3D camera", () => {
+    expect(DEFAULT_DEMO_CONFIG.camera.mode).toBe("3d");
+    expect(DEFAULT_DEMO_CONFIG.camera.pan).toEqual([0, 0]);
+    expect(DEFAULT_DEMO_CONFIG.camera.zoom).toBe(1);
+  });
+
+  test("parses mode, pan and zoom", () => {
+    const config = parseDemoConfig({ camera: { mode: "2d", pan: [12, -4], zoom: 2.5 } });
+    expect(config.camera.mode).toBe("2d");
+    expect(config.camera.pan).toEqual([12, -4]);
+    expect(config.camera.zoom).toBe(2.5);
+  });
+
+  test("rejects an invalid mode, pan or zoom", () => {
+    expect(() => parseDemoConfig({ camera: { mode: "isometric" } })).toThrow('"3d" or "2d"');
+    expect(() => parseDemoConfig({ camera: { pan: [1] } })).toThrow("must contain 2 numbers");
+    expect(() => parseDemoConfig({ camera: { zoom: 0 } })).toThrow("greater than zero");
+  });
+
+  test("clones the pan array instead of sharing it", () => {
+    const config = cloneDemoConfig(DEFAULT_DEMO_CONFIG);
+    config.camera.pan[0] = 5;
+    expect(DEFAULT_DEMO_CONFIG.camera.pan[0]).toBe(0);
+  });
+
+  test("parses the 2D grid's minimum pixel spacing", () => {
+    expect(DEFAULT_DEMO_CONFIG.grid.minPixelsBetweenCells).toBe(20);
+    expect(parseDemoConfig({ grid: { minPixelsBetweenCells: 12 } }).grid.minPixelsBetweenCells).toBe(12);
+    expect(() => parseDemoConfig({ grid: { minPixelsBetweenCells: 0 } })).toThrow("at least 0.1");
   });
 });

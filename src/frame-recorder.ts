@@ -1,4 +1,5 @@
 import { sampleCurve, type Curve3D, type CurveTransform } from "./curve.js";
+import { FrameRecorder2D, type FrameCommand2D } from "./frame-recorder-2d.js";
 import { gridLines } from "./geometry-generators.js";
 import { DEFAULT_FONT_FAMILY } from "./text-font.js";
 import { resolveTextAnchor, DEFAULT_LINE_HEIGHT_SCALE, type TextAnchor, type TextJustify, type TextLineBreak } from "./text-layout.js";
@@ -98,7 +99,13 @@ export type ArrowOptions = LineOptions & {
   headAngle?: number;
 };
 
-export type FrameCommand = PointCommand | LineCommand | JointCommand | TriangleCommand | TextCommand;
+export type FrameCommand =
+  | PointCommand
+  | LineCommand
+  | JointCommand
+  | TriangleCommand
+  | TextCommand
+  | FrameCommand2D;
 
 export type TriangleCommand = {
   readonly kind: "triangle";
@@ -527,10 +534,26 @@ export class FrameRecorder {
   readonly #triangles: TriangleCommand[] = [];
   readonly #texts: TextCommand[] = [];
   readonly #defaults: ResolvedFrameRecorderDefaults;
+  readonly #d2: FrameRecorder2D;
   #sealed = false;
 
   constructor(defaults: FrameRecorderDefaults = {}) {
     this.#defaults = resolveFrameRecorderDefaults(defaults);
+    // The 2D layer shares this recorder's resolved point/line styles, so a style set on
+    // `DebugDraw3D` cannot apply to one layer and not the other.
+    this.#d2 = new FrameRecorder2D(
+      { point: this.#defaults.point, line: this.#defaults.line },
+      () => this.assertOpen(),
+    );
+  }
+
+  /**
+   * The 2D layer: `Vec2` primitives on the bevy-style `Camera2d` spaces described in
+   * `camera-2d.ts`. Drawing here records into the same frame and layer mask as the 3D methods.
+   */
+  get d2(): FrameRecorder2D {
+    this.assertOpen();
+    return this.#d2;
   }
 
   point(position: Vec3, options: PointOptions = {}): this {
@@ -838,8 +861,19 @@ export class FrameRecorder {
       throw new RangeError("visibleLayers must be a non-negative integer bitmask");
     }
     // Text draws last: it is the only alpha-blended primitive that is not depth-sorted against
-    // its own kind, so keeping it at the end preserves the reference's reading order.
-    return [...this.#points, ...this.#lines, ...this.#joints, ...this.#triangles, ...this.#texts].filter((command) => (command.layer & visibleLayers) !== 0);
+    // its own kind, so keeping it at the end preserves the reference's reading order. The 2D
+    // commands follow the 3D ones because the renderer draws them as an overlay.
+    return [
+      ...this.#points,
+      ...this.#lines,
+      ...this.#joints,
+      ...this.#triangles,
+      ...this.#texts,
+      ...this.#d2.points,
+      ...this.#d2.lines,
+      ...this.#d2.joints,
+      ...this.#d2.shapes,
+    ].filter((command) => (command.layer & visibleLayers) !== 0);
   }
 
   seal(): void {

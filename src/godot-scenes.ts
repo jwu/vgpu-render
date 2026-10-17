@@ -1,5 +1,6 @@
 import type { FrameRecorder, LineOptions, Vec3, Color } from "./frame-recorder.js";
 import { rotatePoint, type Curve3D } from "./curve.js";
+import { buildScene2D } from "./bevy-scenes-2d.js";
 import {
   arcNormals,
   box,
@@ -2163,6 +2164,8 @@ function textCompareScene(recorder: FrameRecorder): void {
 }
 
 export function buildScene(id: string, recorder: FrameRecorder, time: number, lineJoint?: SceneContext["lineJoint"]): void {
+  // The 2D pages live in their own module and own their camera space entirely.
+  if (buildScene2D(id, recorder, time)) return;
   const context: SceneContext = lineJoint === undefined ? { time } : { time, lineJoint };
   // Reference: every example's first `_process()` line is
   // `draw_axes(Vector3.ZERO, IDENTITY, 0.75, 2.0)`. `DebugDraw3D` is a child of the scene

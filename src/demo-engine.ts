@@ -8,7 +8,7 @@
 
 import { effect, frame, init, sampler, surface, target } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
-import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, type FrameCommand, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
+import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
 import { GODOT_EXAMPLES, type GodotExample } from "./godot-examples.js";
 import { buildScene } from "./godot-scenes.js";
 import { linearClearColor } from "./color-space.js";
@@ -125,6 +125,14 @@ const DRAG_STOP_GAP = 90;
 const GLIDE_EPSILON = 1e-3;
 /** A running glide writes its pose at most this often. */
 const GLIDE_PERSIST_INTERVAL = 200;
+/**
+ * `world2d` zoom bounds, in canvas pixels per world unit. The lower end still fits bevy's
+ * thousand-unit shape matrices into a few hundred pixels; the upper end stops a runaway wheel.
+ */
+const CAMERA_2D_ZOOM_MIN = 0.05;
+const CAMERA_2D_ZOOM_MAX = 40;
+/** How much of the fitted `view2d` extent a 2D page leaves as margin. */
+const CAMERA_2D_FIT_MARGIN = 0.94;
 
 /**
  * Presentation shader for the linear scene pass.
@@ -260,6 +268,8 @@ export class DemoEngine {
   private dragTail: { time: number; yaw: number; pitch: number; pan: Vec3 }[] = [];
   /** Timestamp of the last mid-glide persist. */
   private glidePersistedAt = 0;
+  /** Set when a 2D page asked for its fit before the canvas had a layout size. */
+  private pending2DFit = false;
   private destroyed = false;
 
   constructor(options: DemoEngineOptions) {
@@ -306,6 +316,9 @@ export class DemoEngine {
   selectExample(example: GodotExample, updateHash = true): void {
     this.selected = example;
     this.time = 0;
+    // The page owns the camera mode: a 2D page pans and zooms, every other page orbits.
+    this.config.camera.mode = example.family === "2d" ? "2d" : "3d";
+    this.pending2DFit = false;
     // The display group is remembered per example, so switching back restores what this
     // scene was set up with. `hideGrid` is only the starting point for an example that
     // has no record yet.
@@ -395,6 +408,8 @@ export class DemoEngine {
    * the preset in place as a starting point rather than tracking the change.
    */
   setCameraPreset(preset: CameraPreset): void {
+    // The presets describe the 3D orbit chart; a 2D page has no yaw or pitch to set.
+    if (this.config.camera.mode === "2d") return;
     this.stopGlide();
     this.update(() => {
       this.config.camera = cloneDemoConfig(CAMERA_PRESETS[preset]).camera;
@@ -413,8 +428,11 @@ export class DemoEngine {
   resetConfig(): void {
     this.update(() => {
       this.config = cloneDemoConfig(DEFAULT_DEMO_CONFIG);
+      // The page still owns the camera mode after a reset.
+      this.config.camera.mode = this.selected.family === "2d" ? "2d" : "3d";
       this.time = 0;
     });
+    if (this.config.camera.mode === "2d") this.frameSelectedExample();
   }
 
   /**
@@ -460,6 +478,8 @@ export class DemoEngine {
     const renderer = new GpuDebugDraw3D(gpu, { points: 16384, lines: 65536, triangles: 65536, joints: 65536, text: { sources: textSources, atlasSize: 1024, pages: 4 } });
     const debug = new DebugDraw3D({ defaultLineStyle: { width: 2 } });
     const grid = new InfiniteGrid3D(gpu, this.gridOptions());
+    // The 2D grid is a full-screen quad in the same overlay layer as the 2D primitives.
+    const grid2d = new InfiniteGrid2D(gpu, this.grid2dOptions());
 
     this.status = "ready";
     this.statusDetail = "WebGPU 就绪 · 部分对齐";
@@ -477,6 +497,7 @@ export class DemoEngine {
       const height = Math.max(canvas.clientHeight, 1);
       this.canvasHeight = height;
       this.canvasAspect = width / height;
+      if (this.pending2DFit) this.frameSelectedExample();
       this.integrateCamera(delta);
       const c = this.config.camera;
       const basis = this.fpsCamera === undefined
@@ -500,27 +521,44 @@ export class DemoEngine {
       // they join, so scaling only `line` commands would leave the wedges at full size.
       const scale = this.config.view.lineWidthScale;
       const commands: readonly FrameCommand[] = raw.map((command) =>
-        command.kind === "line" || command.kind === "joint" ? { ...command, width: command.width * scale } : command,
+        command.kind === "line" || command.kind === "joint" || command.kind === "line2d" || command.kind === "joint2d"
+          ? { ...command, width: command.width * scale }
+          : command,
       );
 
-      renderer.prepare(commands, { viewProjection: this.viewProjection, view: this.view });
-      grid.setOpacity(this.config.view.gridOpacity);
-      grid.setOptions(this.gridOptions());
-      grid.prepare({
-        viewProjection: this.viewProjection,
-        cameraPosition: eye,
-        // The basis forward is already unit length, which is what the grid's LOD rules expect.
-        cameraForward: basis.forward,
-        projection: c.projection,
-        orthographicSize: c.orthographicHeight,
-        farClip: c.far,
-      });
+      // The 2D camera is independent from the 3D one: the projection comes from pan/zoom and the
+      // viewport, while the 3D matrices above only feed the grid and any world-space text.
+      renderer.prepare(commands, { viewProjection: this.viewProjection, view: this.view }, { pan: [c.pan[0], c.pan[1]], zoom: c.zoom });
+      const showGrid3D = c.mode !== "2d" && this.config.view.showGrid;
+      // The 2D grid is part of what a 2D page shows rather than an optional overlay: the pages
+      // exist to demonstrate it, and there is no 3D grid on them to confuse it with. The opacity
+      // slider remains the way to tone it down.
+      const showGrid2D = c.mode === "2d";
+      if (showGrid3D) {
+        grid.setOpacity(this.config.view.gridOpacity);
+        grid.setOptions(this.gridOptions());
+        grid.prepare({
+          viewProjection: this.viewProjection,
+          cameraPosition: eye,
+          // The basis forward is already unit length, which is what the grid's LOD rules expect.
+          cameraForward: basis.forward,
+          projection: c.projection,
+          orthographicSize: c.orthographicHeight,
+          farClip: c.far,
+        });
+      }
+      if (showGrid2D) {
+        grid2d.setOptions(this.grid2dOptions());
+        grid2d.setOpacity(this.config.view.gridOpacity);
+      }
 
       frame(gpu, (f) => {
         renderer.updateIndirect(f);
         // The clear color is an sRGB-authored value, so it decodes like every other color.
         f.pass({ target: scene, clear: linearClearColor(this.config.view.background), clearDepth: 1 }, (pass) => {
-          if (this.config.view.showGrid) grid.draw(pass);
+          if (showGrid3D) grid.draw(pass);
+          // The 2D grid is background for the 2D primitives, so it draws before them.
+          if (showGrid2D) grid2d.draw(pass, { position: [c.pan[0], c.pan[1]], zoom: c.zoom }, pass.target.size);
           renderer.draw(pass);
         });
         f.pass({ target: output }, (pass) => pass.draw(present));
@@ -633,6 +671,21 @@ export class DemoEngine {
     };
   }
 
+  /** The 2D grid reads the same panel, minus the fields only the 3D addon has. */
+  private grid2dOptions(): InfiniteGrid2DOptions {
+    const grid = this.config.grid;
+    return {
+      cellSize: grid.cellSize,
+      minPixelsBetweenCells: grid.minPixelsBetweenCells,
+      lineWidthPixels: grid.lineWidthPixels,
+      lodFinerLevels: grid.lodFinerLevels,
+      lodTotalLevels: grid.lodTotalLevels,
+      thinLineColor: grid.thinLineColor,
+      thickLineColor: grid.thickLineColor,
+      debugLodColors: grid.debugLodColors,
+    };
+  }
+
   private orbitCameraPosition(): Vec3 {
     const c = this.config.camera;
     return orbitEye(c.target, orbitBasis(c.yaw, c.pitch), c.distance);
@@ -653,6 +706,10 @@ export class DemoEngine {
    * velocity only decays there and a flick cannot double up on the live drag delta.
    */
   private integrateCamera(delta: number): void {
+    if (this.config.camera.mode === "2d") {
+      this.integrateCamera2D(delta);
+      return;
+    }
     const c = this.config.camera;
     const velocity = this.cameraVelocity;
     const frame = Math.min(Math.max(delta, 0), 0.1);
@@ -719,6 +776,54 @@ export class DemoEngine {
   }
 
   /**
+   * Advances the 2D pan/zoom glide. The pan is a world-space velocity and the zoom is a scalar one
+   * in log₂ space, exactly like the 3D distance; only the sign differs, because `zoom` multiplies
+   * where `distance` divides.
+   */
+  private integrateCamera2D(delta: number): void {
+    const c = this.config.camera;
+    const velocity = this.cameraVelocity;
+    const frame = Math.min(Math.max(delta, 0), 0.1);
+    if (frame === 0) return;
+
+    if (this.pointer !== undefined) {
+      velocity.pan = integrateGlideVec3([0, 0, 0], velocity.pan, GLIDE_HALFLIFE, frame).velocity;
+      velocity.zoom = integrateGlide(0, velocity.zoom, GLIDE_HALFLIFE, frame).velocity;
+      return;
+    }
+
+    if (velocity.pan[0] !== 0 || velocity.pan[1] !== 0) {
+      const pan = integrateGlideVec3([c.pan[0], c.pan[1], 0], velocity.pan, GLIDE_HALFLIFE, frame);
+      c.pan = [pan.value[0], pan.value[1]];
+      velocity.pan = [pan.velocity[0], pan.velocity[1], 0];
+    }
+
+    if (velocity.zoom !== 0) {
+      const step = integrateGlide(0, velocity.zoom, GLIDE_HALFLIFE, frame);
+      const next = clampFinite(c.zoom * 2 ** -step.value, CAMERA_2D_ZOOM_MIN, CAMERA_2D_ZOOM_MAX, c.zoom);
+      velocity.zoom = next === c.zoom ? 0 : step.velocity;
+      c.zoom = next;
+    }
+
+    const moving = velocity.zoom !== 0 || velocity.pan[0] !== 0 || velocity.pan[1] !== 0;
+    const settled = Math.abs(velocity.zoom) < GLIDE_EPSILON
+      && Math.abs(velocity.pan[0]) < GLIDE_EPSILON
+      && Math.abs(velocity.pan[1]) < GLIDE_EPSILON;
+    if (moving && settled) {
+      this.stopGlide();
+      this.persist();
+      return;
+    }
+    if (moving) {
+      const now = performance.now();
+      if (now - this.glidePersistedAt > GLIDE_PERSIST_INTERVAL) {
+        this.glidePersistedAt = now;
+        this.persist();
+      }
+    }
+  }
+
+  /**
    * Feeds one drag sample into the release-velocity estimate.
    *
    * Samples are kept as deltas in a short window and averaged on release, which stays stable when
@@ -764,6 +869,18 @@ export class DemoEngine {
   /** Caps an estimated drag velocity into the glide budgets when the pointer is released. */
   private launchGlide(releasedAt: number): void {
     const drag = this.dragVelocity(releasedAt);
+    if (this.config.camera.mode === "2d") {
+      // A 2D fling is capped by a screen distance, converted into world units at the current zoom,
+      // so the same flick travels the same distance on screen whatever the magnification.
+      const budget = (GLIDE_MAX_PAN_SCREENS * this.canvasHeight) / Math.max(this.config.camera.zoom, 1e-4);
+      const travel = glideVelocityFor(budget, GLIDE_HALFLIFE);
+      const speed = Math.hypot(drag.pan[0], drag.pan[1]);
+      const scale = speed > travel && speed > 0 ? travel / speed : 1;
+      this.cameraVelocity.yaw = 0;
+      this.cameraVelocity.pitch = 0;
+      this.cameraVelocity.pan = [drag.pan[0] * scale, drag.pan[1] * scale, 0];
+      return;
+    }
     const angular = glideVelocityFor(GLIDE_MAX_ANGLE, GLIDE_HALFLIFE);
     const spin = Math.hypot(drag.yaw, drag.pitch);
     const scale = spin > angular ? angular / spin : 1;
@@ -784,9 +901,34 @@ export class DemoEngine {
    * pose's position changes — the current yaw/pitch is kept.
    */
   private frameSelectedExample(): void {
+    const c = this.config.camera;
+    if (c.mode === "2d") {
+      const canvas = this.canvas;
+      if (canvas === undefined || canvas.clientWidth <= 1) {
+        // Switching to a 2D page before the canvas is laid out (first load) has no size to fit
+        // to; the first frame retries once the layout reports one.
+        this.pending2DFit = true;
+        this.stopGlide();
+        return;
+      }
+      const view = this.selected.view2d;
+      if (view !== undefined) {
+        // Fit the page's declared extent: a bevy shape matrix spans a thousand-odd units, so a
+        // 1:1 scale at default zoom would show only one shape. The fit is in physical pixels,
+        // the same space the 2D projection and the grid use, so a HiDPI canvas does not halve it.
+        const dpr = window.devicePixelRatio || 1;
+        const width = canvas.clientWidth * dpr;
+        const height = Math.max(canvas.clientHeight, 1) * dpr;
+        const zoom = Math.min(width / view.width, height / view.height) * CAMERA_2D_FIT_MARGIN;
+        c.zoom = clampFinite(zoom, CAMERA_2D_ZOOM_MIN, CAMERA_2D_ZOOM_MAX, c.zoom);
+      }
+      c.pan = [0, 0];
+      this.pending2DFit = false;
+      this.stopGlide();
+      return;
+    }
     const bounds = this.selectedBounds();
     if (bounds === undefined) return;
-    const c = this.config.camera;
     const fit = frameBounds(bounds, { basis: orbitBasis(c.yaw, c.pitch), fovY: c.fov, aspect: this.canvasAspect });
     c.target = [fit.pivot[0], fit.pivot[1], fit.pivot[2]];
     c.distance = clampFinite(fit.distance, 3, 100, c.distance);
@@ -898,7 +1040,9 @@ export class DemoEngine {
   private onPointerDown = (event: PointerEvent): void => {
     if (this.compareMode || this.canvas === undefined) return;
     if (event.button > 2) return;
-    const mode: PointerMode = event.button === 0 ? "rotate" : event.button === 1 ? "pan" : "fps";
+    const mode: PointerMode = this.config.camera.mode === "2d" || event.button === 1
+      ? "pan"
+      : event.button === 0 ? "rotate" : "fps";
     this.pointer = { x: event.clientX, y: event.clientY, mode };
     // Grabbing the camera ends any glide that is still running.
     this.stopGlide();
@@ -930,6 +1074,13 @@ export class DemoEngine {
       // A drag that runs into the pole contributes no further pitch velocity, so releasing there
       // cannot fling the view back the other way.
       this.trackDrag(event, yawStep, nextPitch - previousPitch, ORIGIN);
+    } else if (this.config.camera.mode === "2d") {
+      // Drag to pan: the content follows the pointer, so the view centre moves the other way, and
+      // `world2d` has +y up while the pointer's `dy` grows downwards.
+      const zoom = Math.max(c.zoom, 1e-4);
+      const step: Vec3 = [-dx / zoom, dy / zoom, 0];
+      c.pan = [c.pan[0] + step[0], c.pan[1] + step[1]];
+      this.trackDrag(event, 0, 0, step);
     } else {
       const { right, up } = orbitBasis(c.yaw, c.pitch);
       const pan = worldUnitsPerPixel(c, this.canvasHeight) * PAN_SCREEN_RATIO;
@@ -1090,7 +1241,9 @@ function commandPoints(command: FrameCommand): readonly Vec3[] {
     }
     return corners;
   }
-  return [command.previous, command.center, command.next];
+  if (command.kind === "joint") return [command.previous, command.center, command.next];
+  // 2D primitives live in their own spaces and never contribute to a 3D scene's bounds.
+  return [];
 }
 
 function multiply(a: Float32Array, b: Float32Array): Float32Array {

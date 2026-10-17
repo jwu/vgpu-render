@@ -7,11 +7,22 @@
  */
 
 export type ProjectionMode = "perspective" | "orthographic";
+/** Which camera the selected example drives: the gallery's 3D orbit/FPS camera, or the 2D pan/zoom one. */
+export type CameraMode = "3d" | "2d";
 export type LineJoint = "none" | "round" | "bevel" | "miter";
 /** Named camera poses the gallery can switch to. */
 export type CameraPreset = "default" | "oblique" | "front";
 
 export type DemoCameraConfig = {
+  /**
+   * `2d` pages pan and zoom instead of orbiting, and skip the infinite grid. The 3D fields below
+   * stay in the config so switching back to a 3D page restores its pose untouched.
+   */
+  mode: CameraMode;
+  /** `world2d` view centre, in world units. Ignored by the 3D camera. */
+  pan: [number, number];
+  /** Canvas pixels per `world2d` unit. Ignored by the 3D camera. */
+  zoom: number;
   yaw: number;
   pitch: number;
   distance: number;
@@ -41,6 +52,8 @@ export type DemoGridConfig = {
   gridSize: number;
   cellSize: number;
   lineWidthPixels: number;
+  /** Screen pixels the finest visible cell must span before the 2D grid steps up a level. */
+  minPixelsBetweenCells: number;
   lodFinerLevels: number;
   lodTotalLevels: number;
   edgeFadeStartRatio: number;
@@ -99,6 +112,10 @@ export function defaultGridConfig(): DemoGridConfig {
     gridSize: 2000,
     cellSize: 1,
     lineWidthPixels: 1,
+    // The addon default is 2, which suits a 1-unit-per-pixel world. The 2D pages draw bevy's
+    // pixel-scale matrices at roughly 0.7 px per unit, where 2 would put a visible line every
+    // 3-7 pixels; 20 makes the finest level about 70 px apart instead.
+    minPixelsBetweenCells: 20,
     lodFinerLevels: 3,
     lodTotalLevels: 8,
     edgeFadeStartRatio: 0,
@@ -117,6 +134,9 @@ export function defaultGridConfig(): DemoGridConfig {
 
 export const DEFAULT_DEMO_CONFIG: DemoConfig = {
   camera: {
+    mode: "3d",
+    pan: [0, 0],
+    zoom: 1,
     yaw: 0.62,
     pitch: 0.5,
     distance: 12,
@@ -180,6 +200,9 @@ export const FRONT_DEMO_CONFIG: DemoConfig = {
  * to the pose the reference examples actually run with — as opposed to the far capture preset.
  */
 export const REFERENCE_CAMERA: DemoCameraConfig = {
+  mode: "3d",
+  pan: [0, 0],
+  zoom: 1,
   yaw: Math.PI / 4,
   pitch: Math.asin(1 / Math.sqrt(3)),
   distance: Math.sqrt(27),
@@ -208,6 +231,9 @@ export const REFERENCE_DEMO_CONFIG: DemoConfig = {
  */
 export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
   camera: {
+    mode: "3d",
+    pan: [0, 0],
+    zoom: 1,
     yaw: Math.atan2(21.5, 8),
     pitch: Math.atan2(16, Math.hypot(8, 21.5)),
     distance: Math.hypot(8, 16, 21.5),
@@ -283,6 +309,13 @@ function readProjection(value: unknown): ProjectionMode {
   return value;
 }
 
+function readCameraMode(value: unknown): CameraMode {
+  if (value !== "3d" && value !== "2d") {
+    throw new RangeError('config.camera.mode must be "3d" or "2d"');
+  }
+  return value;
+}
+
 function readLineJoint(value: unknown): LineJoint {
   if (value !== "none" && value !== "round" && value !== "bevel" && value !== "miter") {
     throw new RangeError('config.view.lineJoint must be "none", "round", "bevel", or "miter"');
@@ -309,6 +342,7 @@ export const GRID_NUMBER_RULES = {
   gridSize: { min: 1 },
   cellSize: { min: 0.0001 },
   lineWidthPixels: { min: 0.25 },
+  minPixelsBetweenCells: { min: 0.1, max: 100 },
   lodFinerLevels: { min: 0, max: 12, integer: true },
   lodTotalLevels: { min: 3, max: 24, integer: true },
   edgeFadeStartRatio: { min: 0, max: 1 },
@@ -331,6 +365,7 @@ function parseGridConfig(value: unknown, base: DemoGridConfig): DemoGridConfig {
     gridSize: number("gridSize", base.gridSize),
     cellSize: number("cellSize", base.cellSize),
     lineWidthPixels: number("lineWidthPixels", base.lineWidthPixels),
+    minPixelsBetweenCells: number("minPixelsBetweenCells", base.minPixelsBetweenCells),
     lodFinerLevels: number("lodFinerLevels", base.lodFinerLevels),
     lodTotalLevels: number("lodTotalLevels", base.lodTotalLevels),
     edgeFadeStartRatio: number("edgeFadeStartRatio", base.edgeFadeStartRatio),
@@ -352,6 +387,7 @@ export function cloneDemoConfig(config: DemoConfig): DemoConfig {
   return {
     camera: {
       ...config.camera,
+      pan: [config.camera.pan[0], config.camera.pan[1]],
       target: [config.camera.target[0], config.camera.target[1], config.camera.target[2]],
     },
     view: {
@@ -388,10 +424,14 @@ export function parseDemoConfig(value: unknown = {}): DemoConfig {
   }
 
   const target = camera.target === undefined ? base.camera.target : readNumberTuple(camera.target, "config.camera.target", 3);
+  const pan = camera.pan === undefined ? base.camera.pan : readNumberTuple(camera.pan, "config.camera.pan", 2);
   const background = view.background === undefined ? base.view.background : readNumberTuple(view.background, "config.view.background", 4);
 
   return {
     camera: {
+      mode: camera.mode === undefined ? base.camera.mode : readCameraMode(camera.mode),
+      pan: [pan[0]!, pan[1]!],
+      zoom: camera.zoom === undefined ? base.camera.zoom : readPositive(camera.zoom, "config.camera.zoom"),
       yaw: camera.yaw === undefined ? base.camera.yaw : readNumber(camera.yaw, "config.camera.yaw"),
       pitch: camera.pitch === undefined ? base.camera.pitch : readBounded(camera.pitch, "config.camera.pitch", -HALF_PI, HALF_PI),
       distance: camera.distance === undefined ? base.camera.distance : readPositive(camera.distance, "config.camera.distance"),

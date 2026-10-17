@@ -7,6 +7,7 @@ import {
   type GridCameraState,
   type InfiniteGridOptions,
 } from "../src/infinite-grid-3d.js";
+import { grid2dLodPowers, resolveGrid2DOptions } from "../src/infinite-grid-2d.js";
 
 /** Camera pose used by the reference screenshots: eye (8,16,21.5) toward origin. */
 const EYE: readonly [number, number, number] = [8, 16, 21.5];
@@ -161,5 +162,34 @@ describe("grazing fade factors", () => {
     // sin(3°) = 0.052335956, sin(20°) = 0.34202015 in the reference shader defaults.
     expect(Math.sin((3 * Math.PI) / 180)).toBeCloseTo(0.052335956, 7);
     expect(Math.sin((20 * Math.PI) / 180)).toBeCloseTo(0.34202015, 7);
+  });
+});
+
+describe("2D grid", () => {
+  test("resolves the reference defaults and the LOD power range", () => {
+    const options = resolveGrid2DOptions();
+    expect(options.cellSize).toBe(10);
+    expect(options.minPixelsBetweenCells).toBe(2);
+    expect(options.lineWidthPixels).toBe(1);
+    expect(options.lodFinerLevels).toBe(3);
+    expect(options.lodTotalLevels).toBe(8);
+    // `_apply_lod_range_parameters`: min = -finer, max = min + total - 1.
+    expect(grid2dLodPowers(options)).toEqual({ min: -3, max: 4 });
+    expect(grid2dLodPowers({ lodFinerLevels: 0, lodTotalLevels: 3 })).toEqual({ min: 0, max: 2 });
+  });
+
+  test("keeps the reference clamps and rejects non-positive sizes", () => {
+    expect(() => resolveGrid2DOptions({ cellSize: 0 })).toThrow("greater than zero");
+    expect(() => resolveGrid2DOptions({ minPixelsBetweenCells: 0 })).toThrow("greater than zero");
+    expect(() => resolveGrid2DOptions({ lodFinerLevels: -1 })).toThrow("between 0 and 12");
+    expect(() => resolveGrid2DOptions({ lodTotalLevels: 2 })).toThrow("between 3 and 24");
+    expect(() => resolveGrid2DOptions({ thinLineColor: [1, 1, 1] as never })).toThrow("four values");
+  });
+
+  test("accepts options one field at a time", () => {
+    const options = resolveGrid2DOptions({ cellSize: 4, debugLodColors: true });
+    expect(options.cellSize).toBe(4);
+    expect(options.debugLodColors).toBe(true);
+    expect(options.thinLineColor).toEqual([0.3, 0.3, 0.3, 0.5]);
   });
 });

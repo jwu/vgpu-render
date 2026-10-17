@@ -3,7 +3,10 @@ import { prepareShader } from "@vgpu/wgsl/prepare";
 
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
+import type { Camera2D } from "./camera-2d.js";
 import type { FrameCommand, PointCommand, LineCommand, JointCommand, TriangleCommand, TextCommand, Vec3 } from "./frame-recorder.js";
+import type { FrameCommand2D } from "./frame-recorder-2d.js";
+import { GpuDebugDraw2D } from "./gpu-debug-draw-2d.js";
 import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
 import { GpuText3D, type GpuText3DOptions } from "./gpu-text-3d.js";
 
@@ -637,6 +640,7 @@ export class GpuDebugDraw3D {
   readonly #lineIndirect: StorageBuffer;
   readonly #triangleIndirect: StorageBuffer;
   readonly #indirectCompute: Compute;
+  readonly #d2: GpuDebugDraw2D;
   #viewProjection: ArrayLike<number> = identity();
   /** World-to-view matrix, needed by the reference back-face fade on normal-aware strokes. */
   #view: ArrayLike<number> = identity();
@@ -706,24 +710,33 @@ export class GpuDebugDraw3D {
     indirectArgs(this.#lineIndirect, 6, 0);
     indirectArgs(this.#triangleIndirect, 3, 0);
     indirectArgs(this.#jointIndirect, JOINT_VERTEX_COUNT, 0);
+    // The 2D layer draws the same primitives under another projection, so its shader sources are
+    // handed over here rather than imported back from this module.
+    this.#d2 = new GpuDebugDraw2D(gpu, {
+      shaders: { point: pointShader(depthBias), line: lineShader(depthBias), joint: jointShader(depthBias) },
+      jointVertexCount: JOINT_VERTEX_COUNT,
+    });
   }
 
-  prepare(commands: readonly FrameCommand[], camera: Camera): void {
+  prepare(commands: readonly FrameCommand[], camera: Camera, camera2d?: Camera2D): void {
     let pointCount = 0;
     let lineCount = 0;
     let triangleCount = 0;
     let jointCount = 0;
     const textCommands: TextCommand[] = [];
+    const commands2d: FrameCommand2D[] = [];
     this.#pointDirty = false;
     this.#lineDirty = false;
     this.#triangleDirty = false;
     this.#jointDirty = false;
+    if (camera2d !== undefined) this.#d2.setCamera(camera2d);
     for (const command of commands) {
       if (command.kind === "point") this.addPoint(command, pointCount++);
       else if (command.kind === "triangle") this.addTriangle(command, triangleCount++);
       else if (command.kind === "joint") this.addJoint(command, jointCount++);
       else if (command.kind === "text") textCommands.push(command);
-      else this.addLine(command, lineCount++);
+      else if (command.kind === "line") this.addLine(command, lineCount++);
+      else commands2d.push(command);
     }
     if (trim(this.#points, this.#pointIds, pointCount)) this.#pointDirty = true;
     if (trim(this.#lines, this.#lineIds, lineCount)) this.#lineDirty = true;
@@ -760,6 +773,9 @@ export class GpuDebugDraw3D {
     if (textCommands.length > 0 || this.#texts.size > 0) {
       this.#prepareText(textCommands, camera);
     }
+    // Always prepared, even with an empty list: that is what drops the previous frame's 2D
+    // primitives instead of leaving them on screen.
+    this.#d2.prepare(commands2d);
   }
 
   /** Splits the frame's text by source name and hands each group to its renderer. */
@@ -810,6 +826,7 @@ export class GpuDebugDraw3D {
       pass.dispatch(this.#indirectCompute, 1);
       this.#indirectCompute.set({ params: { vertexCount: JOINT_VERTEX_COUNT, instanceCount: this.#jointCount }, args: this.#jointIndirect });
       pass.dispatch(this.#indirectCompute, 1);
+      this.#d2.dispatchIndirect(pass);
       for (const renderer of this.#texts.values()) renderer.dispatchIndirect(pass);
     });
   }
@@ -829,6 +846,9 @@ export class GpuDebugDraw3D {
     if (this.#pointCount > 0) pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
     if (this.#lineCount > 0) pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });
     if (this.#jointCount > 0) pass.draw(this.#jointDraw, { indirect: this.#jointIndirect });
+    // The 2D layer is an overlay: it draws after every 3D primitive and before text, so a 2D
+    // HUD covers the 3D world while screen-space labels stay on top of both.
+    this.#d2.draw(pass);
     // Text is last: its alpha-blended quads read the strokes and solids as they were left behind.
     for (const renderer of this.#texts.values()) renderer.draw(pass);
   }
@@ -839,6 +859,7 @@ export class GpuDebugDraw3D {
     this.#triangleDraw.dispose();
     this.#jointDraw.dispose();
     this.#indirectCompute.dispose();
+    this.#d2.destroy();
     this.#pointBridge.destroy();
     this.#lineBridge.destroy();
     this.#triangleBridge.destroy();
