@@ -481,7 +481,7 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
     throw new RangeError("default text lineHeightScale must be greater than zero");
   }
   if (textLineHeight !== undefined && textLineHeightScale !== undefined) {
-    throw new RangeError("default text lineHeight and lineHeightScale are exclusive, like bevy's LineHeight variants");
+    throw new RangeError("default text lineHeight and lineHeightScale are exclusive; pass one or the other");
   }
   const textAnchor = text.anchor;
   if (textAnchor !== undefined) resolveTextAnchor(textAnchor);
@@ -787,7 +787,7 @@ export class FrameRecorder {
     const lineHeightOption = options.lineHeight ?? defaults.lineHeight;
     const lineHeightScaleOption = options.lineHeightScale ?? defaults.lineHeightScale;
     if (lineHeightOption !== undefined && lineHeightScaleOption !== undefined) {
-      throw new RangeError("lineHeight and lineHeightScale are exclusive, like bevy's LineHeight variants");
+      throw new RangeError("lineHeight and lineHeightScale are exclusive; pass one or the other");
     }
     // A relative line height stays relative all the way to layout, where each line resolves it
     // against that line's own largest span; only an explicit one is absolute.

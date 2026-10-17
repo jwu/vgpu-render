@@ -88,7 +88,7 @@ const HALF_PI = Math.PI / 2;
  * Godot's `renderer/defaults/default_clear_color` from the reference project
  * (`project.godot`), which every reference screenshot is captured against.
  */
-export const GODOT_CLEAR_COLOR: readonly [number, number, number, number] = [0.11764706, 0.11764706, 0.11764706, 1];
+export const SCENE_CLEAR_COLOR: readonly [number, number, number, number] = [0.11764706, 0.11764706, 0.11764706, 1];
 
 /**
  * Reference addon defaults (`addons/infinite_grid/infinite_grid_3d.gd` export
@@ -153,7 +153,7 @@ export const DEFAULT_DEMO_CONFIG: DemoConfig = {
     animate: true,
     lineWidthScale: 1,
     lineJoint: "round",
-    background: [...GODOT_CLEAR_COLOR],
+    background: [...SCENE_CLEAR_COLOR],
   },
   grid: defaultGridConfig(),
 };
@@ -250,7 +250,7 @@ export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
     animate: false,
     lineWidthScale: 1,
     lineJoint: "round",
-    background: [...GODOT_CLEAR_COLOR],
+    background: [...SCENE_CLEAR_COLOR],
   },
   grid: {
     ...defaultGridConfig(),

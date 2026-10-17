@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sourceForExample, tokenizeSource } from "../src/demo-source.js";
+import { sanitizeSource, sourceForExample, tokenizeSource } from "../src/demo-source.js";
 
 const SCENE_SOURCE = `// header comment
 function apiMatrix(recorder: FrameRecorder, context: SceneContext): void {
@@ -55,6 +55,34 @@ export function textScene(id: string, recorder: FrameRecorder): void {
 
   it("returns an empty string when the function is absent", () => {
     expect(sourceForExample("circle", "// no functions here\n")).toBe("");
+  });
+
+  it("never previews upstream brand names from the scene comments", () => {
+    const source = `function apiMatrix(recorder: FrameRecorder): void {
+  // bevy's \`2d_gizmos\` example and Godot's addon both draw here.
+  recorder.line([0, 0, 0], [1, 1, 1]);
+  /* docs/godot-debug-draw-parity.md notes the addon default. */
+}
+`;
+    const preview = sourceForExample("index", source);
+    expect(preview).not.toMatch(/bevy|godot|addon/i);
+    expect(preview).toContain("recorder.line([0, 0, 0], [1, 1, 1]);");
+  });
+});
+
+describe("sanitizeSource", () => {
+  it("replaces brand mentions inside line and block comments", () => {
+    const source = "// bevy's `Camera2d`\n/* the reference addon default */\nconst addon = 1;";
+    expect(sanitizeSource(source)).toBe("// reference `Camera2d`\n/* the reference default */\nconst addon = 1;");
+  });
+
+  it("leaves code and string literals untouched", () => {
+    const source = `recorder.text("bevy", { space: "screen" });`;
+    expect(sanitizeSource(source)).toBe(source);
+  });
+
+  it("rewrites the parity doc path", () => {
+    expect(sanitizeSource("// see docs/godot-debug-draw-parity.md")).toBe("// see the parity notes");
   });
 });
 

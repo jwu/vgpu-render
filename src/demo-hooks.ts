@@ -8,12 +8,12 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { CameraPreset, DemoConfig, DemoGridConfig, LineJoint, ProjectionMode } from "./demo-config.js";
 import { backgroundToHex, type DemoEngine } from "./demo-engine.js";
-import type { GodotExample } from "./godot-examples.js";
-import { GODOT_EXAMPLES } from "./godot-examples.js";
+import type { SceneExample } from "./scene-examples.js";
+import { SCENE_EXAMPLES } from "./scene-examples.js";
 import { sourceForExample, tokenizeSource, type SourceToken } from "./demo-source.js";
-import sceneSource from "./godot-scenes.ts?raw";
+import sceneSource from "./scenes-3d.ts?raw";
 import textSceneSource from "./text-scenes.ts?raw";
-import scene2dSource from "./bevy-scenes-2d.ts?raw";
+import scene2dSource from "./scenes-2d.ts?raw";
 
 /** All scene modules, so the source preview can find an implementation in any one of them. */
 const SCENE_SOURCE = `${textSceneSource}\n${sceneSource}\n${scene2dSource}`;
@@ -23,8 +23,8 @@ export function useEngineSnapshot(engine: DemoEngine) {
   return useSyncExternalStore(subscribe, () => engine.snapshot(), () => engine.snapshot());
 }
 
-export function useExamples(): readonly GodotExample[] {
-  return GODOT_EXAMPLES;
+export function useExamples(): readonly SceneExample[] {
+  return SCENE_EXAMPLES;
 }
 
 export function useHighlightedSource(exampleId: string): readonly SourceToken[] {

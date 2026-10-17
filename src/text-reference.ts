@@ -3,7 +3,7 @@
  * vgpu's own text renderer, at the case's own pixel size, so it can sit beside the bevy render of
  * the same case.
  *
- * Not part of the gallery: it is not in `GODOT_EXAMPLES` and nothing links to it. Open it as
+ * Not part of the gallery: it is not in `SCENE_EXAMPLES` and nothing links to it. Open it as
  * `?case=<id>` with the Vite dev server running, or let `scripts/capture-text-reference.ts` drive
  * it through CDP and write `artifacts/text-reference/vgpu-<id>.png`.
  *

@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import { GODOT_EXAMPLES } from "../src/godot-examples.js";
-import { buildScene } from "../src/godot-scenes.js";
+import { SCENE_EXAMPLES } from "../src/scene-examples.js";
+import { buildScene } from "../src/scenes-3d.js";
 import { SyntheticFont } from "./support/synthetic-font.js";
 
 // A unit-scale projection would clip the text scenes away: the source/size matrix spans about 20 world
@@ -21,7 +21,7 @@ function commandsFor(id: string, time = 0): number {
 }
 
 test("every Godot example builds transient commands", () => {
-  for (const example of GODOT_EXAMPLES) {
+  for (const example of SCENE_EXAMPLES) {
     const count = commandsFor(example.id, 0.4);
     expect(count, `${example.id} produced no commands`).toBeGreaterThan(0);
   }
@@ -60,7 +60,7 @@ test("real GPU renders every Godot example without errors", async () => {
         },
       },
     });
-    for (const example of GODOT_EXAMPLES) {
+    for (const example of SCENE_EXAMPLES) {
       const debug = new DebugDraw3D();
       const recorder = debug.beginFrame();
       buildScene(example.id, recorder, 0.6);

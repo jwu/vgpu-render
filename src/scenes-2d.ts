@@ -49,7 +49,7 @@ export function buildScene2D(id: string, recorder: FrameRecorder, time: number):
 
 /** The twelve bevy 2D primitives, filled in one row and outlined in the next. */
 function shapes2D(recorder: FrameRecorder): void {
-  heading(recorder, "2D Shapes", "bevy 2d_shapes · filled row, ring row · drag to pan, scroll to zoom");
+  heading(recorder, "2D Shapes", "filled row, ring row · drag to pan, scroll to zoom");
   const d2 = recorder.d2;
   const columns = 12;
   const spacing = 100;
@@ -111,7 +111,7 @@ function drawShape(d2: FrameRecorder2D, shape: number, center: [number, number],
 
 /** bevy's `2d_gizmos` example, rebuilt with the stroke and shape primitives. */
 function gizmos2D(recorder: FrameRecorder, time: number): void {
-  heading(recorder, "2D Gizmos", "bevy 2d_gizmos · strokes and outlined shapes · drag to pan, scroll to zoom");
+  heading(recorder, "2D Gizmos", "strokes and outlined shapes · drag to pan, scroll to zoom");
   const d2 = recorder.d2;
 
   // Background grid, drawn first so the strokes sit on top of it.

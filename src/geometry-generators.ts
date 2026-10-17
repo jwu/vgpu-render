@@ -1,5 +1,5 @@
 import type { Vec3 } from "./frame-recorder.js";
-import { crossVector, normalizeVector, rotateAroundAxis, type CircleBasis } from "./godot-layout.js";
+import { crossVector, normalizeVector, rotateAroundAxis, type CircleBasis } from "./layout-3d.js";
 
 export type Triangle = readonly [Vec3, Vec3, Vec3];
 export type Segment = readonly [Vec3, Vec3];

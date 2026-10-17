@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { FrameRecorder, type JointCommand, type LineCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
-import { buildScene, CIRCLE_REFERENCE, LINE_REFERENCE } from "../src/godot-scenes.js";
+import { buildScene, CIRCLE_REFERENCE, LINE_REFERENCE } from "../src/scenes-3d.js";
 
 function commandsFor(id: string): readonly (LineCommand | JointCommand | TriangleCommand | { kind: "point" })[] {
   const recorder = new FrameRecorder();

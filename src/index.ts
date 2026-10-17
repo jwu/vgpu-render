@@ -11,7 +11,7 @@ export * from "./gpu-text-3d.js";
 export * from "./infinite-grid-3d.js";
 export * from "./infinite-grid-2d.js";
 export * from "./mesh-batch-3d.js";
-export * from "./godot-scenes.js";
+export * from "./scenes-3d.js";
 export * from "./text-atlas.js";
 export * from "./text-font.js";
 export * from "./text-layout.js";

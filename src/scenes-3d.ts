@@ -1,6 +1,6 @@
 import type { FrameRecorder, LineOptions, Vec3, Color } from "./frame-recorder.js";
 import { rotatePoint, type Curve3D } from "./curve.js";
-import { buildScene2D } from "./bevy-scenes-2d.js";
+import { buildScene2D } from "./scenes-2d.js";
 import {
   arcNormals,
   box,
@@ -46,7 +46,7 @@ import {
   SEGMENT_VALUES,
   WIDTH_VALUES,
   type CircleBasis,
-} from "./godot-layout.js";
+} from "./layout-3d.js";
 import { textScene } from "./text-scenes.js";
 
 export type SceneContext = { readonly time: number; readonly lineJoint?: "none" | "round" | "bevel" | "miter" };
@@ -685,7 +685,7 @@ function axesMatrix(recorder: FrameRecorder, context: SceneContext): void {
 // measured bounds: `_get_column_x` chains half widths and `COLUMN_GAP`, while
 // `_get_row_z` stacks each row's z size plus `SAMPLE_SPACING_GAP`. The bounds
 // math is ported from `_get_grid_bounds`; the rendered `skew` and `outer_edges`
-// reuse the library grid (see the notes in `docs/godot-debug-draw-parity.md`).
+// reuse the library grid (see the notes in `docs/reference-parity.md`).
 // ---------------------------------------------------------------------------
 
 const GRID_SCENE_Y = 0.06;
@@ -1310,7 +1310,7 @@ function boxMatrix(recorder: FrameRecorder, context: SceneContext): void {
 // share one implementation that differs only in width conversion, width mode and
 // whether solid columns are included.
 //
-// Approximations (also noted in `docs/godot-debug-draw-parity.md`):
+// Approximations (also noted in `docs/reference-parity.md`):
 // - `Label3D` column and sample labels are omitted; the gallery draws its own.
 // - `draw_curve` uses a fixed `tolerance` instead of adaptive `max_stages` sampling.
 // - Arrow heads keep the flat X-strip approximation shared with `arrow.gd`.

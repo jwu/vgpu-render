@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { backgroundToHex, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
 import { orbitBasis, orbitEye } from "../src/demo-camera.js";
-import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, GODOT_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
+import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, SCENE_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
 
 describe("hexToRgb", () => {
   it("parses six-digit hex with and without a leading hash", () => {
@@ -99,19 +99,19 @@ describe("backgroundToHex", () => {
 
 describe("default background", () => {
   it("uses Godot's default_clear_color", () => {
-    expect(DEFAULT_DEMO_CONFIG.view.background).toEqual([...GODOT_CLEAR_COLOR]);
+    expect(DEFAULT_DEMO_CONFIG.view.background).toEqual([...SCENE_CLEAR_COLOR]);
     expect(backgroundToHex(DEFAULT_DEMO_CONFIG.view.background)).toBe("#1e1e1e");
   });
 
   it("matches the screenshot preset so both modes agree", () => {
-    expect(SCREENSHOT_DEMO_CONFIG.view.background).toEqual([...GODOT_CLEAR_COLOR]);
+    expect(SCREENSHOT_DEMO_CONFIG.view.background).toEqual([...SCENE_CLEAR_COLOR]);
   });
 
   it("keeps defaults isolated from clones", () => {
     const clone = [...DEFAULT_DEMO_CONFIG.view.background];
     clone[3] = 0;
     expect(DEFAULT_DEMO_CONFIG.view.background[3]).toBe(1);
-    expect(DEFAULT_DEMO_CONFIG.view.background).not.toBe(GODOT_CLEAR_COLOR);
+    expect(DEFAULT_DEMO_CONFIG.view.background).not.toBe(SCENE_CLEAR_COLOR);
   });
 });
 

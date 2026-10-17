@@ -1,21 +1,21 @@
 /**
  * Example picker sidebar.
  *
- * The list is rendered from `GODOT_EXAMPLES`; selection is written back through
+ * The list is rendered from `SCENE_EXAMPLES`; selection is written back through
  * the engine so the URL hash stays the single source of truth. Entries are grouped
  * by capability: 3D graphics, 2D graphics and text drive different cameras and
  * different layers, so one flat list would hide that.
  */
 
-import type { GodotExample } from "@/godot-examples.js";
+import type { SceneExample } from "@/scene-examples.js";
 
 export type DemoExampleListProps = {
-  readonly examples: readonly GodotExample[];
+  readonly examples: readonly SceneExample[];
   readonly selectedId: string;
-  readonly onSelect: (example: GodotExample) => void;
+  readonly onSelect: (example: SceneExample) => void;
 };
 
-const FAMILIES: readonly { readonly id: string; readonly title: string; readonly matches: (example: GodotExample) => boolean }[] = [
+const FAMILIES: readonly { readonly id: string; readonly title: string; readonly matches: (example: SceneExample) => boolean }[] = [
   { id: "3d", title: "3D Graphics", matches: (example) => (example.group ?? example.family ?? "3d") === "3d" },
   { id: "2d", title: "2D Graphics", matches: (example) => (example.group ?? example.family ?? "3d") === "2d" },
   { id: "text", title: "Text", matches: (example) => example.group === "text" },

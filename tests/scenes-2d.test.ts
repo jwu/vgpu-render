@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { buildScene2D } from "../src/bevy-scenes-2d.js";
+import { buildScene2D } from "../src/scenes-2d.js";
 import { FrameRecorder } from "../src/frame-recorder.js";
-import { buildScene } from "../src/godot-scenes.js";
-import { GODOT_EXAMPLES } from "../src/godot-examples.js";
+import { buildScene } from "../src/scenes-3d.js";
+import { SCENE_EXAMPLES } from "../src/scene-examples.js";
 
-const twoDimensional = GODOT_EXAMPLES.filter((example) => example.family === "2d");
+const twoDimensional = SCENE_EXAMPLES.filter((example) => example.family === "2d");
 
 describe("2D pages", () => {
   test("declare the 2D family and a view extent", () => {

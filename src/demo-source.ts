@@ -79,9 +79,13 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   "2d-shapes": "shapes2D",
 };
 
+import { sanitizeSource } from "./source-scrub.js";
+
+export { sanitizeSource };
+
 /**
  * Returns the scene function that the selected example actually runs, so the
- * preview matches the direct recorder code in `godot-scenes.ts`.
+ * preview matches the direct recorder code in `scenes-3d.ts`.
  */
 export function sourceForExample(id: string, sceneSource: string): string {
   const name = SCENE_FUNCTIONS[id] ?? "apiMatrix";
@@ -91,5 +95,5 @@ export function sourceForExample(id: string, sceneSource: string): string {
   if (start < 0) return "";
   // `export function` also ends a block: the scene helpers come first, `buildScene` last.
   const next = sceneSource.slice(start + 1).search(/^(?:export )?function /m);
-  return sceneSource.slice(start, next < 0 ? undefined : start + 1 + next).trim();
+  return sanitizeSource(sceneSource.slice(start, next < 0 ? undefined : start + 1 + next).trim());
 }

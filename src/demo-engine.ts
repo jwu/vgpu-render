@@ -9,8 +9,8 @@
 import { effect, frame, init, sampler, surface, target } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
-import { GODOT_EXAMPLES, type GodotExample } from "./godot-examples.js";
-import { buildScene } from "./godot-scenes.js";
+import { SCENE_EXAMPLES, type SceneExample } from "./scene-examples.js";
+import { buildScene } from "./scenes-3d.js";
 import { linearClearColor } from "./color-space.js";
 import {
   frameBounds,
@@ -52,7 +52,7 @@ import {
 export type EngineStatus = "requesting" | "ready" | "error";
 
 export type DemoSnapshot = {
-  readonly selected: GodotExample;
+  readonly selected: SceneExample;
   readonly config: DemoConfig;
   readonly status: EngineStatus;
   readonly statusDetail: string;
@@ -239,7 +239,7 @@ export class DemoEngine {
 
   private canvas: HTMLCanvasElement | undefined;
   private config: DemoConfig;
-  private selected: GodotExample;
+  private selected: SceneExample;
   private readonly displayOverrides: DisplayOverrides;
   /** Per-example display groups, mirrored into storage by `persist`. */
   private readonly displayConfigs: Record<string, DemoDisplayConfig>;
@@ -279,7 +279,7 @@ export class DemoEngine {
     this.displayOverrides = options.displayOverrides ?? {};
     // Compare mode is deterministic by design: it neither reads nor writes records.
     this.displayConfigs = this.compareMode ? {} : loadDisplayConfigs(galleryStorage());
-    this.selected = GODOT_EXAMPLES[0]!;
+    this.selected = SCENE_EXAMPLES[0]!;
     this.current = this.buildSnapshot();
 
     window.addEventListener("error", this.onWindowError);
@@ -303,7 +303,7 @@ export class DemoEngine {
   /** Applies the example encoded in the URL hash or `?scene=`, if present. */
   selectInitialFromLocation(params: URLSearchParams): void {
     const id = params.get("scene") ?? location.hash.slice(1);
-    const match = GODOT_EXAMPLES.find((example) => example.id === id);
+    const match = SCENE_EXAMPLES.find((example) => example.id === id);
     if (match) {
       this.selectExample(match, false);
       return;
@@ -313,7 +313,7 @@ export class DemoEngine {
     this.restoreDisplayConfig(this.selected);
   }
 
-  selectExample(example: GodotExample, updateHash = true): void {
+  selectExample(example: SceneExample, updateHash = true): void {
     this.selected = example;
     this.time = 0;
     // The page owns the camera mode: a 2D page pans and zooms, every other page orbits.
@@ -336,7 +336,7 @@ export class DemoEngine {
    * otherwise the gallery defaults with the scene's `hideGrid` preference. URL-pinned
    * fields are layered on top, since a capture must not depend on visit history.
    */
-  private restoreDisplayConfig(example: GodotExample): void {
+  private restoreDisplayConfig(example: SceneExample): void {
     // Compare mode is the screenshot path: it keeps the preset's display fields so paired
     // captures stay deterministic, whichever example the page happens to open.
     if (this.compareMode) return;
@@ -1004,7 +1004,7 @@ export class DemoEngine {
   };
 
   private onHashChange = (): void => {
-    const match = GODOT_EXAMPLES.find((example) => example.id === location.hash.slice(1));
+    const match = SCENE_EXAMPLES.find((example) => example.id === location.hash.slice(1));
     if (match) this.selectExample(match, false);
   };
 
