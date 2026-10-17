@@ -2,10 +2,9 @@
 
 **[Examples gallery →](https://jwu.github.io/vgpu-render/)**
 
-A 3D debug-draw and gizmo layer built on top of `vgpu`, porting the
-[godot-debug-draw](https://github.com/hardpixel/godot-debug-draw) examples and
-[godot-infinite-grid](https://github.com/hardpixel/godot-infinite-grid) shader
-grid to TypeScript + WGSL.
+A 3D debug-draw and gizmo layer built on top of `vgpu`, porting the reference
+debug-draw addon's examples and its shader-driven infinite grid to TypeScript +
+WGSL.
 
 The current implementation is **partial parity**, not a complete migration. The
 Circle/Line runtime screenshot comparison in
@@ -15,7 +14,19 @@ round/bevel/miter line joins are built in the vertex stage like the reference.
 Passing GPU smoke tests does not establish visual equivalence.
 
 Text rendering (see [Text](#text)) is vgpu's own capability rather than a port: the reference addon
-has no text API at all, and the labels in its examples are plain `Label3D` nodes.
+has no text API at all, and the labels in its examples are plain billboard nodes.
+
+## Install
+
+```bash
+bun add vgpu-render vgpu
+# or
+npm install vgpu-render vgpu
+```
+
+`vgpu` is a peer dependency: the host application owns the WebGPU device and the frame loop, so both
+packages must resolve the same `vgpu` copy. `@vgpu/wgsl` and `opentype.js` ship as regular
+dependencies of this package.
 
 ## Usage
 
@@ -37,7 +48,7 @@ recorder.text([0, 1, 0], "world label", { fontSize: 32, pixelSize: 0.01, color: 
 recorder.text([24, 24, 0], "screen HUD", { space: "screen", anchor: "top-left", fontSize: 16 });
 const commands = debug.finishFrame(recorder);
 
-// `view` is the world-to-view matrix; normal-aware strokes read it like Godot's VIEW_MATRIX.
+// `view` is the world-to-view matrix; normal-aware strokes read it like the reference view matrix.
 renderer.prepare(commands, { viewProjection, view });
 grid.prepare({ viewProjection, cameraPosition, cameraForward, projection, farClip });
 frame(gpu, (f) => f.pass({ target, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => {
@@ -46,16 +57,14 @@ frame(gpu, (f) => f.pass({ target, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) 
 }));
 ```
 
-`grid.prepare()` takes the camera state the reference addon reads from Godot's
-`Camera3D`: position, normalized forward, projection mode, and far clip. The LOD
+`grid.prepare()` takes the camera state the reference addon reads from its
+camera node: position, normalized forward, projection mode, and far clip. The LOD
 distance is derived from that state (see below), so there is no separate
 `fadeDistance` parameter.
 
 ## Infinite grid
 
-`InfiniteGrid3D` is a faithful port of the Godot addon
-[`hardpixel/godot-infinite-grid`](https://github.com/hardpixel/godot-infinite-grid)
-(`addons/infinite_grid/infinite_grid_3d.{gd,gdshader}`), including its parameter
+`InfiniteGrid3D` is a faithful port of the reference grid addon, including its parameter
 names, decimal LOD scheme and fade stack:
 
 | Option | Reference property | Default |
@@ -86,11 +95,11 @@ stipple discard, run in the same order and with the same clamps.
 - The plane follows the camera on XZ (`follow_viewport_camera`) and writes depth,
 so it composites like the reference `depth_draw_always`, two-sided material.
 
-The `direction-facing` difference: the reference renders through Godot's
-linear-space pipeline and encodes to sRGB on output, while the WebGPU canvas here
+The `direction-facing` difference: the reference renders through a linear-space
+pipeline and encodes to sRGB on output, while the WebGPU canvas here
 is `bgra8unorm` (Chromium rejects `bgra8unorm-srgb` as a canvas format). Line
 positions, LOD banding and coverage therefore match, but blended line pixels are
-darker than the Godot reference. See `docs/visual-comparison.md`.
+darker than the reference. See `docs/visual-comparison.md`.
 
 `setOpacity()` is a gallery extension: it scales the two reference line-colour
 alphas, which the addon does not expose.
@@ -136,9 +145,9 @@ Two coordinate spaces share one pixel-based pipeline:
 | `world2d` (default) | canvas centre | up | one canvas pixel at `zoom = 1` | yes |
 | `screen` | top-left corner | down | one canvas pixel | no |
 
-`world2d` mirrors bevy's `Camera2d`: the origin is the centre of the target, `+y` points up and
+`world2d` mirrors the reference 2D camera: the origin is the centre of the target, `+y` points up and
 `zoom` is canvas pixels per world unit. `2d_shapes`' `X_EXTENT = 1000` is a pixel-scale world
-coordinate in that sense, not a top-left one — the top-left, +y-down space is bevy's UI space,
+coordinate in that sense, not a top-left one — the top-left, +y-down space is the reference UI space,
 and here it is `screen`, the same one `TextSpace "screen"` already uses.
 
 - Strokes: `line`, `ray`, `lineStrip`/`polyline`, `grid`, `point`; screen-pixel or world widths,
@@ -150,7 +159,7 @@ width stays a pixel count at any zoom. `fill: false` plus `strokeWidth` turns an
 an outline.
 - The layer is an overlay: it draws after every 3D primitive, pins itself to the near plane and
 does not write depth. Screen-space text remains the last thing drawn.
-- `InfiniteGrid2D` renders the addon's 2D grid as a full-viewport shader quad: decimal LOD levels,
+- `InfiniteGrid2D` renders the reference's 2D grid as a full-viewport shader quad: decimal LOD levels,
   screen-space line width and the same three-layer alpha de-duplication as the 3D grid. It reads
   `cellSize`, `lineWidthPixels`, `minPixelsBetweenCells`, the LOD range and both line colors from
   the gallery's grid panel, and draws as the 2D layer's background.
@@ -160,7 +169,7 @@ does not write depth. Screen-space text remains the last thing drawn.
 ## Text
 
 `recorder.text(position, text, options)` draws one block per call. `text` is a string or a list
-of spans, the equivalent of bevy's `Text2d` root plus its child `TextSpan`s.
+of spans, the equivalent of a text root entity plus its child span entities.
 
 Three placement spaces share one pipeline and are selected per block:
 
@@ -171,20 +180,20 @@ Three placement spaces share one pipeline and are selected per block:
 | `screen` | **top-left origin pixels** (`position.z` ignored) | `fontSize` pixels |
 
 `fontSize` is in **font pixels** and is the layout unit; `pixelSize` is world units per font pixel.
-That pair is the reference `Label3D.font_size` / `pixel_size`, and it lets a block keep a fixed world
+That pair is the reference `font_size` / `pixel_size`, and it lets a block keep a fixed world
 size while its glyphs are rasterised at any resolution. Which resolution that is belongs to the glyph
 source: one that can rasterise on demand is asked for the size the block covers on screen (see
 [Raster size](#raster-size)), while one that declares `dynamicRaster: false` stays at
-`fontSize × rasterScale`. Layout options follow bevy: `justify`, `lineBreak`, `bounds`
-(`TextBounds`, in font pixels), `anchor`, `lineHeight` and `letterSpacing`.
+`fontSize × rasterScale`. Layout options follow the reference layout model: `justify`, `lineBreak`,
+`bounds` (`TextBounds`, in font pixels), `anchor`, `lineHeight` and `letterSpacing`.
 
-`lineHeight` is bevy's `LineHeight::Px` when you pass one, and bevy's default
-`RelativeToFont(1.2)` otherwise — which means a line's box is that multiple of **the line's own
+`lineHeight` is the absolute pixel form when you pass one, and the default is a `1.2` multiple of the
+font size otherwise — which means a line's box is that multiple of **the line's own
 largest span**, so a line holding a bigger span is taller. `lineHeightScale` names that multiple
-explicitly; the two are exclusive, like bevy's variants. Only `bounds.width` feeds layout:
-`bounds.height` is not a layout input, matching bevy, so a block runs past it instead of being
-truncated. `letterSpacing` lands after every character, the last one on a line included, because
-parley adds it to each cluster's advance.
+explicitly; the two are exclusive. Only `bounds.width` feeds layout:
+`bounds.height` is not a layout input, so a block runs past it instead of being
+truncated. `letterSpacing` lands after every character, the last one on a line included, because the
+shaping pass adds it to each cluster's advance.
 
 World text is depth-tested but never depth-written, so geometry in front of it
 occludes it; `screen` text pins itself to the near plane and always wins.
@@ -214,7 +223,7 @@ render option, so the atlas and the shader always agree:
 
 | Encoding | Stored | Scaling | Cost |
 | --- | --- | --- | --- |
-| `bitmap` | tintable alpha mask (RGB 255, coverage in A) — bevy's `FontAtlas` layout | the shader interpolates coverage, so magnifying softens it | cheapest; one byte of signal |
+| `bitmap` | tintable alpha mask (RGB 255, coverage in A) — the reference atlas layout | the shader interpolates coverage, so magnifying softens it | cheapest; one byte of signal |
 | `sdf` | signed distance in red, true distance in alpha | the shader rebuilds the edge from the distance, so it stays sharp at any size | one CPU distance transform per glyph |
 | `msdf` | per-edge signed distance in RGB, true distance in alpha | as `sdf`, but the median keeps the corners a single channel rounds off | three channels, and outlines rather than a mask |
 
@@ -236,13 +245,13 @@ actually covers (see [Raster size](#raster-size)).
 
 ### Raster size
 
-A glyph is a bitmap, so it is only sharp when it is rasterised at the size it is drawn at. bevy gets
-there by keying its `FontAtlasSet` by font size and rasterising every size at the physical pixel size
-it will be shown at. That is affordable because bevy's text sizes change rarely; a debug draw block's
-size follows its camera, and a CJK block has thousands of candidate glyphs, so one atlas per size is
-not something this library can spend.
+A glyph is a bitmap, so it is only sharp when it is rasterised at the size it is drawn at. The
+reference gets there by keying its atlas set by font size and rasterising every size at the physical
+pixel size it will be shown at. That is affordable because its text sizes change rarely; a debug draw
+block's size follows its camera, and a CJK block has thousands of candidate glyphs, so one atlas per
+size is not something this library can spend.
 
-The default source keeps the screen-facing half of bevy's answer: glyphs are rasterised at **the size
+The default source keeps the screen-facing half of that answer: glyphs are rasterised at **the size
 the block covers on screen**, quantised onto a ladder of sizes (`text-raster.ts` — one step every
 1.25×, 6 px to 256 px). A block asks for the smallest rung that covers it, so a glyph is never
 magnified when it is decoded, at most oversampled by one step, which the mip chain then covers.
@@ -261,9 +270,9 @@ rasterises each character about once per rung it passes rather than once per fra
 A source's `rasterScale` becomes a lower bound rather than the whole story, and `dynamicRaster: false`
 pins a source to that bound. The comparison scenes pin theirs, so one encoding still sits next to
 another at a known raster size, and `text-reference.html` pins its `bitmap` source because it is
-compared against bevy glyph by glyph.
+compared against the reference glyph by glyph.
 
-The design, the bevy correspondence it came from, and the measured sharpness numbers are in
+The design, the reference correspondence it came from, and the measured sharpness numbers are in
 [`docs/text-rasterization.md`](docs/text-rasterization.md).
 
 ### CJK
@@ -279,9 +288,11 @@ the first:
   tokens.
 
 Glyphs come from whatever face the family resolves to. The bundled subset has **no CJK coverage**, so
-the canvas falls back to a system CJK face, which is the same arrangement bevy has with fontique's
-system fallback; pass a `fontFamily` (bundled, or loaded into the document) to choose one on purpose.
-The side of bevy's raster handling that shows up here is [Raster size](#raster-size): each ideograph is
+the canvas falls back to a system CJK face, which is the same arrangement the reference text stack
+has with its system fallback; pass a `fontFamily` (bundled, or loaded into the document) to choose
+one on purpose.
+The side of the reference's raster handling that shows up here is [Raster size](#raster-size): each
+ideograph is
 rasterised at the rung it lands on, so a screenful of Chinese costs a few rungs' worth of glyphs
 rather than one set per font size.
 
@@ -378,9 +389,9 @@ Blocks that name nothing use the first source registered, and `defaultTextStyle`
 whole frame. Each source gets its own atlas and pipeline, and one is only built once something
 actually names it, so registering sources you never draw costs nothing.
 
-Seven scenes exercise text end to end, and none of them is a port — the addon has no text API; the
-layout they run follows bevy's, and `docs/text-reference.md` records how that was verified against
-bevy itself.
+Seven scenes exercise text end to end, and none of them is a port — the reference addon has no text
+API; the layout they run follows the reference layout model, and `docs/text-reference.md` records how
+that was verified.
 
 `text-compare` is the parity matrix, in the shape of the line/circle examples: rows are glyph sources,
 columns are font sizes, transposed relative to those because text grows sideways. The six
@@ -407,7 +418,8 @@ crossing `y = 0` would be clipped along its lines.
 
 The library inlines a **Fira Mono subset** (ASCII, Latin-1, Latin Extended-A, Greek, punctuation,
 arrows, math and geometric symbols — 591 glyphs, 19 KB WOFF2 plus a 43 KB TrueType of the same
-subset, SIL OFL 1.1). It is embedded the way bevy embeds its default font with `include_bytes!`, so
+subset, SIL OFL 1.1). It is embedded the way the reference embeds its default font with
+`include_bytes!`, so
 nothing is fetched at runtime. WOFF2 feeds `FontFace` for the Canvas2D path; the TrueType is there
 because `opentype.js` cannot decompress WOFF2. The subset has **no CJK coverage**: CJK labels fall back to a system face, and a `fontFamily` bundled
 here or loaded into the document picks one on purpose. See [CJK](#cjk).
@@ -442,7 +454,7 @@ gallery to a single glyph source (`auto`, `bitmap`, `bitmap4x`, `sdf`, `sdf4x`, 
   `draw_line_list` segments, so `shape.y`/`z`/`side` parameters select ring counts
   exactly like `draw_sphere`/`draw_capsule`/`draw_cone`/`draw_cylinder` rather than
   mesh subdivisions.
-- `InfiniteGrid3D` shader-driven ground grid ported from `godot-infinite-grid`
+- `InfiniteGrid3D` shader-driven ground grid ported from the reference grid addon
   (decimal LOD layers, screen-space width, edge/grazing/center/far fades).
 - Orbit/pan/zoom camera controls in the gallery, tuned to the reference
   `entities/free_camera.gd` and layered on a velocity model (`src/demo-camera.ts`): a drag is
@@ -458,10 +470,10 @@ gallery to a single glyph source (`auto`, `bitmap`, `bitmap4x`, `sdf`, `sdf4x`, 
   turns around the geometry instead of the origin. `?camera=reference` disables that framing so
   the reference pose stays put for comparisons.
 
-See `docs/godot-debug-draw-parity.md` for the scene-by-scene parity status and the
-known approximations, `docs/visual-comparison.md` for the Godot-vs-vgpu
+See `docs/reference-parity.md` for the scene-by-scene parity status and the
+known approximations, `docs/visual-comparison.md` for the reference-vs-vgpu
 screenshot comparisons and measured alignment, and `docs/text-reference.md` for the run-time
-comparison of text layout against bevy itself.
+comparison of text layout against the reference.
 
 ## Global configuration
 
@@ -529,10 +541,8 @@ Enabled, or start the browser with `--enable-features=Vulkan`.
 Visual baselines:
 
 ```bash
-# Godot reference capture (independent copy, real Vulkan)
-godot --path /tmp/vgpu-parity-godot --display-driver x11 --audio-driver Dummy \
-  --resolution 1920x1080 --script /tmp/vgpu-parity-godot/capture.gd -- \
-  circle "$PWD/artifacts/visual-baseline/godot-circle.png"
+# Reference capture (independent copy, real Vulkan). The engine binary and the script live in a
+# local `/tmp/vgpu-parity-*` checkout; see `docs/visual-comparison.md` for the exact invocation.
 
 # vgpu capture over CDP (needs a GPU display + dev server)
 # CHROME_PATH selects the browser binary (default: first known install path, then PATH).
@@ -541,6 +551,6 @@ bun scripts/capture-vgpu.ts circle line
 ```
 
 Both sides write into `artifacts/`, which is entirely git-ignored: captures are recaptured locally
-on demand and never committed. The Godot reference is machine-specific (Godot 4.7.2 / Vulkan /
+on demand and never committed. The reference capture is machine-specific (engine 4.7.2 / Vulkan /
 RTX 4070 SUPER, see the capture conditions in `docs/visual-comparison.md`), so check that table
 before recapturing it elsewhere.

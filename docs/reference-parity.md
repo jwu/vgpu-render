@@ -19,7 +19,7 @@ Text section for the three placement spaces, the inlined Fira Mono subset, the `
 matrix and the `text-*` screen-space pages.
 The two 2D pages (`2d-gizmos`, `2d-shapes`) are likewise not reference ports: the addon has no 2D
 API, so they follow bevy's `2d_gizmos` and `2d_shapes` examples and use the 2D layer documented in
-[bevy-2d-parity.md](bevy-2d-parity.md).
+[2d-parity.md](2d-parity.md).
 `demo.gd` is absent from the manifest, and text rendering is not a reference
 port. The current 17 entries
 render geometry, but that is not proof of scene or visual equivalence. GPU scene
@@ -27,7 +27,7 @@ tests are smoke tests, not full visual regression baselines.
 
 ## Example scenes
 
-Each scene is produced by `src/godot-scenes.ts`. `circle`, `line`,
+Each scene is produced by `src/scenes-3d.ts`. `circle`, `line`,
 `sphere`, `cone`, `cylinder` and `capsule` are faithful ports of the reference
 sources: real column/row coordinates, colors, widths, the rotation-tunnel basis,
 cumulative-arc-length dashes, and the reference wireframe topology (latitude rings and
@@ -78,7 +78,7 @@ reference layout; what is still approximate per scene is listed under *Known app
   de-duplicated alpha, screen-space line width, and edge/grazing/center/far fades
   driven by the reference camera-state rules. The addon's 2D grid is ported too, as
   `InfiniteGrid2D`: a full-viewport shader quad with the same decimal LOD scheme but without
-  the 3D-only fades (see [bevy-2d-parity.md](bevy-2d-parity.md)).
+  the 3D-only fades (see [2d-parity.md](2d-parity.md)).
 - Layer filtering and alpha blend on a linear `rgba16float` target with an sRGB
   present pass (matching Godot `blend_mix` and bevy's `Rgba16Float` + `add_srgb_suffix`).
 - Depth write for every primitive (`depth_draw_always`), a `-0.001` depth bias, and manual
@@ -127,5 +127,5 @@ only difference from the reference encoding.
   while this port subdivides with a fixed step count, so vertex counts differ even though the
   shape matches.
 
-Anything flagged `implemented: false` in `src/godot-examples.ts` is shown with a
+Anything flagged `implemented: false` in `src/scene-examples.ts` is shown with a
 `·` marker in the gallery.

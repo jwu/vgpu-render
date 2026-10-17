@@ -61,7 +61,7 @@ bun scripts/compare-text-reference.ts [case ...]
   `LineHeight`、`LetterSpacing`、`TextBounds`、`Anchor`；分 span 的用例用 `TextSpan` 子实体。
 
 **vgpu 侧**（`text-reference.html` + `src/text-reference.ts`）是一个 dev-only 页面，不在
-`GODOT_EXAMPLES` 里、也不进生产构建。它固定用 `space: "screen"` 与 `bitmap` 字形源：
+`SCENE_EXAMPLES` 里、也不进生产构建。它固定用 `space: "screen"` 与 `bitmap` 字形源：
 
 - `screen` 是两侧都能直接表达的放置方式（左上原点像素），不必绕相机矩阵。
 - `bitmap` 是 bevy 的 `FontAtlas` 同为 coverage 的编码，因此可以和 bevy 逐像素比。

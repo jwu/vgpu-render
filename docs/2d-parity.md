@@ -80,7 +80,7 @@
 | `tests/frame-recorder-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal |
 | `tests/line2d.gpu.test.ts` | 像素宽度、点定位、zoom、dash、round joint、2D 覆盖 3D |
 | `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/screen 空间/AA |
-| `tests/bevy-scenes-2d.test.ts` | 两个页面只产生 2D 命令、形状集合覆盖、时间动画、3D 场景不受影响 |
+| `tests/scenes-2d.test.ts` | 两个页面只产生 2D 命令、形状集合覆盖、时间动画、3D 场景不受影响 |
 | `tests/scenes.test.ts` | 所有示例（含 2D 页）在真实 GPU 上渲染无错误 |
 
 ## 2D 无限网格
@@ -123,7 +123,7 @@
 
 ```bash
 bun test tests/camera-2d.test.ts tests/frame-recorder-2d.test.ts \
-  tests/line2d.gpu.test.ts tests/shape2d.gpu.test.ts tests/bevy-scenes-2d.test.ts
+  tests/line2d.gpu.test.ts tests/shape2d.gpu.test.ts tests/scenes-2d.test.ts
 bun run dev -- --host 127.0.0.1 --port 5174
 # gallery: ?scene=2d-gizmos  /  ?scene=2d-shapes
 ```
