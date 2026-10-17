@@ -1,5 +1,8 @@
 node_modules/
+# Library build output (`bun run build:lib`) — published to npm, never committed.
 dist/
+# Gallery build output (`bun run build`) — deployed to GitHub Pages, never committed.
+dist-site/
 coverage/
 # The bevy reference harness builds into bevy's own target directory (see
 # docs/text-reference.md), but a plain `cargo build` in it would drop a target/ of its own.
@@ -14,3 +17,6 @@ tools/bevy-text-reference/target/
 # in `scripts/` plus `tools/bevy-text-reference` (see docs/visual-comparison.md and
 # docs/text-reference.md). Nothing under this directory is imported by `src/` or `tests/`.
 artifacts/
+
+# `npm pack` output; publish artifacts are rebuilt, never committed.
+*.tgz

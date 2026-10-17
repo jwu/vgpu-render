@@ -11,7 +11,8 @@
  * down, the pen at (0, 0) and the baseline at y = 0 — which is also what `glyph.getPath` produces.
  */
 
-import { parse, type Font } from "opentype.js";
+import * as opentype from "opentype.js";
+import type { Font } from "opentype.js";
 import { decodeEmbeddedTrueTypeFont, type GlyphRasterizer, type RasterizedGlyph } from "./text-font.js";
 import { msdfFromOutline, type OutlineSegment, type Point } from "./text-msdf.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";
@@ -94,6 +95,16 @@ export function commandsToSegments(commands: readonly OutlineCommand[], offsetX:
   return segments;
 }
 
+/**
+ * Resolves `parse` from either build of `opentype.js`.
+ *
+ * The package ships a CommonJS entry and an ESM entry without an `exports` map, so Node's ESM
+ * loader only exposes the CommonJS default export while bundlers pick the ESM module and its named
+ * exports. Reading whichever shape we were handed keeps both paths working.
+ */
+const parseFont = ((opentype as { parse?: typeof opentype.parse }).parse ??
+  (opentype as unknown as { default: { parse: typeof opentype.parse } }).default.parse) as typeof opentype.parse;
+
 export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
   readonly encoding = "msdf" as const;
   readonly distanceRange: number;
@@ -105,7 +116,7 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
   readonly #vertical = new Map<string, VerticalMetrics>();
 
   constructor(options: OutlineGlyphRasterizerOptions = {}) {
-    this.#font = parse(options.font ?? decodeEmbeddedTrueTypeFont().buffer);
+    this.#font = parseFont(options.font ?? decodeEmbeddedTrueTypeFont().buffer);
     this.distanceRange = options.distanceRange ?? DEFAULT_SDF_RANGE;
     this.rasterScale = options.rasterScale ?? 1;
     this.dynamicRaster = options.dynamicRaster ?? true;

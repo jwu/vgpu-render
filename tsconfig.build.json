@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "exclude": [
+    "src/demo.tsx",
+    "src/demo-*.ts",
+    "src/components/**",
+    "src/lib/**",
+    "src/text-reference.ts",
+    "src/source-scrub.ts",
+    "src/vite-env.d.ts"
+  ]
+}

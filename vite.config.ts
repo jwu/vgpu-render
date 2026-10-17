@@ -14,6 +14,11 @@ const PAGES_BASE = process.env.VGPU_BASE ?? "/vgpu-render/";
 export default defineConfig(({ command }) => ({
   base: command === "build" ? PAGES_BASE : "/",
   plugins: [tailwindcss()],
+  build: {
+    // `dist/` belongs to the published library build (`bun run build:lib`); the gallery is a
+    // separate artifact, deployed by the Pages workflow.
+    outDir: "dist-site",
+  },
   resolve: {
     alias: {
       "@": resolve(import.meta.dirname, "./src"),

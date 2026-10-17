@@ -22,7 +22,11 @@ src/index.ts                 ← 公共导出
 src/frame-recorder.ts        ← 帧命令与录制 API
 src/debug-draw-3d.ts         ← 高层 DebugDraw3D 生命周期与图层过滤
 src/gpu-debug-draw-3d.ts     ← WebGPU 实例化渲染与 WGSL 管线
-src/godot-scenes.ts          ← Godot 示例场景的 TypeScript 移植
+src/scenes-3d.ts             ← 3D 参考示例场景的 TypeScript 移植
+src/scenes-2d.ts             ← 2D 相机空间示例场景
+src/scene-examples.ts        ← gallery 示例登记表（标题、描述、列与行标签）
+src/source-scrub.ts          ← 对外产物（gallery 预览、npm dist）的品牌词清洗规则
+src/text-reference.ts        ← dev-only 文本对照页（不导出、不进库构建）
 src/demo.tsx                ← 浏览器 gallery 入口（React 挂载点）
 src/demo-engine.ts           ← 命令式 WebGPU 引擎（渲染循环、相机、持久化）
 src/demo-hooks.ts            ← React 与引擎之间的订阅桥接
@@ -39,7 +43,8 @@ src/infinite-grid-3d.ts      ← 无限网格渲染
 ```bash
 bun run typecheck  # TypeScript 类型检查
 bun test           # Vitest 测试
-bun run build      # Vite 生产构建
+bun run build      # Vite 生产构建（gallery → dist-site/）
+bun run build:lib  # 库构建（tsc → dist/，发布到 npm）
 bun run dev        # 启动 Vite 开发服务器
 ```
 
@@ -57,19 +62,21 @@ bun run build
 vgpu-render/
   ├── src/                         # 库源码、渲染器、demo 与场景移植
   ├── tests/                       # 单元测试、场景测试与真实 GPU 测试
-  ├── scripts/                     # 截图捕获等开发脚本
+  ├── scripts/                     # 截图捕获、dist 品牌词清洗等开发脚本
   ├── docs/                        # parity 状态与视觉对比说明
   ├── artifacts/                   # 本地生成的对比参考，整体不入库（见 .gitignore）
   ├── index.html                   # Vite gallery 页面入口
-  ├── package.json                 # Bun scripts 与依赖
+  ├── package.json                 # Bun scripts、依赖与 npm 发布配置
   ├── tsconfig.json                # 严格 TypeScript 配置
+  ├── tsconfig.build.json          # 库构建配置（tsc → dist/）
+  ├── LICENSE                      # MIT
   ├── bun.lock                     # Bun 锁文件
   └── README.md                    # 用法、能力与开发说明
 ```
 
 ## 工作流程
 
-- 动手前先阅读与任务相关的源码、测试和文档；涉及视觉 parity 时先阅读 `docs/visual-comparison.md` 与 `docs/godot-debug-draw-parity.md`。
+- 动手前先阅读与任务相关的源码、测试和文档；涉及视觉 parity 时先阅读 `docs/visual-comparison.md` 与 `docs/reference-parity.md`。
 - 先明确修改的行为和验证方式，再进行小范围编辑。
 - 优先沿用现有的 `FrameRecorder -> FrameCommand[] -> GpuDebugDraw3D` 数据流，不要绕过录制层直接在 demo 中构造渲染状态。
 - 新增或修改图元参数时，同时检查：录制命令、GPU instance 数据、WGSL shader、场景调用和相关测试是否仍然一致。
@@ -142,7 +149,7 @@ http://127.0.0.1:5174/?compare=1&scene=line
 - 不删除、移动或重命名用户已有文件，除非用户明确要求。
 - 不修改 `node_modules/`、`dist/` 和 `~/src/` 上游源码来绕过问题。
 - 不把大体积模型、截图缓存或临时调试输出加入源码提交；视觉基线截图不入库，只在本地生成。
-- 不宣称当前实现已达到完整 Godot parity；状态以 `docs/godot-debug-draw-parity.md` 为准。
+- 不宣称当前实现已达到完整 Godot parity；状态以 `docs/reference-parity.md` 为准。
 
 ## 以下操作必须先征求用户同意
 
