@@ -93,6 +93,20 @@ test("world-plane text projects through the camera and flips its local y", async
   expect(channel(pixels, 72, 30, 1)).toBeLessThan(40);
 });
 
+test("a world-plane block lies flat when rotated onto the ground plane", async () => {
+  // A top-down camera: world +X is screen right, world -Z is screen up, world +Y is towards the eye.
+  const topDown = new Float32Array([1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
+  const options = { fontSize: 20, pixelSize: 0.025, anchor: "top-left", color: [0, 1, 0, 1] } as const;
+  const flat = await render((recorder) => {
+    // The reference `Label3D` rotation: the block lies on XZ and reads from above.
+    recorder.text([0, 0, 0], "A", { ...options, rotation: [-Math.PI / 2, 0, 0] });
+  }, topDown);
+  const upright = await render((recorder) => recorder.text([0, 0, 0], "A", options), topDown);
+  expect(litCount(flat)).toBeGreaterThan(0);
+  // Unrotated, the block still faces +Z and is edge-on to a camera looking straight down.
+  expect(litCount(upright)).toBeLessThan(litCount(flat) / 4);
+});
+
 test("a billboard keeps facing the camera where the fixed plane goes edge-on", async () => {
   const options = { fontSize: 20, pixelSize: 0.025, anchor: "top-left", color: [0, 1, 0, 1] } as const;
   const billboard = await render((recorder) => recorder.text([0, 0, 0.5], "A", { ...options, space: "world-billboard" }), yawed);

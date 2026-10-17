@@ -41,6 +41,21 @@ describe("FrameRecorder", () => {
       .toThrow("at least 2 entries");
   });
 
+  test("resolves a text block's plane rotation, defaulting to the facing plane", () => {
+    const frame = new FrameRecorder();
+    frame.text([0, 0, 0], "A");
+    frame.text([0, 0, 0], "A", { rotation: [-Math.PI / 2, 0, 0] });
+
+    expect(frame.texts[0]?.rotation).toEqual([0, 0, 0]);
+    expect(frame.texts[1]?.rotation).toEqual([-Math.PI / 2, 0, 0]);
+  });
+
+  test("rejects a non-finite text rotation", () => {
+    const frame = new FrameRecorder();
+    expect(() => frame.text([0, 0, 0], "A", { rotation: [Number.NaN, 0, 0] })).toThrow("rotation[0]");
+    expect(() => frame.text([0, 0, 0], "A", { rotation: [0, 0] as unknown as readonly [number, number, number] })).toThrow("three values");
+  });
+
   test("seals the recorder", () => {
     const frame = new FrameRecorder();
     frame.seal();

@@ -186,6 +186,12 @@ export type TextOptions = {
   anchor?: TextAnchor;
   space?: TextSpace;
   /**
+   * Local rotation of a `world-plane` block, in radians, as Godot's `Label3D.rotation` Euler angles
+   * (applied Y, then X, then Z). The reference `Label3D` labels use `[-PI/2, 0, 0]` to lay the block
+   * flat on the XZ plane, readable from above; the two camera-relative spaces ignore it.
+   */
+  rotation?: readonly [number, number, number];
+  /**
    * Which registered glyph source draws this block: its encoding and raster scale. Blocks that name
    * nothing use the first source, so a frame can mix a sharp pass and a cheap pass.
    */
@@ -230,6 +236,7 @@ export type TextCommand = {
   readonly bounds?: readonly [number, number];
   readonly anchor: TextAnchor;
   readonly space: TextSpace;
+  readonly rotation: readonly [number, number, number];
   readonly source?: string;
   readonly depthTest: boolean;
   readonly layer: LayerMask;
@@ -277,6 +284,7 @@ export type TextDefaults = {
   lineBreak?: TextLineBreak;
   anchor?: TextAnchor;
   space?: TextSpace;
+  rotation?: readonly [number, number, number];
   source?: string;
   depthTest?: boolean;
   layer?: LayerMask;
@@ -294,6 +302,9 @@ export const DEFAULT_LAYER = 1;
 export const DEFAULT_TEXT_SIZE = 16;
 /** Default world units per font pixel, i.e. a 0.32 world-unit glyph at the default size. */
 export const DEFAULT_TEXT_PIXEL_SIZE = 0.02;
+/** `world-plane` blocks face +Z until a rotation lays them down, like a reference `Label3D`. */
+export const DEFAULT_TEXT_ROTATION: readonly [number, number, number] = [0, 0, 0];
+
 /** bevy's `LineHeight` default is `RelativeToFont(1.2)`. */
 export const DEFAULT_LINE_HEIGHT_RATIO = DEFAULT_LINE_HEIGHT_SCALE;
 
@@ -440,6 +451,7 @@ export type ResolvedTextDefaults = {
   lineBreak: TextLineBreak | undefined;
   anchor: TextAnchor | undefined;
   space: TextSpace | undefined;
+  rotation: readonly [number, number, number] | undefined;
   source: string | undefined;
   depthTest: boolean | undefined;
   layer: LayerMask | undefined;
@@ -520,6 +532,7 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
       lineBreak: text.lineBreak === undefined ? undefined : textLineBreakValue(text.lineBreak, "default text lineBreak"),
       anchor: textAnchor,
       space: text.space === undefined ? undefined : textSpaceValue(text.space, "default text space"),
+      rotation: text.rotation === undefined ? undefined : vec3(text.rotation, "default text rotation"),
       source: text.source,
       depthTest: text.depthTest,
       layer: text.layer === undefined ? undefined : layerValue(text.layer, "default text layer"),
@@ -803,6 +816,7 @@ export class FrameRecorder {
     const lineBreak = options.lineBreak ?? defaults.lineBreak ?? "word";
     const anchor = options.anchor ?? defaults.anchor ?? "center";
     const space = options.space ?? defaults.space ?? "world-plane";
+    const rotation = vec3(options.rotation ?? defaults.rotation ?? DEFAULT_TEXT_ROTATION, "rotation");
     const source = options.source ?? defaults.source;
     const bounds = options.bounds;
     if (bounds !== undefined) textBounds(bounds, "bounds");
@@ -831,6 +845,7 @@ export class FrameRecorder {
       lineBreak,
       anchor,
       space,
+      rotation,
       ...(source === undefined ? {} : { source }),
       depthTest: options.depthTest ?? defaults.depthTest ?? true,
       layer: layer(options.layer ?? defaults.layer),

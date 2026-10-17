@@ -250,7 +250,12 @@ struct Out { @builtin(position) clip: vec4f, @location(0) uv: vec2f, @location(1
       let up = vec3f(camera.view[0][1], camera.view[1][1], camera.view[2][1]);
       worldPosition = input.origin + right * local.x - up * local.y;
     } else {
-      worldPosition = input.origin + vec3f(local.x, -local.y, 0.0);
+      // The instance world matrix carries the block's own plane basis: column 0 is the reading
+      // direction, column 1 the layout's down. Label3D.rotation lands on that basis, so the default
+      // identity keeps the plane facing +Z.
+      let axisX = input.world0.xyz;
+      let axisY = input.world1.xyz;
+      worldPosition = input.origin + axisX * local.x - axisY * local.y;
     }
     clip = camera.viewProjection * vec4f(worldPosition, 1.0);
   }
@@ -277,6 +282,42 @@ fn atlasTexelsPerPixel(uv: vec2f) -> f32 {
 }
 
 ${fragment}`;
+}
+
+/** `world-plane` blocks keep facing +Z until their own rotation lays them down. */
+const IDENTITY_WORLD = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/**
+ * The instance world matrix of a `world-plane` block, from the reference `Label3D.rotation` Euler
+ * order (Y, then X, then Z). Column 0 is the reading direction and column 1 the layout's down, so a
+ * `[-PI/2, 0, 0]` block lies flat on the XZ plane and reads from above.
+ *
+ * The basis travels in the instance world matrix rather than in two extra instance attributes: the
+ * text pipeline already uses the device's full vertex attribute budget.
+ */
+function textPlaneWorld(rotation: readonly [number, number, number]): Float32Array {
+  const [pitch, yaw, roll] = rotation;
+  if (pitch === 0 && yaw === 0 && roll === 0) return IDENTITY_WORLD;
+  const cosRoll = Math.cos(roll);
+  const sinRoll = Math.sin(roll);
+  const cosPitch = Math.cos(pitch);
+  const sinPitch = Math.sin(pitch);
+  const cosYaw = Math.cos(yaw);
+  const sinYaw = Math.sin(yaw);
+  // Rz, then Rx, then Ry: the vector order that matches Godot's YXZ Euler convention.
+  let x: [number, number, number] = [cosRoll, sinRoll, 0];
+  let y: [number, number, number] = [-sinRoll, cosRoll, 0];
+  x = [x[0], x[1] * cosPitch - x[2] * sinPitch, x[1] * sinPitch + x[2] * cosPitch];
+  y = [y[0], y[1] * cosPitch - y[2] * sinPitch, y[1] * sinPitch + y[2] * cosPitch];
+  x = [x[0] * cosYaw + x[2] * sinYaw, x[1], -x[0] * sinYaw + x[2] * cosYaw];
+  y = [y[0] * cosYaw + y[2] * sinYaw, y[1], -y[0] * sinYaw + y[2] * cosYaw];
+  const z: [number, number, number] = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+  return new Float32Array([
+    x[0], x[1], x[2], 0,
+    y[0], y[1], y[2], 0,
+    z[0], z[1], z[2], 0,
+    0, 0, 0, 1,
+  ]);
 }
 
 export class GpuText3D {
@@ -414,6 +455,7 @@ export class GpuText3D {
         this.#font,
       );
       const space = command.space === "world-billboard" ? SPACE_WORLD_BILLBOARD : command.space === "screen" ? SPACE_SCREEN : SPACE_WORLD_PLANE;
+      const planeWorld = space === SPACE_WORLD_PLANE ? textPlaneWorld(command.rotation) : IDENTITY_WORLD;
       // Screen text never takes part in depth testing, whatever the command asked for.
       const flags = space | (command.depthTest && space !== SPACE_SCREEN ? 0 : FLAG_NO_DEPTH);
       // The quad's size comes from the layout, not from the atlas. A distance field can be drawn at
@@ -453,6 +495,9 @@ export class GpuText3D {
           outlineWidth: command.outlineWidth,
           outlineColor: command.outlineColor,
         });
+        // The matrix always reflects this block's own plane, because instances are reused across
+        // blocks and a stale basis would tilt a block that asked for none.
+        this.#glyphs.setWorld(id, planeWorld);
         index++;
       }
     }
