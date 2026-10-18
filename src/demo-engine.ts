@@ -110,6 +110,37 @@ export function fpsMoveSpeed(keys: ReadonlySet<string>): number {
 }
 
 /**
+ * One frame of WASD pan on a 2D page, in `world2d` units: `W`/`S` move along +Y/-Y, `A`/`D` along
+ * -X/+X. The step is authored in CSS pixels per second and divided by the zoom (physical pixels
+ * per world unit), so a held key moves the view at a constant on-screen rate at any zoom.
+ */
+export function camera2DKeyPan(
+  keys: ReadonlySet<string>,
+  zoom: number,
+  delta: number,
+  pixelRatio: number,
+): readonly [number, number] {
+  const forward = (keys.has("w") ? 1 : 0) - (keys.has("s") ? 1 : 0);
+  const right = (keys.has("d") ? 1 : 0) - (keys.has("a") ? 1 : 0);
+  if (forward === 0 && right === 0) return [0, 0];
+  // Normalising keeps a diagonal press from moving sqrt(2) times faster than a single axis.
+  const length = Math.hypot(forward, right);
+  const worldPerSecond = (CAMERA_2D_KEY_PAN_SPEED * pixelRatio) / Math.max(zoom, 1e-6);
+  const step = (worldPerSecond * Math.max(delta, 0)) / length;
+  return [right * step, forward * step];
+}
+
+/** Whether a key event came from one of the gallery's text fields rather than the canvas. */
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  const element = target as { tagName?: string; isContentEditable?: boolean } | null;
+  if (element === null || typeof element.tagName !== "string") return false;
+  return element.tagName === "INPUT"
+    || element.tagName === "TEXTAREA"
+    || element.tagName === "SELECT"
+    || element.isContentEditable === true;
+}
+
+/**
  * Inertia. A released drag keeps a velocity that halves every `GLIDE_HALFLIFE` seconds; the caps
  * are budgets of leftover travel (degrees, screens, doublings) rather than velocities, so a flick
  * cannot throw the view further than that at any frame rate — see `glideVelocityFor`.
@@ -136,6 +167,11 @@ const CAMERA_2D_ZOOM_MIN = 0.05;
 const CAMERA_2D_ZOOM_MAX = 40;
 /** How much of the fitted `view2d` extent a 2D page leaves as margin. */
 const CAMERA_2D_FIT_MARGIN = 0.94;
+/**
+ * WASD pan speed on a 2D page, in CSS pixels per second. It is divided by the current zoom, so a
+ * held key moves the camera at the same on-screen rate however far the page is zoomed in.
+ */
+const CAMERA_2D_KEY_PAN_SPEED = 360;
 
 /**
  * Stand-in view matrix for a 2D page. `world-plane` and `world-billboard` text read it, and a 2D
@@ -820,6 +856,22 @@ export class DemoEngine {
       return;
     }
 
+    // WASD pans the 2D view directly. It owns the camera while held, so any leftover glide from a
+    // drag is dropped rather than added on top of the key step.
+    const keyPan = camera2DKeyPan(this.keys, c.zoom, frame, window.devicePixelRatio || 1);
+    if (keyPan[0] !== 0 || keyPan[1] !== 0) {
+      c.pan = [c.pan[0] + keyPan[0], c.pan[1] + keyPan[1]];
+      velocity.pan = [0, 0, 0];
+      velocity.zoom = 0;
+      this.dragTail = [];
+      const now = performance.now();
+      if (now - this.glidePersistedAt > GLIDE_PERSIST_INTERVAL) {
+        this.glidePersistedAt = now;
+        this.persist();
+      }
+      return;
+    }
+
     if (velocity.pan[0] !== 0 || velocity.pan[1] !== 0) {
       const pan = integrateGlideVec3([c.pan[0], c.pan[1], 0], velocity.pan, GLIDE_HALFLIFE, frame);
       c.pan = [pan.value[0], pan.value[1]];
@@ -1038,7 +1090,7 @@ export class DemoEngine {
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (this.compareMode) return;
+    if (this.compareMode || isTextEntryTarget(event.target)) return;
     const key = event.key.toLowerCase();
     if (key === FPS_SPRINT_KEY) {
       this.keys.add(key);
@@ -1050,7 +1102,12 @@ export class DemoEngine {
   };
 
   private onKeyUp = (event: KeyboardEvent): void => {
-    this.keys.delete(event.key.toLowerCase());
+    const key = event.key.toLowerCase();
+    this.keys.delete(key);
+    // A held WASD pan only persists on the throttled tick, so the final position lands here.
+    if (this.config.camera.mode === "2d" && (key === "w" || key === "a" || key === "s" || key === "d")) {
+      this.persist();
+    }
   };
 
   private onPointerLockChange = (): void => {

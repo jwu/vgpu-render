@@ -70,7 +70,7 @@ const SAMPLE_LABEL_FONT = 19;
 export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   "2d-lines": {
     title: "2D Lines",
-    note: "line · width, alpha, gradient, dash · open strip and closed loop, solid and dashed · drag to pan, scroll to zoom",
+    note: "line · width, alpha, gradient, dash · open strip and closed loop, solid and dashed · drag or WASD to pan, scroll to zoom",
     spacing: 175,
     columns: [
       { title: "line(width)", samples: ["w: 2", "w: 6", "w: 12", "w: 24"] },
@@ -699,7 +699,7 @@ export function buildScene2D(
 
 /** The twelve bevy 2D primitives, filled in one row and outlined in the next. */
 function shapes2D(recorder: FrameRecorder): void {
-  heading(recorder, "2D Shapes", "filled row, ring row · drag to pan, scroll to zoom");
+  heading(recorder, "2D Shapes", "filled row, ring row · drag or WASD to pan, scroll to zoom");
   const d2 = recorder.d2;
   const columns = 12;
   const spacing = 100;
@@ -761,7 +761,7 @@ function drawShape(d2: FrameRecorder2D, shape: number, center: [number, number],
 
 /** bevy's `2d_gizmos` example, rebuilt with the stroke and shape primitives. */
 function gizmos2D(recorder: FrameRecorder, time: number): void {
-  heading(recorder, "2D Gizmos", "strokes and outlined shapes · drag to pan, scroll to zoom");
+  heading(recorder, "2D Gizmos", "strokes and outlined shapes · drag or WASD to pan, scroll to zoom");
   const d2 = recorder.d2;
 
   // Background grid, drawn first so the strokes sit on top of it.

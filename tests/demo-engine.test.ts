@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backgroundToHex, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
+import { backgroundToHex, camera2DKeyPan, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
 import { orbitBasis, orbitEye } from "../src/demo-camera.js";
 import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, SCENE_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
 
@@ -23,6 +23,37 @@ describe("hexToRgb", () => {
     for (const bad of ["", "#", "#12", "#12345", "12g45f", "#1234567", "rgb(0,0,0)"]) {
       expect(hexToRgb(bad)).toBeUndefined();
     }
+  });
+});
+
+describe("2D keyboard pan", () => {
+  it("maps WASD to the world2d axes", () => {
+    expect(camera2DKeyPan(new Set(), 1, 0.5, 1)).toEqual([0, 0]);
+    const w = camera2DKeyPan(new Set(["w"]), 1, 0.5, 1);
+    expect(w[0]).toBe(0);
+    expect(w[1]).toBeGreaterThan(0);
+    const s = camera2DKeyPan(new Set(["s"]), 1, 0.5, 1);
+    expect(s[1]).toBeLessThan(0);
+    const d = camera2DKeyPan(new Set(["d"]), 1, 0.5, 1);
+    expect(d[0]).toBeGreaterThan(0);
+    expect(d[1]).toBe(0);
+    const a = camera2DKeyPan(new Set(["a"]), 1, 0.5, 1);
+    expect(a[0]).toBeLessThan(0);
+  });
+
+  it("normalises diagonals and scales with zoom, time and pixel ratio", () => {
+    const single = camera2DKeyPan(new Set(["w"]), 1, 0.5, 1);
+    const diagonal = camera2DKeyPan(new Set(["w", "d"]), 1, 0.5, 1);
+    expect(Math.hypot(diagonal[0], diagonal[1])).toBeCloseTo(Math.hypot(single[0], single[1]), 12);
+    // A larger zoom shows less world per pixel, so the same on-screen speed covers fewer units.
+    const zoomed = camera2DKeyPan(new Set(["w"]), 2, 0.5, 1);
+    expect(zoomed[1] * 2).toBeCloseTo(single[1], 12);
+    const longer = camera2DKeyPan(new Set(["w"]), 1, 1, 1);
+    expect(longer[1]).toBeCloseTo(single[1] * 2, 12);
+    // `zoom` is physical pixels per world unit, so a HiDPI frame needs the larger step.
+    const hdpi = camera2DKeyPan(new Set(["w"]), 1, 0.5, 2);
+    expect(hdpi[1]).toBeCloseTo(single[1] * 2, 12);
+    expect(camera2DKeyPan(new Set(["w"]), 1, 0, 1)).toEqual([0, 0]);
   });
 });
 
