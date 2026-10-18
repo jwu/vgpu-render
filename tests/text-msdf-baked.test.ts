@@ -8,7 +8,9 @@ import type { TextFontSource } from "../src/gpu-text-3d.js";
 import { decodeBase64Bytes } from "../src/text-font.js";
 import { BakedMsdfRasterizer } from "../src/text-msdf-baked.js";
 import { OutlineGlyphRasterizer } from "../src/text-msdf-font.js";
+import { resolveFontFace } from "../src/text-layout.js";
 
+const TEST_FACE = resolveFontFace({ family: "test" });
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const WIDTH = 128;
 const HEIGHT = 64;
@@ -53,8 +55,8 @@ test("the prebaked atlas decompresses into a page", async () => {
 test("metrics scale with the requested font size", async () => {
   const font = new BakedMsdfRasterizer();
   await font.load();
-  const small = font.glyphMetrics("M", "test", 24);
-  const large = font.glyphMetrics("M", "test", 48);
+  const small = font.glyphMetrics("M", TEST_FACE, 24);
+  const large = font.glyphMetrics("M", TEST_FACE, 48);
   expect(large.advance).toBeCloseTo(small.advance * 2, 3);
   expect(large.bearingTop).toBeCloseTo(small.bearingTop * 2, 3);
 });
@@ -63,8 +65,8 @@ test("agrees with the on-demand encoder", async () => {
   const baked = new BakedMsdfRasterizer();
   await baked.load();
   const live = new OutlineGlyphRasterizer();
-  const fromBake = baked.glyphMetrics("M", "test", 48);
-  const fromLive = live.glyphMetrics("M", "test", 48);
+  const fromBake = baked.glyphMetrics("M", TEST_FACE, 48);
+  const fromLive = live.glyphMetrics("M", TEST_FACE, 48);
   expect(fromBake.advance).toBeCloseTo(fromLive.advance, 3);
   expect(fromBake.bearingTop).toBeCloseTo(fromLive.bearingTop, 2);
   // The bake quantises ink boxes to whole texels at 24 px, so a sub-texel difference is expected —
@@ -75,8 +77,8 @@ test("agrees with the on-demand encoder", async () => {
 test("has nothing for characters outside the baked set", async () => {
   const font = new BakedMsdfRasterizer();
   await font.load();
-  expect(font.rasterize("中", "test", 24)).toBeUndefined();
-  expect(font.rasterize(" ", "test", 24)).toBeUndefined();
+  expect(font.rasterize("中", TEST_FACE, 24)).toBeUndefined();
+  expect(font.rasterize(" ", TEST_FACE, 24)).toBeUndefined();
 });
 
 test("draws the same block as the on-demand encoder", async () => {

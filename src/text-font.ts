@@ -16,7 +16,7 @@
 
 import { FIRA_MONO_MEDIUM_SUBSET_BASE64, FIRA_MONO_MEDIUM_SUBSET_TTF_BASE64 } from "./assets/fira-mono-medium-subset.js";
 import { coverageToSdf, DEFAULT_SDF_RANGE } from "./text-sdf.js";
-import type { GlyphMetrics, TextMeasurer, VerticalMetrics } from "./text-layout.js";
+import { fontFaceKey, type FontFace, type GlyphMetrics, type TextMeasurer, type VerticalMetrics } from "./text-layout.js";
 
 /**
  * How a glyph is stored in the atlas, and therefore how the shader has to decode it.
@@ -56,6 +56,46 @@ export function decodeBase64Bytes(base64: string): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+/** One inlined face of a multi-weight family: the weight it was built at, plus its WOFF2 bytes. */
+export type EmbeddedFontFace = {
+  readonly weight: number;
+  /** Base64 WOFF2, so the payload stays plain text and every toolchain can read it. */
+  readonly woff2Base64: string;
+};
+
+const registeredFamilies = new Map<string, Promise<void>>();
+
+/**
+ * Registers a family whose weights are separate faces, each carrying its own `weight` descriptor.
+ *
+ * This is the only way to get more than one drawn weight out of Canvas2D: the font shorthand carries a
+ * single synthesised bold step, and `font-variation-settings` does not exist there, but the browser
+ * does select a face by the weight it was registered with. Registering the same family once per
+ * weight therefore turns `weight: 700` into a real bold face instead of an emboldened regular one.
+ *
+ * Idempotent per family, like `loadDefaultFont`, and browser-only.
+ */
+export function loadFontFaces(family: string, faces: readonly EmbeddedFontFace[]): Promise<void> {
+  const existing = registeredFamilies.get(family);
+  if (existing !== undefined) return existing;
+  const registration = registerFontFaces(family, faces);
+  registeredFamilies.set(family, registration);
+  return registration;
+}
+
+async function registerFontFaces(family: string, faces: readonly EmbeddedFontFace[]): Promise<void> {
+  const fonts = typeof document === "undefined" ? undefined : document.fonts;
+  if (fonts === undefined || typeof FontFace === "undefined") {
+    throw new Error("registering a font family requires a browser environment");
+  }
+  const loaded = faces.map(async (face) => {
+    const definition = new FontFace(family, decodeBase64Bytes(face.woff2Base64), { weight: String(face.weight) });
+    await definition.load();
+    return definition;
+  });
+  for (const definition of await Promise.all(loaded)) fonts.add(definition);
 }
 
 /** Decodes the inlined WOFF2 bytes of the bundled font, which is what `FontFace` takes. */
@@ -148,15 +188,44 @@ export interface GlyphRasterizer {
    */
   readonly dynamicRaster?: boolean;
   /**
+   * Cache-key part for one face. The atlas keys glyphs by this plus the raster size, so a source that
+   * cannot change a face' axes reports just the parts it honours.
+   *
+   * The default keys on every axis (`fontFaceKey`). A source holding one fixed face — a prebaked page
+   * or a single parsed `opentype.js` buffer — overrides it so a weight the source cannot rasterise
+   * does not multiply identical atlas entries.
+   */
+  readonly faceKey?: (face: FontFace) => string;
+  /**
    * Returns `undefined` for characters with no ink, such as whitespace.
    *
    * `rasterSize` is the size in texels the glyph is rasterised at, which is *not* the layout font
    * size: the atlas asks for the size the glyph will cover on screen, so the same character stays
    * sharp at any font size while still being rasterised once per size rung.
    */
-  rasterize(character: string, fontFamily: string, rasterSize: number): RasterizedGlyph | undefined;
-  /** Vertical metrics for a `fontSize`-sized face of `fontFamily`. */
-  verticalMetrics(fontFamily: string, fontSize: number): VerticalMetrics;
+  rasterize(character: string, face: FontFace, rasterSize: number): RasterizedGlyph | undefined;
+  /** Vertical metrics for a `fontSize`-sized instance of `face`. */
+  verticalMetrics(face: FontFace, fontSize: number): VerticalMetrics;
+}
+
+/**
+ * The CSS font shorthand that selects `face` at `fontSize`.
+ *
+ * Order follows the shorthand's grammar — style, weight, stretch, size, family — because Canvas2D
+ * parses the value as one. Two of the axes are conditional:
+ *
+ * - `font-stretch` keywords are only kept by the parser when the face has a `wdth` axis. A static
+ *   face drops the keyword and draws every stop identically, which is why the bundled subset cannot
+ *   show a `FontWidth` difference at all.
+ * - `italic` is the only slant Canvas2D keeps; `oblique <angle>` reads back as plain `italic`.
+ *
+ * A weight the loaded face does not carry is synthesised by the browser (one emboldened step, which
+ * keeps the advance), so `weight` at least changes what is drawn for the bundled static face.
+ */
+export function canvasFontString(face: FontFace, fontSize: number): string {
+  const style = face.style === "italic" ? "italic " : "";
+  const stretch = face.width === "normal" ? "" : `${face.width} `;
+  return `${style}${face.weight} ${stretch}${fontSize}px "${face.family}"`;
 }
 
 /** Encodings Canvas2D coverage can produce directly. `msdf` needs outlines, not a mask. */
@@ -212,16 +281,16 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return this.#surface;
   }
 
-  #font(fontFamily: string, fontSize: number): string {
-    return `${fontSize}px "${fontFamily}"`;
+  #font(face: FontFace, fontSize: number): string {
+    return canvasFontString(face, fontSize);
   }
 
-  verticalMetrics(fontFamily: string, fontSize: number): VerticalMetrics {
-    const key = `${fontFamily}|${fontSize}`;
+  verticalMetrics(face: FontFace, fontSize: number): VerticalMetrics {
+    const key = `${fontFaceKey(face)}|${fontSize}`;
     const cached = this.#vertical.get(key);
     if (cached !== undefined) return cached;
     const context = this.#ensureSurface().context;
-    context.font = this.#font(fontFamily, fontSize);
+    context.font = this.#font(face, fontSize);
     const metrics = context.measureText("M");
     const ascent = metrics.fontBoundingBoxAscent > 0 ? metrics.fontBoundingBoxAscent : fontSize * FALLBACK_ASCENT_RATIO;
     const descent = metrics.fontBoundingBoxDescent > 0 ? metrics.fontBoundingBoxDescent : fontSize * FALLBACK_DESCENT_RATIO;
@@ -230,12 +299,12 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  glyphMetrics(character: string, fontFamily: string, fontSize: number): GlyphMetrics {
-    const key = `${fontFamily}|${fontSize}|${character}`;
+  glyphMetrics(character: string, face: FontFace, fontSize: number): GlyphMetrics {
+    const key = `${fontFaceKey(face)}|${fontSize}|${character}`;
     const cached = this.#metrics.get(key);
     if (cached !== undefined) return cached;
     const context = this.#ensureSurface().context;
-    context.font = this.#font(fontFamily, fontSize);
+    context.font = this.#font(face, fontSize);
     const metrics = context.measureText(character);
     const bearingLeft = -metrics.actualBoundingBoxLeft;
     const value: GlyphMetrics = {
@@ -249,10 +318,10 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  rasterize(character: string, fontFamily: string, rasterSize: number): RasterizedGlyph | undefined {
+  rasterize(character: string, face: FontFace, rasterSize: number): RasterizedGlyph | undefined {
     // The raster size *is* the face size here: `measureText` and the fill both work in the texels the
     // atlas will store, and the layout's own measurements never pass through this path.
-    const glyph = this.glyphMetrics(character, fontFamily, rasterSize);
+    const glyph = this.glyphMetrics(character, face, rasterSize);
     if (!(glyph.width > 0) || !(glyph.height > 0)) return undefined;
     // The ink box is fractional; the mask rounds up so no edge pixel is lost.
     const width = Math.max(1, Math.ceil(glyph.width));
@@ -263,7 +332,7 @@ export class CanvasGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
       canvas.height = Math.max(canvas.height, height);
     }
     context.clearRect(0, 0, width, height);
-    context.font = this.#font(fontFamily, rasterSize);
+    context.font = this.#font(face, rasterSize);
     context.textAlign = "left";
     context.textBaseline = "alphabetic";
     context.fillStyle = "#fff";

@@ -16,7 +16,7 @@ import type { Font } from "opentype.js";
 import { decodeEmbeddedTrueTypeFont, type GlyphRasterizer, type RasterizedGlyph } from "./text-font.js";
 import { msdfFromOutline, type OutlineSegment, type Point } from "./text-msdf.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";
-import type { GlyphMetrics, TextMeasurer, VerticalMetrics } from "./text-layout.js";
+import type { FontFace, GlyphMetrics, TextMeasurer, VerticalMetrics } from "./text-layout.js";
 
 /** The subset of `opentype.js`'s path commands this source understands. */
 type OutlineCommand =
@@ -143,7 +143,14 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
   }
 
-  verticalMetrics(_fontFamily: string, fontSize: number): VerticalMetrics {
+  /**
+   * This source holds one parsed buffer, so a weight, width or slant it was not built with cannot
+   * change the outlines it returns. Keying on the family alone keeps the atlas from caching the same
+   * glyph once per axis value.
+   */
+  readonly faceKey = (face: FontFace): string => face.family;
+
+  verticalMetrics(_face: FontFace, fontSize: number): VerticalMetrics {
     const cached = this.#vertical.get(String(fontSize));
     if (cached !== undefined) return cached;
     const scale = this.#scale(fontSize);
@@ -152,7 +159,7 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  glyphMetrics(character: string, _fontFamily: string, fontSize: number): GlyphMetrics {
+  glyphMetrics(character: string, _face: FontFace, fontSize: number): GlyphMetrics {
     const key = `${fontSize}|${character}`;
     const cached = this.#metrics.get(key);
     if (cached !== undefined) return cached;
@@ -169,7 +176,7 @@ export class OutlineGlyphRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  rasterize(character: string, _fontFamily: string, rasterSize: number): RasterizedGlyph | undefined {
+  rasterize(character: string, _face: FontFace, rasterSize: number): RasterizedGlyph | undefined {
     const ink = this.#inkBox(character, rasterSize);
     if (!(ink.width > 0) || !(ink.height > 0)) return undefined;
     const width = Math.max(1, Math.ceil(ink.width));

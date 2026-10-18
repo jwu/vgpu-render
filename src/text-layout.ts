@@ -44,12 +44,100 @@ export type GlyphMetrics = {
   readonly bearingTop: number;
 };
 
+/**
+ * bevy's `FontStyle`, minus `Oblique(angle)`.
+ *
+ * Canvas2D accepts the `italic` keyword in its font shorthand and silently drops the slant angle —
+ * `oblique 14deg` reads back as `italic` — so an oblique angle could not be honoured and is left out
+ * rather than accepted and ignored. A face without an italic face is slanted by the browser.
+ */
+export type TextFontStyle = "normal" | "italic";
+
+/**
+ * bevy's `FontWidth` stops, spelled as the CSS `font-stretch` keywords Canvas2D understands.
+ *
+ * bevy takes a percentage (`FontWidth::SEMI_CONDENSED` is 87.5), but Canvas2D rejects a percentage in
+ * the font shorthand and only accepts these nine keywords. The axis is inert unless the face actually
+ * carries a `wdth` axis: a static face like the bundled subset keeps the keyword out of its resolved
+ * font, so every stop draws the same width there.
+ */
+export type TextFontWidth =
+  | "ultra-condensed"
+  | "extra-condensed"
+  | "condensed"
+  | "semi-condensed"
+  | "normal"
+  | "semi-expanded"
+  | "expanded"
+  | "extra-expanded"
+  | "ultra-expanded";
+
+/** Every `FontWidth` stop, in bevy's order. */
+export const TEXT_FONT_WIDTHS: readonly TextFontWidth[] = [
+  "ultra-condensed",
+  "extra-condensed",
+  "condensed",
+  "semi-condensed",
+  "normal",
+  "semi-expanded",
+  "expanded",
+  "extra-expanded",
+  "ultra-expanded",
+];
+
+/** Every `FontStyle` variant this implementation can honour. */
+export const TEXT_FONT_STYLES: readonly TextFontStyle[] = ["normal", "italic"];
+
+/** bevy's `FontWeight::NORMAL`, and the value the CSS font shorthand defaults to. */
+export const DEFAULT_FONT_WEIGHT = 400;
+
+/** bevy's `FontWeight` range, 1 to 1000. */
+export const MIN_FONT_WEIGHT = 1;
+export const MAX_FONT_WEIGHT = 1000;
+
+/**
+ * One face request: everything that decides which glyphs a character rasterises to.
+ *
+ * This is the unit the glyph atlas keys on, so two blocks that differ only in weight cannot share a
+ * rasterised glyph. A source with a single fixed face reports the parts it cannot change through
+ * `GlyphRasterizer.faceKey`.
+ */
+export type FontFace = {
+  readonly family: string;
+  readonly weight: number;
+  readonly style: TextFontStyle;
+  readonly width: TextFontWidth;
+};
+
+/** A face with the axes left optional, which is how callers and spans express one. */
+export type FontFaceOptions = {
+  readonly family: string;
+  readonly weight?: number | undefined;
+  readonly style?: TextFontStyle | undefined;
+  readonly width?: TextFontWidth | undefined;
+};
+
+/** Folds a face's optional axes into the complete request the measurer and the atlas take. */
+export function resolveFontFace(options: FontFaceOptions): FontFace {
+  return {
+    family: options.family,
+    weight: options.weight ?? DEFAULT_FONT_WEIGHT,
+    style: options.style ?? "normal",
+    width: options.width ?? "normal",
+  };
+}
+
+/** Every field that can change which glyphs are rasterised, joined into one cache key. */
+export function fontFaceKey(face: FontFace): string {
+  return `${face.family}|${face.weight}|${face.width}|${face.style}`;
+}
+
 /** Source of glyph metrics. The browser implementation measures through Canvas2D. */
 export interface TextMeasurer {
-  /** Vertical metrics for a `fontSize`-sized face of `fontFamily`. */
-  verticalMetrics(fontFamily: string, fontSize: number): VerticalMetrics;
+  /** Vertical metrics for a `fontSize`-sized instance of `face`. */
+  verticalMetrics(face: FontFace, fontSize: number): VerticalMetrics;
   /** Metrics for one character. Whitespace returns a zero-size ink box. */
-  glyphMetrics(character: string, fontFamily: string, fontSize: number): GlyphMetrics;
+  glyphMetrics(character: string, face: FontFace, fontSize: number): GlyphMetrics;
 }
 
 /** Reference `Justify`. `start`/`end` resolve to left/right in this LTR-only layout. */
@@ -99,6 +187,9 @@ export type TextSpanInput = {
   readonly color?: Rgba;
   readonly fontSize?: number;
   readonly fontFamily?: string;
+  readonly weight?: number;
+  readonly style?: TextFontStyle;
+  readonly width?: TextFontWidth;
 };
 
 /** bevy's `LineHeight` default, `RelativeToFont(1.2)`. */
@@ -108,6 +199,12 @@ export type TextLayoutOptions = {
   readonly color: Rgba;
   readonly fontSize: number;
   readonly fontFamily: string;
+  /** Block default for `FontFace.weight`; spans override it. */
+  readonly weight?: number | undefined;
+  /** Block default for `FontFace.style`; spans override it. */
+  readonly style?: TextFontStyle | undefined;
+  /** Block default for `FontFace.width`; spans override it. */
+  readonly width?: TextFontWidth | undefined;
   /**
    * Absolute line height in layout units, bevy's `LineHeight::Px`. When omitted the line height
    * is `lineHeightScale` times the line's own largest font size, which is bevy's
@@ -146,13 +243,15 @@ type LaidOutLine = {
   readonly fullAdvance: number;
   /** Largest font size on the line; `0` only for a line with no characters at all. */
   readonly fontSize: number;
+  /** The face that largest font size was set in, which is whose line box the line takes. */
+  readonly face: FontFace | undefined;
   readonly isEmpty: boolean;
 };
 
 /** One laid-out glyph, ready to become an instance once its atlas rectangle is known. */
 export type PositionedGlyph = {
   readonly character: string;
-  readonly fontFamily: string;
+  readonly face: FontFace;
   readonly fontSize: number;
   readonly color: Rgba;
   /** Ink box centre relative to the block's anchor point, y down. */
@@ -170,7 +269,7 @@ export type TextLayoutResult = {
 
 type StyledCharacter = {
   readonly character: string;
-  readonly fontFamily: string;
+  readonly face: FontFace;
   readonly fontSize: number;
   readonly color: Rgba;
   readonly advance: number;
@@ -293,13 +392,21 @@ function measureLine(characters: readonly StyledCharacter[], letterSpacing: numb
   while (end > 0 && content[end - 1]!.isSpace) end--;
 
   let fontSize = 0;
-  for (const character of content) fontSize = Math.max(fontSize, character.fontSize);
+  let face: FontFace | undefined;
+  // The line box follows the line's own largest run, so the face recorded here is that run's.
+  for (const character of content) {
+    if (character.fontSize > fontSize) {
+      fontSize = character.fontSize;
+      face = character.face;
+    }
+  }
 
   return {
     characters: content.slice(0, end),
     advance: runWidth(content.slice(0, end), letterSpacing),
     fullAdvance: runWidth(content, letterSpacing),
     fontSize,
+    face,
     isEmpty: content.length === 0,
   };
 }
@@ -396,20 +503,31 @@ export function layoutText(
   measurer: TextMeasurer,
 ): TextLayoutResult {
   const items: StyledCharacter[] = [];
+  const blockFace = resolveFontFace({
+    family: options.fontFamily,
+    weight: options.weight,
+    style: options.style,
+    width: options.width,
+  });
   for (const span of spans) {
     const fontSize = span.fontSize ?? options.fontSize;
-    const fontFamily = span.fontFamily ?? options.fontFamily;
+    const face = resolveFontFace({
+      family: span.fontFamily ?? options.fontFamily,
+      weight: span.weight ?? options.weight,
+      style: span.style ?? options.style,
+      width: span.width ?? options.width,
+    });
     const color = span.color ?? options.color;
     // Iterating the string yields code points, so surrogate pairs stay whole.
     for (const character of span.text) {
       if (character === "\n") {
-        items.push({ character, fontFamily, fontSize, color, advance: 0, width: 0, height: 0, bearingLeft: 0, bearingTop: 0, isSpace: false });
+        items.push({ character, face, fontSize, color, advance: 0, width: 0, height: 0, bearingLeft: 0, bearingTop: 0, isSpace: false });
         continue;
       }
-      const metrics = measurer.glyphMetrics(character, fontFamily, fontSize);
+      const metrics = measurer.glyphMetrics(character, face, fontSize);
       items.push({
         character,
-        fontFamily,
+        face,
         fontSize,
         color,
         advance: metrics.advance,
@@ -430,7 +548,7 @@ export function layoutText(
   // instead of being held to the block's default size.
   const boxes = lines.map((line) => {
     const fontSize = line.fontSize > 0 ? line.fontSize : options.fontSize;
-    const base = measurer.verticalMetrics(options.fontFamily, fontSize);
+    const base = measurer.verticalMetrics(line.face ?? blockFace, fontSize);
     const height = options.lineHeight ?? (options.lineHeightScale ?? DEFAULT_LINE_HEIGHT_SCALE) * fontSize;
     return { base, height, halfLeading: (height - (base.ascent + base.descent)) / 2 };
   });
@@ -470,7 +588,7 @@ export function layoutText(
       if (character.width > 0 && character.height > 0) {
         glyphs.push({
           character: character.character,
-          fontFamily: character.fontFamily,
+          face: character.face,
           fontSize: character.fontSize,
           color: character.color,
           center: [offsetX + penX + character.bearingLeft + character.width / 2, offsetY + baseline + character.bearingTop + character.height / 2],

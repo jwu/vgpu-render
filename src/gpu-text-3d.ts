@@ -441,6 +441,9 @@ export class GpuText3D {
           color: command.color,
           fontSize: command.fontSize,
           fontFamily: command.fontFamily,
+          weight: command.weight,
+          style: command.style,
+          width: command.width,
           // A relative line height stays relative all the way to layout, where each line resolves it
           // against that line's own largest span; only an explicit one is absolute.
           ...(command.lineHeightScale === undefined
@@ -480,7 +483,7 @@ export class GpuText3D {
               glyph.fontSize,
             )
           : undefined;
-        const entry = this.#atlas.glyph(glyph.character, glyph.fontFamily, glyph.fontSize, rasterScale);
+        const entry = this.#atlas.glyph(glyph.character, glyph.face, glyph.fontSize, rasterScale);
         if (entry === undefined) continue;
         const id = this.#ids[index] ?? this.#addInstance(index);
         this.#glyphs.set(id, {

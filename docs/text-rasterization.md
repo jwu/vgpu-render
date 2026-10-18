@@ -23,7 +23,7 @@ bevy 的做法（`~/src/bevy@bevyengine`，0.20.0-dev）是 `FontAtlasKey` 带 `
 | 环节 | 实现 |
 | --- | --- |
 | 光栅尺寸 | `quantizeRasterPx(screenPx)` 把"该 block 在屏幕上的字形尺寸"抬到阶梯上的档位（`src/text-raster.ts`，步进 1.25×，6–256 px） |
-| 缓存键 | `family\|rasterPx\|character`（`src/text-atlas.ts` 的 `GlyphAtlas.glyph`）——**档位**而不是字号进 key，所以不同字号落在同一档时共享一次光栅化 |
+| 缓存键 | `faceKey\|rasterPx\|character`（`src/text-atlas.ts` 的 `GlyphAtlas.glyph`），`faceKey` 默认是 `family\|weight\|width\|style`，固定 face 的字形源可以覆盖它——**档位**而不是字号进 key，所以不同字号落在同一档时共享一次光栅化 |
 | 屏幕尺寸来源 | `screen` 空间为 1（布局单位就是画布像素）；world 空间用 `pixelSize × viewProjection[1][1] × viewportSize.y × 0.5 / clip.w`，与线宽着色器同一套估算 |
 | 缩小 | 现成的 4 级 mip 链 + 距离场感知降采样（`downsampleDistancePage`） |
 | 采样 | coverage（bitmap）源对 mip 级别取 `floor`：阶梯最多过采样一档，此时把 level 0 与半分辨率级别混合正是"把已经对尺寸的笔画糊掉"的原因；真正缩小进入 mip 链后才用链 |

@@ -2,7 +2,20 @@ import { sampleCurve, type Curve3D, type CurveTransform } from "./curve.js";
 import { FrameRecorder2D, type FrameCommand2D } from "./frame-recorder-2d.js";
 import { gridLines } from "./geometry-generators.js";
 import { DEFAULT_FONT_FAMILY } from "./text-font.js";
-import { resolveTextAnchor, DEFAULT_LINE_HEIGHT_SCALE, type TextAnchor, type TextJustify, type TextLineBreak } from "./text-layout.js";
+import {
+  resolveTextAnchor,
+  DEFAULT_LINE_HEIGHT_SCALE,
+  DEFAULT_FONT_WEIGHT,
+  MAX_FONT_WEIGHT,
+  MIN_FONT_WEIGHT,
+  TEXT_FONT_STYLES,
+  TEXT_FONT_WIDTHS,
+  type TextAnchor,
+  type TextFontStyle,
+  type TextFontWidth,
+  type TextJustify,
+  type TextLineBreak,
+} from "./text-layout.js";
 
 export type Vec3 = readonly [number, number, number];
 export type Color = readonly [number, number, number, number];
@@ -134,6 +147,12 @@ export type TextSpanOptions = {
   readonly color?: Color;
   readonly fontSize?: number;
   readonly fontFamily?: string;
+  /** bevy `TextFont::weight`, 1 to 1000. Defaults to the block's, then to 400. */
+  readonly weight?: number;
+  /** bevy `TextFont::style`, minus `Oblique`: Canvas2D drops the slant angle. */
+  readonly style?: TextFontStyle;
+  /** bevy `TextFont::width`, as a `font-stretch` keyword. Inert unless the face has a `wdth` axis. */
+  readonly width?: TextFontWidth;
 };
 
 export type TextOptions = {
@@ -164,6 +183,21 @@ export type TextOptions = {
    */
   pixelSize?: number;
   fontFamily?: string;
+  /**
+   * bevy `TextFont::weight`, 1 to 1000, default `400`. A face that does not carry the weight is
+   * emboldened by the browser in one synthesised step, so the advance does not change.
+   */
+  weight?: number;
+  /**
+   * bevy `TextFont::style`. `italic` is the only slant Canvas2D honours: its shorthand drops the
+   * angle of `Oblique(a)`, so a synthesised slant is all an oblique could mean here.
+   */
+  style?: TextFontStyle;
+  /**
+   * bevy `TextFont::width`, spelled as a `font-stretch` keyword. Canvas2D keeps the keyword only when
+   * the face has a `wdth` axis; the bundled static subset has none, so every stop draws identically.
+   */
+  width?: TextFontWidth;
   /**
    * Absolute line height in pixels, bevy's `LineHeight::Px`. Exclusive with `lineHeightScale`;
    * omitting both leaves the line height at bevy's default, `RelativeToFont(1.2)`.
@@ -207,6 +241,9 @@ export type ResolvedTextSpan = {
   readonly color: Color;
   readonly fontSize: number;
   readonly fontFamily: string;
+  readonly weight: number;
+  readonly style: TextFontStyle;
+  readonly width: TextFontWidth;
 };
 
 export type TextCommand = {
@@ -219,6 +256,9 @@ export type TextCommand = {
   readonly fontSize: number;
   readonly pixelSize: number;
   readonly fontFamily: string;
+  readonly weight: number;
+  readonly style: TextFontStyle;
+  readonly width: TextFontWidth;
   /**
    * Resolved line height in pixels: the value a `LineHeight::Px` block asked for, or
    * `1.2 × fontSize` for the default, which `lineHeightScale` then marks as resolved per line.
@@ -271,6 +311,12 @@ export type TextDefaults = {
   fontSize?: number;
   pixelSize?: number;
   fontFamily?: string;
+  /** Default bevy `TextFont::weight`, 1 to 1000. */
+  weight?: number;
+  /** Default bevy `TextFont::style`. */
+  style?: TextFontStyle;
+  /** Default bevy `TextFont::width`, as a `font-stretch` keyword. */
+  width?: TextFontWidth;
   /**
    * Absolute line height in pixels, bevy's `LineHeight::Px`. Omitted means bevy's default,
    * `RelativeToFont(1.2)`: every line is 1.2 times its own largest span, so a line holding a
@@ -388,6 +434,27 @@ function textSpaceValue(value: string, name: string): TextSpace {
   return value as TextSpace;
 }
 
+function fontWeightValue(value: number, name: string): number {
+  if (!Number.isFinite(value) || value < MIN_FONT_WEIGHT || value > MAX_FONT_WEIGHT) {
+    throw new RangeError(`${name} must be between ${MIN_FONT_WEIGHT} and ${MAX_FONT_WEIGHT}`);
+  }
+  return value;
+}
+
+function textFontStyleValue(value: string, name: string): TextFontStyle {
+  if (!(TEXT_FONT_STYLES as readonly string[]).includes(value)) {
+    throw new RangeError(`${name} must be one of ${TEXT_FONT_STYLES.join(", ")}`);
+  }
+  return value as TextFontStyle;
+}
+
+function textFontWidthValue(value: string, name: string): TextFontWidth {
+  if (!(TEXT_FONT_WIDTHS as readonly string[]).includes(value)) {
+    throw new RangeError(`${name} must be one of ${TEXT_FONT_WIDTHS.join(", ")}`);
+  }
+  return value as TextFontWidth;
+}
+
 function textBounds(value: readonly [number, number], name: string): readonly [number, number] {
   if (value.length !== 2) throw new RangeError(`${name} must contain two values`);
   if (!(value[0] > 0) || !(value[1] > 0)) throw new RangeError(`${name} values must be greater than zero`);
@@ -404,6 +471,9 @@ function resolveTextSpans(
   defaults: ResolvedTextDefaults,
   baseFontSize: number,
   baseFontFamily: string,
+  baseWeight: number,
+  baseStyle: TextFontStyle,
+  baseWidth: TextFontWidth,
 ): readonly ResolvedTextSpan[] {
   const input: readonly TextSpanOptions[] = typeof text === "string" ? [{ text }] : text;
   const baseColor = color(options.color ?? defaults.color);
@@ -415,6 +485,10 @@ function resolveTextSpans(
       color: span.color === undefined ? baseColor : color(span.color),
       fontSize,
       fontFamily: span.fontFamily ?? baseFontFamily,
+      // A span overrides the block's face one axis at a time, like a nested `TextFont` component.
+      weight: span.weight === undefined ? baseWeight : fontWeightValue(span.weight, "span weight"),
+      style: span.style === undefined ? baseStyle : textFontStyleValue(span.style, "span style"),
+      width: span.width === undefined ? baseWidth : textFontWidthValue(span.width, "span width"),
     };
   });
 }
@@ -444,6 +518,9 @@ export type ResolvedTextDefaults = {
   fontSize: number | undefined;
   pixelSize: number | undefined;
   fontFamily: string | undefined;
+  weight: number | undefined;
+  style: TextFontStyle | undefined;
+  width: TextFontWidth | undefined;
   lineHeight: number | undefined;
   lineHeightScale: number | undefined;
   letterSpacing: number | undefined;
@@ -525,6 +602,9 @@ export function resolveFrameRecorderDefaults(defaults: FrameRecorderDefaults = {
       fontSize: textSize,
       pixelSize: textPixelSize,
       fontFamily: text.fontFamily,
+      weight: text.weight === undefined ? undefined : fontWeightValue(text.weight, "default text weight"),
+      style: text.style === undefined ? undefined : textFontStyleValue(text.style, "default text style"),
+      width: text.width === undefined ? undefined : textFontWidthValue(text.width, "default text width"),
       lineHeight: textLineHeight,
       lineHeightScale: textLineHeightScale,
       letterSpacing: text.letterSpacing === undefined ? undefined : finite(text.letterSpacing, "default text letterSpacing"),
@@ -812,6 +892,9 @@ export class FrameRecorder {
     if (lineHeight <= 0) throw new RangeError("lineHeight must be greater than zero");
     const letterSpacing = finite(options.letterSpacing ?? defaults.letterSpacing ?? 0, "letterSpacing");
     const fontFamily = options.fontFamily ?? defaults.fontFamily ?? DEFAULT_FONT_FAMILY;
+    const weight = fontWeightValue(options.weight ?? defaults.weight ?? DEFAULT_FONT_WEIGHT, "weight");
+    const style = textFontStyleValue(options.style ?? defaults.style ?? "normal", "style");
+    const width = textFontWidthValue(options.width ?? defaults.width ?? "normal", "width");
     const justify = options.justify ?? defaults.justify ?? "left";
     const lineBreak = options.lineBreak ?? defaults.lineBreak ?? "word";
     const anchor = options.anchor ?? defaults.anchor ?? "center";
@@ -831,13 +914,16 @@ export class FrameRecorder {
     this.#texts.push({
       kind: "text",
       position: vec3(position, "position"),
-      spans: resolveTextSpans(text, options, defaults, fontSize, fontFamily),
+      spans: resolveTextSpans(text, options, defaults, fontSize, fontFamily, weight, style, width),
       color: color(options.color ?? defaults.color),
       outlineWidth,
       outlineColor,
       fontSize,
       pixelSize,
       fontFamily,
+      weight,
+      style,
+      width,
       lineHeight,
       ...(lineHeightScale === undefined ? {} : { lineHeightScale }),
       letterSpacing,

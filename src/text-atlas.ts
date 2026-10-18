@@ -9,15 +9,17 @@
  * 2 px of padding; both choices are kept here, since the padding is what keeps linear
  * sampling from bleeding between neighbours.
  *
- * Unlike bevy the atlas is not keyed per font size: the cache key carries the family and size
- * instead, so one page set serves every size a frame happens to use. Glyphs are rasterised at
- * `rasterScale` times their font size, which decouples the atlas' detail from the logical layout
+ * Unlike bevy the atlas is not keyed per font size: the cache key carries the face and size
+ * instead, so one page set serves every size a frame happens to use. The face part comes from
+ * `GlyphRasterizer.faceKey`, which is how a source states which of the axes it can actually vary.
+ * Glyphs are rasterised at `rasterScale` times their font size, which decouples the atlas' detail from the logical layout
  * size — the same separation as resampling a font at a higher point size before scaling it down.
  * Pages grow on demand until `maxPages` is reached — the GPU renderer pins that at one page so a
  * single draw call covers the whole atlas — and a `revision` counter tells the renderer which of
  * them changed since the last upload.
  */
 
+import { fontFaceKey, type FontFace } from "./text-layout.js";
 import type { GlyphEncoding, GlyphRasterizer } from "./text-font.js";
 
 /** Page size and inter-glyph padding, matching bevy's minimum atlas and `GLYPH_ATLAS_PADDING`. */
@@ -176,20 +178,21 @@ export class GlyphAtlas {
    * exactly as it did. The renderer passes the size the block covers on screen instead, so the entry
    * that comes back is rasterised for the rung that face asked for.
    */
-  glyph(character: string, fontFamily: string, fontSize: number, rasterScale?: number): AtlasGlyph | undefined {
+  glyph(character: string, face: FontFace, fontSize: number, rasterScale?: number): AtlasGlyph | undefined {
     const scale = rasterScale !== undefined && rasterScale > 0 ? rasterScale : this.rasterScale;
     // The key carries the size the glyph was *rasterised* at rather than the layout font size: two
     // font sizes that land on the same rung share one rasterisation, which is what keeps a block
     // whose size changes every frame from rasterising the same character over and over.
     const rasterPx = Math.max(1, Math.round(fontSize * scale));
-    const key = `${fontFamily}|${rasterPx}|${character}`;
+    const faceKey = this.#rasterizer.faceKey?.(face) ?? fontFaceKey(face);
+    const key = `${faceKey}|${rasterPx}|${character}`;
     const cached = this.#glyphs.get(key);
     if (cached !== undefined) {
       cached.lastFrame = this.#frame;
       return cached;
     }
     if (this.#missing.has(key)) return undefined;
-    const rasterized = this.#rasterizer.rasterize(character, fontFamily, rasterPx);
+    const rasterized = this.#rasterizer.rasterize(character, face, rasterPx);
     if (rasterized === undefined) {
       this.#missing.add(key);
       return undefined;

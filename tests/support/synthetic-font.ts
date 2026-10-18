@@ -8,7 +8,7 @@
  * assertions depend on hinting and the browser's own rasteriser.
  */
 
-import type { GlyphMetrics, TextMeasurer, VerticalMetrics } from "../../src/text-layout.js";
+import type { FontFace, GlyphMetrics, TextMeasurer, VerticalMetrics } from "../../src/text-layout.js";
 import { encodeCoverage, type GlyphEncoding, type GlyphRasterizer, type RasterizedGlyph } from "../../src/text-font.js";
 import { DEFAULT_SDF_RANGE } from "../../src/text-sdf.js";
 
@@ -29,11 +29,11 @@ export class SyntheticFont implements GlyphRasterizer, TextMeasurer {
     this.rasterScale = rasterScale;
   }
 
-  verticalMetrics(_fontFamily: string, fontSize: number): VerticalMetrics {
+  verticalMetrics(_face: FontFace, fontSize: number): VerticalMetrics {
     return { ascent: fontSize * ASCENT_RATIO, descent: fontSize * DESCENT_RATIO };
   }
 
-  glyphMetrics(character: string, _fontFamily: string, fontSize: number): GlyphMetrics {
+  glyphMetrics(character: string, _face: FontFace, fontSize: number): GlyphMetrics {
     if (character === " " || character === "\t") {
       return { advance: fontSize * ADVANCE_RATIO, width: 0, height: 0, bearingLeft: 0, bearingTop: 0 };
     }
@@ -47,8 +47,8 @@ export class SyntheticFont implements GlyphRasterizer, TextMeasurer {
     };
   }
 
-  rasterize(character: string, fontFamily: string, fontSize: number): RasterizedGlyph | undefined {
-    const metrics = this.glyphMetrics(character, fontFamily, fontSize);
+  rasterize(character: string, face: FontFace, fontSize: number): RasterizedGlyph | undefined {
+    const metrics = this.glyphMetrics(character, face, fontSize);
     if (!(metrics.width > 0) || !(metrics.height > 0)) return undefined;
     const width = Math.max(1, Math.round(metrics.width));
     const height = Math.max(1, Math.round(metrics.height));

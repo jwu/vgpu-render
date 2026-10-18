@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { commandsToSegments, OutlineGlyphRasterizer } from "../src/text-msdf-font.js";
+import { resolveFontFace } from "../src/text-layout.js";
 
 describe("commandsToSegments", () => {
   test("carries control points through and closes an open contour", () => {
@@ -47,25 +48,27 @@ describe("commandsToSegments", () => {
   });
 });
 
+const TEST_FACE = resolveFontFace({ family: "test" });
+
 describe("OutlineGlyphRasterizer", () => {
   const font = new OutlineGlyphRasterizer();
 
   test("reads the bundled face and reports a monospaced advance", () => {
     expect(font.encoding).toBe("msdf");
     // Fira Mono advances 600 per 1000 upem, so every glyph covers 0.6 em.
-    expect(font.glyphMetrics("M", "test", 32).advance).toBeCloseTo(19.2, 3);
-    expect(font.glyphMetrics("i", "test", 32).advance).toBeCloseTo(19.2, 3);
+    expect(font.glyphMetrics("M", TEST_FACE, 32).advance).toBeCloseTo(19.2, 3);
+    expect(font.glyphMetrics("i", TEST_FACE, 32).advance).toBeCloseTo(19.2, 3);
   });
 
   test("takes its vertical metrics from the face", () => {
-    const metrics = font.verticalMetrics("test", 32);
+    const metrics = font.verticalMetrics(TEST_FACE, 32);
     expect(metrics.ascent).toBeGreaterThan(24);
     expect(metrics.ascent).toBeLessThan(40);
     expect(metrics.descent).toBeGreaterThan(0);
   });
 
   test("encodes a real glyph as a three-channel field", () => {
-    const glyph = font.rasterize("M", "test", 32);
+    const glyph = font.rasterize("M", TEST_FACE, 32);
     expect(glyph).toBeDefined();
     expect(glyph!.width).toBeGreaterThan(4);
     expect(glyph!.height).toBeGreaterThan(8);
@@ -79,6 +82,6 @@ describe("OutlineGlyphRasterizer", () => {
   });
 
   test("has nothing to encode for whitespace", () => {
-    expect(font.rasterize(" ", "test", 32)).toBeUndefined();
+    expect(font.rasterize(" ", TEST_FACE, 32)).toBeUndefined();
   });
 });

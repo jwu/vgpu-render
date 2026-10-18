@@ -25,7 +25,7 @@ import {
   BAKED_MSDF_PAGE_SIZE,
 } from "./assets/fira-mono-msdf-atlas.js";
 import { decodeBase64Bytes, type GlyphRasterizer, type RasterizedGlyph } from "./text-font.js";
-import type { GlyphMetrics, TextMeasurer, VerticalMetrics } from "./text-layout.js";
+import type { FontFace, GlyphMetrics, TextMeasurer, VerticalMetrics } from "./text-layout.js";
 
 /** `[u0, v0, u1, v1, bearingLeft, bearingTop, width, height, advance]` at the bake size. */
 type BakedGlyph = readonly [number, number, number, number, number, number, number, number, number];
@@ -65,12 +65,18 @@ export class BakedMsdfRasterizer implements GlyphRasterizer, TextMeasurer {
     this.#page = page;
   }
 
-  verticalMetrics(_fontFamily: string, fontSize: number): VerticalMetrics {
+  /**
+   * The page stores one face, so the axes cannot change a sliced glyph. Keying on the family alone
+   * keeps the atlas from packing the same texels once per requested weight.
+   */
+  readonly faceKey = (face: FontFace): string => face.family;
+
+  verticalMetrics(_face: FontFace, fontSize: number): VerticalMetrics {
     const scale = fontSize / BAKED_MSDF_BAKE_SIZE;
     return { ascent: BAKED_MSDF_ASCENT * scale, descent: BAKED_MSDF_DESCENT * scale };
   }
 
-  glyphMetrics(character: string, _fontFamily: string, fontSize: number): GlyphMetrics {
+  glyphMetrics(character: string, _face: FontFace, fontSize: number): GlyphMetrics {
     const key = `${fontSize}|${character}`;
     const cached = this.#metrics.get(key);
     if (cached !== undefined) return cached;
@@ -89,7 +95,7 @@ export class BakedMsdfRasterizer implements GlyphRasterizer, TextMeasurer {
     return value;
   }
 
-  rasterize(character: string, fontFamily: string, fontSize: number): RasterizedGlyph | undefined {
+  rasterize(character: string, face: FontFace, fontSize: number): RasterizedGlyph | undefined {
     const page = this.#page;
     if (page === undefined) throw new Error("BakedMsdfRasterizer.load() must resolve before glyphs are requested");
     const baked = bakedGlyph(character);
@@ -114,7 +120,7 @@ export class BakedMsdfRasterizer implements GlyphRasterizer, TextMeasurer {
 
     // The texels stay at their baked size; only the placement scales with the requested font size.
     const scale = fontSize / BAKED_MSDF_BAKE_SIZE;
-    const metrics = this.glyphMetrics(character, fontFamily, fontSize);
+    const metrics = this.glyphMetrics(character, face, fontSize);
     return {
       width,
       height,

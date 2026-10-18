@@ -16,6 +16,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { GlyphAtlas } from "../src/text-atlas.js";
+import { resolveFontFace } from "../src/text-layout.js";
 import { OutlineGlyphRasterizer } from "../src/text-msdf-font.js";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -26,6 +27,7 @@ const BAKE_SIZE = 24;
 const PAGE_SIZE = 512;
 /** Matches `DEFAULT_FONT_FAMILY`; only used as the atlas cache key during the bake. */
 const FONT_FAMILY = "vgpu-render-fira-mono";
+const FACE = resolveFontFace({ family: FONT_FAMILY });
 const DISTANCE_RANGE = 4;
 
 /** The same blocks the inlined font subset covers. */
@@ -54,8 +56,8 @@ let baked = 0;
 for (const [low, high] of RANGES) {
   for (let code = low; code <= high; code++) {
     const character = String.fromCodePoint(code);
-    const metrics = rasterizer.glyphMetrics(character, FONT_FAMILY, BAKE_SIZE);
-    const entry = atlas.glyph(character, FONT_FAMILY, BAKE_SIZE);
+    const metrics = rasterizer.glyphMetrics(character, FACE, BAKE_SIZE);
+    const entry = atlas.glyph(character, FACE, BAKE_SIZE);
     // Whitespace has no ink box but still advances the pen, and layout is driven entirely by these
     // numbers: a character left out of the table would collapse the spaces between words.
     const uv = entry === undefined ? [0, 0, 0, 0] : entry.uv.map((value) => rounded(value, 6));
@@ -74,7 +76,7 @@ for (const [low, high] of RANGES) {
 const page = atlas.pages[0];
 if (page === undefined) throw new Error("the bake produced no atlas page");
 
-const vertical = rasterizer.verticalMetrics(FONT_FAMILY, BAKE_SIZE);
+const vertical = rasterizer.verticalMetrics(FACE, BAKE_SIZE);
 
 const compressed = gzipSync(page.data, { level: 9 });
 const base64 = compressed.toString("base64");
