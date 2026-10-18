@@ -10,7 +10,7 @@ import type { SceneContext } from "../shared/scene-context.js";
 import type { Vec2 } from "../../src/camera-2d.js";
 import type { Curve2D, CurvePoint2D, CurveTransform2D } from "../../src/curve.js";
 import { placeCurvePoint2D } from "../../src/curve.js";
-import { ACCENT, ACTION, COOL, FILL, HINT, RING, WARM, pageHeading, table2D } from "../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, FILL, HINT, RING, WARM, table2D } from "../shared/2d-page.js";
 
 /** Control points are authored in the 3D curve page's units and scaled up to `world2d`. */
 const UNIT = 100;
@@ -135,7 +135,6 @@ function drawControlPoints(d2: FrameDrawList2D, curve: Curve2D, transform: Curve
 }
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
-  pageHeading(drawList, "2d-curves");
   const { d2, shapeX, rowY, rows } = table2D(drawList, "2d-curves");
   const dashPhase = context.time * DASH_SPEED;
 

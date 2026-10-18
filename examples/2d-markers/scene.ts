@@ -6,7 +6,7 @@ import type { FrameDrawList } from "../../src/frame-draw-list.js";
 import type { SceneContext } from "../shared/scene-context.js";
 import type { FrameDrawList2D } from "../../src/frame-draw-list-2d.js";
 import type { Vec2 } from "../../src/camera-2d.js";
-import { ACCENT, ACTION, AXIS_X, AXIS_Y, COOL, cross, pageHeading, table2D } from "../shared/2d-page.js";
+import { ACCENT, ACTION, AXIS_X, AXIS_Y, COOL, cross, table2D } from "../shared/2d-page.js";
 
 /** Two-axis cross: x red, y green, matching the 3D axes. */
 function drawAxes(d2: FrameDrawList2D, origin: Vec2, length: number, width: number): void {
@@ -15,7 +15,6 @@ function drawAxes(d2: FrameDrawList2D, origin: Vec2, length: number, width: numb
 }
 
 export function draw(drawList: FrameDrawList, _context: SceneContext): void {
-  pageHeading(drawList, "2d-markers");
   const { d2, shapeX, rowY, rows } = table2D(drawList, "2d-markers");
   const crossSizes = [8, 16, 24, 32] as const;
   const pointSizes = [4, 8, 14, 22] as const;

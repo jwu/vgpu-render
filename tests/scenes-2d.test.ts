@@ -77,11 +77,6 @@ describe("2D pages", () => {
       const drawList = new FrameDrawList();
       buildScene2D(id, drawList, 0);
       const drawn = textOf(drawList);
-      // Shape pages carry no screen-space heading, matching the 3D matrix pages; their title lives
-      // in the gallery chrome instead of on the canvas.
-      if (!(id in SHAPE_PAGES)) {
-        expect(drawn, `${id} dropped its heading`).toContain(labels.title);
-      }
       for (const column of labels.columns) {
         expect(drawn, `${id} dropped the column title "${column.title}"`).toContain(column.title);
         for (const sample of column.samples) {

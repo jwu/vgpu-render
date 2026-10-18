@@ -17,11 +17,9 @@ import {
   HINT,
   RING,
   TITLE,
-  pageHeading,
 } from "../shared/2d-page.js";
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
-  pageHeading(drawList, "2d-spaces");
   const labels = LABELS_2D["2d-spaces"];
   if (labels === undefined) return;
   const { d2 } = drawList;

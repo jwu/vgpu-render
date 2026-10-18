@@ -26,18 +26,6 @@ export function withAlpha(color: Color, alpha: number): Color {
   return [color[0], color[1], color[2], alpha];
 }
 
-/** Page heading: a screen-space title and note, fixed to the top-left corner. */
-export function heading(drawList: FrameDrawList, title: string, note: string): void {
-  drawList.text([24, 16, 0], title, { space: "screen", fontSize: 17, anchor: "top-left", color: TITLE });
-  drawList.text([24, 38, 0], note, { space: "screen", fontSize: 12, anchor: "top-left", color: HINT });
-}
-
-/** Draws the heading of a matrix page from its label table. */
-export function pageHeading(drawList: FrameDrawList, id: string): void {
-  const labels = LABELS_2D[id];
-  if (labels !== undefined) heading(drawList, labels.title, labels.note);
-}
-
 export type Table2D = {
   readonly d2: FrameDrawList2D;
   readonly rows: number;

@@ -7,10 +7,9 @@
 
 import type { Color, FrameDrawList } from "../../src/frame-draw-list.js";
 import type { SceneContext } from "../shared/scene-context.js";
-import { ACTION, FILL, RING, pageHeading, table2D } from "../shared/2d-page.js";
+import { ACTION, FILL, RING, table2D } from "../shared/2d-page.js";
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
-  pageHeading(drawList, "2d-grid");
   const { d2, shapeX, rowY, rows } = table2D(drawList, "2d-grid");
 
   const widths = [1, 2, 4, 8] as const;

@@ -8,7 +8,7 @@
 import type { FrameDrawList } from "../../src/frame-draw-list.js";
 import type { Vec2 } from "../../src/camera-2d.js";
 import type { SceneContext } from "../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, pageHeading, table2D } from "../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, table2D } from "../shared/2d-page.js";
 
 const deg = Math.PI / 180;
 const BASE_ANGLE = -30 * deg;
@@ -25,7 +25,6 @@ const DASH_SPEED = 30;
 const along = (angle: number): Vec2 => [Math.cos(angle) * LENGTH, Math.sin(angle) * LENGTH];
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
-  pageHeading(drawList, "2d-arrows");
   const { d2, shapeX, rowY, rows } = table2D(drawList, "2d-arrows");
   const dashPhase = context.time * DASH_SPEED;
   const originX = (column: number): number => shapeX(column) - 40;

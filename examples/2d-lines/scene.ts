@@ -5,10 +5,9 @@
 import type { Color, FrameDrawList, LineJoint } from "../../src/frame-draw-list.js";
 import type { SceneContext } from "../shared/scene-context.js";
 import type { Vec2 } from "../../src/camera-2d.js";
-import { ACCENT, ACTION, COOL, FILL, RING, WARM, pageHeading, table2D } from "../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, FILL, RING, WARM, table2D } from "../shared/2d-page.js";
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
-  pageHeading(drawList, "2d-lines");
   const { d2, shapeX, rowY, rows } = table2D(drawList, "2d-lines");
   const widths = [2, 6, 12, 24] as const;
   const alphas = [0.25, 0.5, 0.75, 1] as const;
