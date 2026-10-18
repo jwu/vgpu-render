@@ -13,6 +13,7 @@
     "src/components/**",
     "src/lib/**",
     "src/text-reference.ts",
+    "src/assets/vgpu-sans-faces.ts",
     "src/source-scrub.ts",
     "src/vite-env.d.ts"
   ]

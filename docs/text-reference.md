@@ -132,3 +132,11 @@ bun scripts/compare-text-reference.ts [case ...]
   **这是用库时要注意的点**：要「sRGB 里看起来像 `#8cd5ff`」的效果，得自己解码成线性值。
 - **编码不在对照范围内。** bevy 只有 coverage 一种字形编码。本仓库的 `sdf` / `msdf` / outline
   没有 bevy 对应物，它们的取舍记在 `docs/visual-comparison.md` 与 README 的 Text 节。
+- **字体面（`weight` / `style` / `width`）不是 bevy 的等价物。** bevy 的 `TextFont` 由 parley 在
+  `wght` / `wdth` / `ital` 轴上实例化，字形本身就是不同的；本仓库走 Canvas2D，能力边界由实测确定：
+  未注册对应 face 时 `weight` 只会触发浏览器的一档**合成加粗**（阈值在 500–600 之间，700 与 900
+  相同，advance 不变），`width` 的 `font-stretch` 关键字只在 face 真有 `wdth` 轴时才被保留，
+  `style` 只支持 `italic`（`oblique <angle>` 的角度被简写丢弃）。Canvas2D 会按 face 的 weight
+  descriptor 选字体，所以 `loadFontFaces` 可以用同一 family 的多个静态实例换来**真实**的多档字重：
+  `text-font-query` 页面就是这么做的（8 个实例，200–900）。advance 不变意味着合成加粗不影响上面
+  那套布局对照；真实字重的实例会改变 advance，但它们只用于 gallery 页面，不参与 bevy 对照。

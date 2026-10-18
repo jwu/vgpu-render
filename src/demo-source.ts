@@ -21,11 +21,11 @@ export type SourceToken = {
 };
 
 const TOKEN_PATTERN =
-  /\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:import|from|const|new|true|false|undefined|solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode|fontSize|pixelSize|fontFamily|lineHeight|letterSpacing|justify|lineBreak|bounds|anchor|space|depthTest|layer)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\()/g;
+  /\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:import|from|const|new|true|false|undefined|solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode|fontSize|pixelSize|fontFamily|weight|style|lineHeight|letterSpacing|justify|lineBreak|bounds|anchor|space|depthTest|layer)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z_$][\w$]*(?=\s*\()/g;
 
 const KEYWORDS = /^(?:import|from|const|new)$/;
 const LITERALS = /^(?:true|false|undefined)$/;
-const PROPERTIES = /^(?:solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode|fontSize|pixelSize|fontFamily|lineHeight|letterSpacing|justify|lineBreak|bounds|anchor|space|depthTest|layer)$/;
+const PROPERTIES = /^(?:solid|width|color|dash|joint|headLength|headAngle|tolerance|widthMode|fontSize|pixelSize|fontFamily|weight|style|lineHeight|letterSpacing|justify|lineBreak|bounds|anchor|space|depthTest|layer)$/;
 
 function classify(token: string): SourceTokenKind {
   if (token.startsWith("//")) return "comment";
@@ -75,6 +75,7 @@ const SCENE_FUNCTIONS: Readonly<Record<string, string>> = {
   "text-layout": "textLayoutScene",
   "text-anchor": "textAnchorScene",
   "text-cjk": "textCjkScene",
+  "text-font-query": "textFontQueryScene",
   "2d-gizmos": "gizmos2D",
   "2d-shapes": "shapes2D",
   "2d-lines": "lines2D",

@@ -8,11 +8,13 @@
 
 import { effect, frame, init, sampler, surface, target } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
-import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, OutlineGlyphRasterizer, world2dProjection, type Camera2D, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
+import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameRecorder, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, loadFontFaces, OutlineGlyphRasterizer, world2dProjection, type Camera2D, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "./index.js";
 import { SCENE_EXAMPLES, type SceneExample } from "./scene-examples.js";
 import { buildScene } from "./scenes-3d.js";
 import { linearClearColor } from "./color-space.js";
 import { scaleScreenCommands } from "./screen-scale.js";
+import { MULTI_WEIGHT_SANS_FAMILY } from "./font-families.js";
+import { VGPU_SANS_FACES } from "./assets/vgpu-sans-faces.js";
 import {
   frameBounds,
   boundsOfPoints,
@@ -1221,6 +1223,12 @@ async function registerFont(): Promise<void> {
   } catch (error) {
     // Not fatal: Canvas2D falls back to another face and the scene still renders.
     console.warn("the bundled text font could not be registered", error);
+  }
+  try {
+    // The font-query page needs real weights, and Canvas2D only gets those from separate faces.
+    await loadFontFaces(MULTI_WEIGHT_SANS_FAMILY, VGPU_SANS_FACES);
+  } catch (error) {
+    console.warn("the multi-weight sans family could not be registered", error);
   }
 }
 

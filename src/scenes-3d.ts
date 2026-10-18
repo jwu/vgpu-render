@@ -2798,7 +2798,8 @@ export function buildScene(
     id === "text-world-zoom" ||
     id === "text-layout" ||
     id === "text-anchor" ||
-    id === "text-cjk";
+    id === "text-cjk" ||
+    id === "text-font-query";
   const selfAxes = screenTextPage || id === "index" || id === "grid" || id === "world_space_width";
   // index/grid/world_space_width draw their own translated origin axes (and
   // world_space_width needs world-space widths), so they opt out of the generic one.
@@ -2825,7 +2826,8 @@ export function buildScene(
     case "text-world-zoom":
     case "text-layout":
     case "text-anchor":
-    case "text-cjk": textScene(id, recorder); break;
+    case "text-cjk":
+    case "text-font-query": textScene(id, recorder); break;
     default: break;
   }
   const labelSpec = SCENE_LABEL_SPECS[id];

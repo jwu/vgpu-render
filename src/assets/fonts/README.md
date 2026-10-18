@@ -1,13 +1,23 @@
 # Bundled font
 
-The text renderer ships three artefacts derived from the same Fira Mono subset. All of them are
-inlined the way bevy inlines its own font with `include_bytes!`, so nothing is fetched at runtime.
+The text renderer ships three artefacts derived from the same Fira Mono subset, plus a gallery-only
+sans family. All of them are inlined the way bevy inlines its own font with `include_bytes!`, so
+nothing is fetched at runtime.
 
 | Artefact | Consumer | Produced by |
 | --- | --- | --- |
 | `fira-mono-medium-subset.woff2` | `FontFace`, which Canvas2D rasterises for the `bitmap` and `sdf` encodings | `fontTools.subset` |
 | `fira-mono-medium-subset.ttf` | `opentype.js`, which reads outlines for the on-demand `msdf` encoding | `fontTools.subset` |
 | `src/assets/fira-mono-msdf-atlas.ts` | `BakedMsdfRasterizer`, the prebaked `msdf` encoding | `bun scripts/bake-msdf-atlas.ts` |
+
+The gallery also ships a second family, used only by the `text-font-query` page:
+
+| Artefact | Consumer | Produced by |
+| --- | --- | --- |
+| `src/assets/vgpu-sans-faces.ts` | `loadFontFaces`, which registers eight faces under `vgpu-render-sans` | `bun scripts/build-font-faces.ts` |
+
+That one is **not** part of the library entry point — `demo-engine.ts` imports it, `tsconfig.build.json`
+excludes it — because a multi-weight family costs ~350 KiB of base64 and only one gallery page needs it.
 
 Two containers are needed because `opentype.js` reads glyph outlines and cannot decompress WOFF2.
 The generated TypeScript modules are plain base64 arrays with no bundler-specific import, so tests
@@ -48,6 +58,35 @@ U+2600-26FF  Miscellaneous Symbols
 WOFF2 is 19 KB, TrueType 43 KB. **No CJK coverage**: the bundled font cannot render Chinese labels,
 by design. Pass a different font to the text API if those are required — the Canvas2D encodings take
 any family the document has loaded, and `OutlineGlyphRasterizer` accepts any TrueType buffer.
+
+## Multi-weight sans family
+
+Canvas2D cannot read a variable font's axes, but it does select a face by the `weight` descriptor it was
+registered with. The `font-query` page therefore uses eight **static instances** of one variable font,
+registered under one family. `scripts/build-font-faces.ts` produces them:
+
+1. `fontTools.varLib.instancer` pins `wght` to 200/300/400/500/600/700/800/900.
+2. The `name` table is rewritten to `vgpu-render Sans`: the source is OFL with the reserved name
+   "Mona", which a modified copy may not keep.
+3. `fontTools.subset` keeps `U+0020-007E,U+00B7,U+2013-2014,U+2026` with `--no-hinting
+   --no-glyph-names`, and the WOFF2 is base64-inlined.
+
+| | |
+| --- | --- |
+| Source | `MonaSans-VariableFont.ttf` (`wght` 200–900, `wdth` 75–125) |
+| Upstream copy used | `~/src/bevy@bevyengine/assets/fonts/MonaSans-VariableFont.ttf` |
+| Licence | SIL Open Font License 1.1 — see `vgpu-sans-OFL.txt` |
+| Copyright | Copyright 2022 The Mona Sans Project Authors |
+
+There is no 100 (Thin) instance: the source starts at 200, so the page's weight column starts there
+too. The instances are static, so they carry no `wdth` axis — which is why the page's `width` column
+repeats one width and says so.
+
+```bash
+bun scripts/build-font-faces.ts
+```
+
+Set `MONA_SANS_SOURCE` to point at another checkout of the variable font.
 
 ## Regenerating
 

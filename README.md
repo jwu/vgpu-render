@@ -217,6 +217,34 @@ shaping pass adds it to each cluster's advance.
 World text is depth-tested but never depth-written, so geometry in front of it
 occludes it; `screen` text pins itself to the near plane and always wins.
 
+### Font face
+
+`weight` (1–1000, default `400`), `style` (`normal` or `italic`) and `width` (the nine
+`font-stretch` keywords) select the face a block is rasterised in, mirroring bevy's `TextFont`.
+They are block defaults, and a span overrides one axis of them at a time rather than replacing the
+whole face. The glyph atlas keys on all three, so two weights of one character cannot share texels.
+
+How much of that a browser can honour depends on the loaded face, and the limits are real:
+
+| option | what Canvas2D does |
+| --- | --- |
+| `weight` | A weight the loaded family does not carry is **synthesised** in one step (the threshold sits between 500 and 600), so `700` and `900` then look identical and the advance never changes. A variable font's real `wght` axis is not reachable — Canvas2D has no `font-variation-settings` — but the browser **does** pick a face by the weight it was registered with, so registering the same family once per weight gives real weights. |
+| `style` | `italic` is the only slant the font shorthand keeps; `oblique <angle>` reads back as plain `italic`, which is why bevy's `FontStyle::Oblique(a)` is not exposed. A face without an italic is slanted by the browser. |
+| `width` | The keyword only reaches the font when the face has a `wdth` axis. The bundled static subset has none, so every stop draws at normal width there. A percentage is rejected by the shorthand, so only the nine named stops exist here. |
+
+The bundled Fira Mono subset is a static Medium face, so out of the box `weight` only ever produces
+one synthesised step. `loadFontFaces(family, faces)` is the way out: it registers each entry as a face
+of `family` with its own `weight` descriptor, so `weight: 200` through `900` select genuinely different
+faces. The gallery does exactly that for the `text-font-query` page, which draws with eight instances
+of a variable font built by `bun scripts/build-font-faces.ts` (see
+`src/assets/fonts/README.md`). That is gallery-only payload: the library's own entry point does not
+carry it.
+
+A custom glyph source receives the resolved face — `{ family, weight, style, width }` — instead of a
+family string, because those are the fields the atlas keys on. A source that holds one fixed face (a
+prebaked page, one parsed font buffer) sets `faceKey` to the part it can honour, so a weight it cannot
+rasterise does not multiply identical atlas entries.
+
 ### Outline
 
 `outlineWidth` (in font pixels) rings every glyph in the block in `outlineColor`, which defaults to
