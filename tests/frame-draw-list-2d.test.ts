@@ -176,6 +176,49 @@ describe("FrameDrawList2D shapes", () => {
   });
 });
 
+describe("FrameDrawList2D grid", () => {
+  test("keeps interior lines by default and adds outer edges on request", () => {
+    const none = new FrameDrawList();
+    none.d2.grid([0, 0], [2, 2], [10, 10]);
+    expect(none.d2.lines).toHaveLength(2);
+
+    const x = new FrameDrawList();
+    x.d2.grid([0, 0], [2, 2], [10, 10], { outer: "x" });
+    expect(x.d2.lines).toHaveLength(4);
+
+    const both = new FrameDrawList();
+    both.d2.grid([0, 0], [2, 2], [10, 10], { outer: "xy" });
+    expect(both.d2.lines).toHaveLength(6);
+  });
+
+  test("rotates the grid around its centre", () => {
+    const frame = new FrameDrawList();
+    frame.d2.grid([0, 0], [1, 1], [10, 10], { outer: "xy", rotation: Math.PI / 2 });
+    expect(frame.d2.lines).toHaveLength(4);
+    expect(frame.d2.lines[0]).toMatchObject({ start: [5, -5], end: [5, 5] });
+  });
+
+  test("skews the line families", () => {
+    const frame = new FrameDrawList();
+    frame.d2.grid([0, 0], [1, 1], [10, 10], { outer: "xy", skew: [Math.PI / 4, 0] });
+    const [bottom, , diagonal] = frame.d2.lines;
+    expect(bottom!.start[0]).toBeCloseTo(-10);
+    expect(bottom!.start[1]).toBeCloseTo(-5);
+    expect(bottom!.end[1]).toBeCloseTo(-5);
+    expect(diagonal!.start[0]).toBeCloseTo(-10);
+    expect(diagonal!.start[1]).toBeCloseTo(-5);
+    expect(diagonal!.end[1]).toBeCloseTo(5);
+  });
+
+  test("rejects invalid grid parameters", () => {
+    const frame = new FrameDrawList();
+    expect(() => frame.d2.grid([0, 0], [0, 2], [10, 10])).toThrow("positive integers");
+    expect(() => frame.d2.grid([0, 0], [2, 2], [10, 10], { rotation: Number.NaN })).toThrow("rotation");
+    expect(() => frame.d2.grid([0, 0], [2, 2], [10, 10], { skew: [Infinity, 0] })).toThrow("skew x");
+    expect(() => frame.d2.grid([0, 0], [2, 2], [10, 10], { outer: "z" as never })).toThrow("grid outer");
+  });
+});
+
 describe("DebugDraw3D 2D layer", () => {
   test("finishes a frame containing 2D commands", () => {
     const debug = new DebugDraw3D({ defaultVisibleLayers: 3 });

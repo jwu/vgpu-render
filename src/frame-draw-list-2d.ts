@@ -11,6 +11,7 @@
  */
 
 import type { Space2D, Vec2 } from "./camera-2d.js";
+import { gridLines2D } from "./geometry-generators.js";
 import type {
   Color,
   LayerMask,
@@ -31,6 +32,16 @@ export type Line2DOptions = {
   /** Defaults to `world2d`; see `camera-2d.ts`. */
   space?: Space2D;
   layer?: LayerMask;
+};
+
+/** `grid` options: the 3D grid parameters in the XY plane, plus the line style. */
+export type Grid2DOptions = Line2DOptions & {
+  /** Anticlockwise rotation around the grid centre, in radians. */
+  rotation?: number;
+  /** Skew angles whose tangents shift the opposite family of lines. */
+  skew?: readonly [number, number];
+  /** Keep the x-axis or y-axis boundary lines (the 2D counterpart of 3D's x/z edges). */
+  outer?: "none" | "x" | "y" | "xy";
 };
 
 export type Point2DOptions = {
@@ -371,23 +382,24 @@ export class FrameDrawList2D {
    * Axis-aligned grid of lines, the 2D twin of `FrameDrawList.grid` and bevy's `grid_2d`: `cells`
    * are the cells per axis, so the drawn line count is one more on each side.
    */
-  grid(center: Vec2, cells: readonly [number, number], spacing: Vec2, options: Line2DOptions = {}): this {
+  grid(center: Vec2, cells: readonly [number, number], spacing: Vec2, options: Grid2DOptions = {}): this {
     this.#assertOpen();
+    const { rotation = 0, skew = [0, 0], outer = "none", ...lineOptions } = options;
     const [columns, rows] = cells;
     if (!Number.isInteger(columns) || !Number.isInteger(rows) || columns < 1 || rows < 1) {
       throw new RangeError("grid cells must be positive integers");
     }
     const [stepX, stepY] = positiveSize(spacing, "spacing");
     const [centerX, centerY] = vec2(center, "center");
-    const halfWidth = (columns * stepX) / 2;
-    const halfHeight = (rows * stepY) / 2;
-    for (let column = 0; column <= columns; column++) {
-      const x = centerX - halfWidth + column * stepX;
-      this.line([x, centerY - halfHeight], [x, centerY + halfHeight], options);
+    const angle = finite(rotation, "rotation");
+    const [skewX, skewY] = skew;
+    finite(skewX, "skew x");
+    finite(skewY, "skew y");
+    if (outer !== "none" && outer !== "x" && outer !== "y" && outer !== "xy") {
+      throw new RangeError('grid outer must be "none", "x", "y" or "xy"');
     }
-    for (let row = 0; row <= rows; row++) {
-      const y = centerY - halfHeight + row * stepY;
-      this.line([centerX - halfWidth, y], [centerX + halfWidth, y], options);
+    for (const [a, b] of gridLines2D([columns, rows], [stepX, stepY], [centerX, centerY], angle, [skewX, skewY], outer)) {
+      this.line(a, b, lineOptions);
     }
     return this;
   }

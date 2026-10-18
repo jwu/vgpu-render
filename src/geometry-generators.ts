@@ -1,8 +1,10 @@
+import type { Vec2 } from "./camera-2d.js";
 import type { Vec3 } from "./frame-draw-list.js";
 import { crossVector, normalizeVector, rotateAroundAxis, type CircleBasis } from "./vector-math.js";
 
 export type Triangle = readonly [Vec3, Vec3, Vec3];
 export type Segment = readonly [Vec3, Vec3];
+export type Segment2D = readonly [Vec2, Vec2];
 export type MeshData = { readonly triangles: readonly Triangle[]; readonly segments: readonly Segment[] };
 
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -523,6 +525,49 @@ export function gridLines(cells: readonly [number, number], spacing: readonly [n
   for (let xIndex = keepZ ? 0 : 1; xIndex < (keepZ ? cellX + 1 : cellX); xIndex++) {
     const from = plus(start, scale(dx, xIndex));
     segments.push([place(from), place(plus(from, scale(dz, cellZ)))]);
+  }
+  return segments;
+}
+
+/**
+ * 2D counterpart of `gridLines`: the same cell/skew/outer contract in the XY plane.
+ *
+ * `rotation` is one anticlockwise angle around the grid centre. `outer` keeps the x-axis
+ * boundary lines (`"x"`), the y-axis ones (`"y"`), or both (`"xy"`).
+ */
+export function gridLines2D(
+  cells: readonly [number, number],
+  spacing: readonly [number, number],
+  center: Vec2 = [0, 0],
+  rotation = 0,
+  skew: readonly [number, number] = [0, 0],
+  outer: "none" | "x" | "y" | "xy" = "none",
+): Segment2D[] {
+  const [cellX, cellY] = cells;
+  const [spacingX, spacingY] = spacing;
+  if (cellX <= 0 || cellY <= 0 || spacingX <= 0 || spacingY <= 0) return [];
+  const skewTan: readonly [number, number] = [Math.tan(skew[0]), Math.tan(skew[1])];
+  const dx: Vec2 = [spacingX, spacingX * skewTan[1]];
+  const dy: Vec2 = [spacingY * skewTan[0], spacingY];
+  const start: Vec2 = [-dx[0] * cellX * 0.5 - dy[0] * cellY * 0.5, -dx[1] * cellX * 0.5 - dy[1] * cellY * 0.5];
+  const cos = Math.cos(rotation);
+  const sin = Math.sin(rotation);
+  const place = (p: Vec2): Vec2 => [
+    center[0] + p[0] * cos - p[1] * sin,
+    center[1] + p[0] * sin + p[1] * cos,
+  ];
+  const plus = (a: Vec2, b: Vec2): Vec2 => [a[0] + b[0], a[1] + b[1]];
+  const scale = (v: Vec2, n: number): Vec2 => [v[0] * n, v[1] * n];
+  const keepX = outer === "x" || outer === "xy";
+  const keepY = outer === "y" || outer === "xy";
+  const segments: Segment2D[] = [];
+  for (let yIndex = keepX ? 0 : 1; yIndex < (keepX ? cellY + 1 : cellY); yIndex++) {
+    const from = plus(start, scale(dy, yIndex));
+    segments.push([place(from), place(plus(from, scale(dx, cellX)))]);
+  }
+  for (let xIndex = keepY ? 0 : 1; xIndex < (keepY ? cellX + 1 : cellX); xIndex++) {
+    const from = plus(start, scale(dx, xIndex));
+    segments.push([place(from), place(plus(from, scale(dy, cellY)))]);
   }
   return segments;
 }
