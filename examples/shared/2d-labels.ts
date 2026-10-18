@@ -116,12 +116,15 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   },
   "2d-grid": {
     title: "2D Grid",
-    note: "the grid primitive: cell count per column, line width per row, same extent throughout",
+    note: "grid · same width, cells, spacing, skew, outer, rotation and color parameters as the 3D grid",
     columns: [
-      { title: "2 x 2", samples: ["w: 1", "w: 2", "w: 4"] },
-      { title: "4 x 3", samples: ["w: 1", "w: 2", "w: 4"] },
-      { title: "8 x 6", samples: ["w: 1", "w: 2", "w: 4"] },
-      { title: "16 x 9", samples: ["w: 1", "w: 2", "w: 4"] },
+      { title: "grid(width)", samples: ["w: 1", "w: 2", "w: 4", "w: 8"] },
+      { title: "grid(cells)", samples: ["3 x 3", "4 x 3", "8 x 6", "16 x 9"] },
+      { title: "grid(spacing)", samples: ["10 x 10", "14 x 10", "20 x 12", "28 x 14"] },
+      { title: "grid(skew)", samples: ["none", "0.28 / 0.00", "-0.28 / 0.00", "0.28 / -0.18"] },
+      { title: "grid(outer)", samples: ["none", "x", "y", "xy"] },
+      { title: "grid(rotation)", samples: ["0°", "15°", "30°", "45°"] },
+      { title: "grid(color)", samples: ["base", "alpha", "color", "blue"] },
     ],
   },
 };

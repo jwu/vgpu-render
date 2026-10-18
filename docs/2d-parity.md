@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | `gizmos.line_2d` / `ray_2d` | `line` / `ray` | 宽度为像素；`widthMode: "world"` 随 zoom 缩放 |
 | `linestrip_2d` / `linestrip_gradient_2d` | `lineStrip` / `polyline` | 渐变只支持端点 `color` → `colorEnd` |
-| `grid_2d` | `grid` | 无 `outer_edges` 变体 |
+| `grid_2d` | `grid` | 扩展了 3D grid 的 `rotation` / `skew` / `outer`（x/y 边界），参数与 3D 对齐 |
 | `rect_2d` / `rounded_rect_2d` | `rect` / `roundedRect` | bevy gizmo 默认描边，这里默认填充，`fill: false` 得到描边 |
 | `circle_2d` / `ellipse_2d` | `circle` / `ellipse` | |
 | `arc_2d` | `arc` + `startAngle` / `sweep` | 未提供 `long/short_arc_2d_between` |
@@ -70,7 +70,7 @@
 | `2d-outlines` | 矩阵 | 六个图元的描边形态，每行一个 `strokeWidth` |
 | `2d-fill` | 矩阵 | 旋转、sweep、边数、capsule 长度作为行参数 |
 | `2d-spaces` | 矩阵 | `world2d` / `screen` 对照，以及 `widthMode` / `sizeMode` |
-| `2d-grid` | 矩阵 | grid 的 cell 数作为列、线宽作为行，四列覆盖同一尺度 |
+| `2d-grid` | 矩阵 | width、cells、spacing、skew、outer、rotation、color 各一列，参数表与 3D grid 对齐 |
 
 矩阵页的列标题与行标签由 `examples/shared/2d-labels.ts` 的 `LABELS_2D` 提供，`examples/registry.ts` 直接读同一张表生成
 侧栏列，所以页面和侧栏不会出现对方没有的列。标签是 `world-plane` 文本、`pixelSize: 1`，即一个字体
@@ -126,8 +126,9 @@
   - `min_pixels_between_cells` 的库默认沿用参考的 2；gallery 默认 20。2D 页把 bevy 的千像素级
     矩阵压在约 0.7 px/单位下，2 会让最细层每隔 3-7 像素一条线，20 把最细层拉到约 70 像素一格。
 - 渲染顺序：网格在 2D 图元之前、3D 图元之后（2D 页没有 3D 内容），不写深度、pin 近平面。
-- 验证：`tests/grid2d.gpu.test.ts`（LOD 间距、pan、zoom、opacity、debug 调色板）与
-  `tests/grid.test.ts` 的 2D 选项解析测试。
+- 验证：`tests/grid2d.gpu.test.ts`（LOD 间距、pan、zoom、opacity、debug 调色板）、
+  `tests/grid.test.ts` 的 2D 选项解析测试，以及 `tests/frame-draw-list-2d.test.ts` 的
+  `grid` 命令测试（outer 边界、rotation、skew、参数校验）。
 
 ## 已知差异
 

@@ -4,7 +4,7 @@ import type { SceneExample } from "../shared/meta.js";
 import { page2D } from "../shared/meta.js";
 
 export const meta: SceneExample = page2D(
-    "2d-grid",
-    "The grid primitive: cell count per column, line width per row, one fixed extent.",
-    "`grid` is a line-family primitive, so every grid here is drawn from individual strokes and inherits the line width. Cell count changes spacing rather than extent, which is what makes the four columns comparable; bevy's `outer_edges` toggle has no counterpart in this layer.",
-  );
+  "2d-grid",
+  "The grid primitive with the 3D grid's parameter set: width, cells, spacing, skew, outer edges, rotation and color.",
+  "`grid` is a line-family primitive. Rotation is one anticlockwise angle around the grid centre; `outer` keeps the x or y boundary lines, the 2D counterpart of the 3D x/z edges. The cell and spacing columns keep a fixed opposite parameter so each row stays comparable.",
+);
