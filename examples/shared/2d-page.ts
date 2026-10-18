@@ -17,6 +17,9 @@ export const WARM: Color = [1, 0.72, 0.36, 1];
 export const COOL: Color = [0.42, 0.86, 0.78, 1];
 export const ACCENT: Color = [1, 0.55, 0.66, 1];
 export const ACTION: Color = [0.98, 0.86, 0.42, 1];
+/** Coordinate axes, matching the 3D x/y convention. */
+export const AXIS_X: Color = [1, 0, 0, 1];
+export const AXIS_Y: Color = [0, 1, 0, 1];
 
 /** Page heading: a screen-space title and note, fixed to the top-left corner. */
 export function heading(drawList: FrameDrawList, title: string, note: string): void {

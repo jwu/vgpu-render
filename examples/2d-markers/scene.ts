@@ -6,12 +6,12 @@ import type { FrameDrawList } from "../../src/frame-draw-list.js";
 import type { SceneContext } from "../shared/scene-context.js";
 import type { FrameDrawList2D } from "../../src/frame-draw-list-2d.js";
 import type { Vec2 } from "../../src/camera-2d.js";
-import { ACCENT, ACTION, COOL, cross, pageHeading, table2D } from "../shared/2d-page.js";
+import { ACCENT, ACTION, AXIS_X, AXIS_Y, COOL, cross, pageHeading, table2D } from "../shared/2d-page.js";
 
-/** Two-axis cross: x in the action colour, y in the cool one, as bevy's `axes_2d`. */
+/** Two-axis cross: x red, y green, matching the 3D axes. */
 function drawAxes(d2: FrameDrawList2D, origin: Vec2, length: number, width: number): void {
-  d2.line(origin, [origin[0] + length, origin[1]], { width, color: ACTION });
-  d2.line(origin, [origin[0], origin[1] + length], { width, color: COOL });
+  d2.line(origin, [origin[0] + length, origin[1]], { width, color: AXIS_X });
+  d2.line(origin, [origin[0], origin[1] + length], { width, color: AXIS_Y });
 }
 
 export function draw(drawList: FrameDrawList, _context: SceneContext): void {
