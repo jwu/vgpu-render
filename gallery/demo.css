@@ -280,7 +280,12 @@ canvas {
   display: grid;
   flex: 1;
   min-height: 0;
-  gap: 2px;
+  /* No gap between families: a folded group is just its heading, so the spacing has to come from
+   * the heading padding instead of a grid gap that would leave an empty band. */
+  gap: 0;
+  /* Keep the rows at their content height: without this the grid stretches a folded group's row
+   * to fill the sidebar, leaving a tall empty band under its heading. */
+  align-content: start;
   padding: 14px 10px;
   overflow: auto;
 }
@@ -292,7 +297,41 @@ canvas {
   align-content: start;
 }
 .example-group-title {
-  padding: 12px 12px 4px;
+  padding: 12px 0 4px;
+}
+.example-group[data-collapsed="true"] .example-group-title {
+  padding: 8px 0;
+}
+.example-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.example-group-toggle:hover .example-group-title {
+  color: var(--foreground, #e7ecf5);
+}
+.example-group-chevron {
+  color: var(--muted-foreground, #8a94a6);
+  font-size: 11px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.example-group[data-collapsed="true"] .example-group-chevron {
+  transform: rotate(-90deg);
+}
+.example-group-entries {
+  display: grid;
+  gap: 2px;
+}
+.example-group-entries[hidden] {
+  display: none;
 }
 .example-button {
   display: grid;

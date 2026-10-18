@@ -7,6 +7,7 @@
  * different layers, so one flat list would hide that.
  */
 
+import { useState } from "react";
 import type { SceneExample } from "@examples/registry.js";
 
 export type DemoExampleListProps = {
@@ -22,6 +23,13 @@ const FAMILIES: readonly { readonly id: string; readonly title: string; readonly
 ];
 
 export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleListProps) {
+  // Each family folds independently; the 3D list alone is long enough that collapsing 2D or text
+  // saves a lot of scrolling.
+  const [collapsed, setCollapsed] = useState<readonly string[]>([]);
+  const toggle = (id: string): void =>
+    setCollapsed((current) =>
+      current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
+    );
   return (
     <aside className="sidebar sidebar-examples">
       <header className="sidebar-header">
@@ -34,24 +42,39 @@ export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleL
         {FAMILIES.map((family) => {
           const entries = examples.filter(family.matches);
           if (entries.length === 0) return null;
+          const folded = collapsed.includes(family.id);
+          const entriesId = `example-group-${family.id}`;
           return (
-            <div key={family.id} className="example-group">
-              <div className="eyebrow example-group-title">{family.title}</div>
-              {entries.map((example) => {
-                const active = example.id === selectedId;
-                return (
-                  <button
-                    key={example.id}
-                    type="button"
-                    className="example-button"
-                    data-active={active ? "true" : "false"}
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => onSelect(example)}
-                  >
-                    <strong>{example.title}</strong>
-                  </button>
-                );
-              })}
+            <div key={family.id} className="example-group" data-collapsed={folded ? "true" : "false"}>
+              <button
+                type="button"
+                className="example-group-toggle"
+                aria-expanded={!folded}
+                aria-controls={entriesId}
+                onClick={() => toggle(family.id)}
+              >
+                <span className="eyebrow example-group-title">{family.title}</span>
+                <span className="example-group-chevron" aria-hidden="true">
+                  ▾
+                </span>
+              </button>
+              <div id={entriesId} className="example-group-entries" hidden={folded}>
+                {entries.map((example) => {
+                  const active = example.id === selectedId;
+                  return (
+                    <button
+                      key={example.id}
+                      type="button"
+                      className="example-button"
+                      data-active={active ? "true" : "false"}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => onSelect(example)}
+                    >
+                      <strong>{example.title}</strong>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           );
         })}
