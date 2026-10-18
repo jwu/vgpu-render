@@ -75,7 +75,6 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "line(angle)", samples: ["20°", "30°", "45°", "75°"] },
       { title: "filled(dir)", samples: ["-63°", "-22°", "22°", "63°"] },
       { title: "line(dir)", samples: ["-63°", "-22°", "22°", "63°"] },
-      { title: "filled(joint)", samples: ["none", "round", "bevel", "miter"] },
       { title: "line(joint)", samples: ["none", "round", "bevel", "miter"] },
       { title: "filled(dash)", samples: ["24 / 8", "12 / 12", "6 / 18", "2 / 12"] },
       { title: "line(dash)", samples: ["24 / 8", "12 / 12", "6 / 18", "2 / 12"] },

@@ -43,26 +43,41 @@ function headGeometry(origin: Vec2, angle: number, length: number, style: ArrowS
   };
 }
 
-function shaftAndOutline(d2: FrameDrawList2D, origin: Vec2, head: ArrowHead, style: ArrowStyle): void {
-  d2.line(origin, head.tip, { width: style.width, color: style.color, ...(style.dash === undefined ? {} : { dash: style.dash }) });
+function drawShaft(d2: FrameDrawList2D, origin: Vec2, tip: Vec2, style: ArrowStyle): void {
+  d2.line(origin, tip, {
+    width: style.width,
+    color: style.color,
+    ...(style.dash === undefined ? {} : { dash: style.dash }),
+  });
+}
+
+/**
+ * Filled head: a clean triangle with a round tip.
+ *
+ * The tip is a disc of the shaft's half-width, the same radius the line head's round joint
+ * produces. The triangle itself is not stroked, so its base corners stay clean instead of
+ * growing the round end-caps a V outline would leave there.
+ */
+function drawFilledArrow(d2: FrameDrawList2D, origin: Vec2, angle: number, length: number, style: ArrowStyle): void {
+  const head = headGeometry(origin, angle, length, style);
+  // Stop the shaft at the base midpoint: it touches the triangle instead of running through it.
+  const baseCenter: Vec2 = [
+    head.tip[0] - Math.cos(angle) * style.headLength,
+    head.tip[1] - Math.sin(angle) * style.headLength,
+  ];
+  drawShaft(d2, origin, baseCenter, style);
+  d2.triangle(head.tip, head.backLeft, head.backRight, { color: style.color });
+}
+
+/** Line head: a shaft plus the open V outline. */
+function drawLineArrow(d2: FrameDrawList2D, origin: Vec2, angle: number, length: number, style: ArrowStyle): void {
+  const head = headGeometry(origin, angle, length, style);
+  drawShaft(d2, origin, head.tip, style);
   d2.lineStrip([head.backLeft, head.tip, head.backRight], {
     width: style.width,
     color: style.color,
     joint: style.joint,
   });
-}
-
-/** Filled head: the shared V outline plus a triangle inside it. */
-function drawFilledArrow(d2: FrameDrawList2D, origin: Vec2, angle: number, length: number, style: ArrowStyle): void {
-  const head = headGeometry(origin, angle, length, style);
-  d2.triangle(head.tip, head.backLeft, head.backRight, { color: style.color });
-  shaftAndOutline(d2, origin, head, style);
-}
-
-/** Line head: the shared V outline with no fill. */
-function drawLineArrow(d2: FrameDrawList2D, origin: Vec2, angle: number, length: number, style: ArrowStyle): void {
-  const head = headGeometry(origin, angle, length, style);
-  shaftAndOutline(d2, origin, head, style);
 }
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
@@ -101,13 +116,12 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     drawFilledArrow(d2, [originX(6), y(row)], directions[row]!, length, { ...base, color: COOL });
     drawLineArrow(d2, [originX(7), y(row)], directions[row]!, length, { ...base, color: RING });
 
-    // joint: filled / line
-    drawFilledArrow(d2, [originX(8), y(row)], baseAngle, length, { ...base, color: WARM, joint: joints[row]! });
-    drawLineArrow(d2, [originX(9), y(row)], baseAngle, length, { ...base, color: COOL, joint: joints[row]! });
+    // joint: line head only (the filled head has no stroked outline)
+    drawLineArrow(d2, [originX(8), y(row)], baseAngle, length, { ...base, color: WARM, joint: joints[row]! });
 
     // dash: filled / line
     const [dash, space] = dashes[row]!;
-    drawFilledArrow(d2, [originX(10), y(row)], baseAngle, length, { ...base, color: ACTION, dash: [dash, space, dashPhase] });
-    drawLineArrow(d2, [originX(11), y(row)], baseAngle, length, { ...base, color: WARM, dash: [dash, space, dashPhase] });
+    drawFilledArrow(d2, [originX(9), y(row)], baseAngle, length, { ...base, color: ACTION, dash: [dash, space, dashPhase] });
+    drawLineArrow(d2, [originX(10), y(row)], baseAngle, length, { ...base, color: WARM, dash: [dash, space, dashPhase] });
   }
 }
