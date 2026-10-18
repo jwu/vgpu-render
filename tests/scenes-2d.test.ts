@@ -122,6 +122,18 @@ describe("2D pages", () => {
     expect(recorder.d2.points.length).toBeGreaterThan(0);
   });
 
+  test("2d-lines animates the dash phase", () => {
+    const still = new FrameRecorder();
+    buildScene2D("2d-lines", still, 0);
+    const moving = new FrameRecorder();
+    buildScene2D("2d-lines", moving, 0.5);
+    const phases = (recorder: FrameRecorder): number[] =>
+      recorder.d2.lines.flatMap((line) => (line.dash === undefined ? [] : [line.dash[2]]));
+    expect(phases(still).length).toBeGreaterThan(0);
+    expect(phases(moving)).not.toEqual(phases(still));
+    expect(phases(moving)[0]).toBeCloseTo(15);
+  });
+
   test("the spaces page draws both 2D spaces", () => {
     const recorder = new FrameRecorder();
     buildScene2D("2d-spaces", recorder, 0);

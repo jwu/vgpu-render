@@ -322,7 +322,7 @@ function drawAxes(d2: FrameRecorder2D, origin: Vec2, length: number, width: numb
 // Matrix pages.
 
 /** line, width, alpha, gradient, dash, open strip joints and closed loop joints. */
-function lines2D(recorder: FrameRecorder): void {
+function lines2D(recorder: FrameRecorder, time: number): void {
   pageHeading(recorder, "2d-lines");
   const { d2, columnX, rowY, rows } = table2D(recorder, "2d-lines");
   const widths = [2, 6, 12, 24] as const;
@@ -340,7 +340,10 @@ function lines2D(recorder: FrameRecorder): void {
     [2, 12, 0],
   ];
   const joints: readonly LineJoint[] = ["none", "round", "bevel", "miter"];
-  const stripDash = [24, 14, 0] as const;
+  // The phase travels with time so the pattern visibly moves along the path, the same convention
+  // as the 3D line page; 30 px/s makes one 24/14 period take just over a second.
+  const dashPhase = time * 30;
+  const stripDash = [24, 14] as const;
   for (let row = 0; row < rows; row++) {
     const y = rowY(row);
     const start = columnX(0) - 52;
@@ -352,7 +355,12 @@ function lines2D(recorder: FrameRecorder): void {
     });
     const [from, to] = gradients[row]!;
     d2.line([columnX(2) - 52, y], [columnX(2) + 58, y], { width: 7, color: from, colorEnd: to });
-    d2.line([columnX(3) - 52, y], [columnX(3) + 58, y], { width: 7, dash: dashes[row]!, color: COOL });
+    const [dashVisible, dashGap] = dashes[row]!;
+    d2.line([columnX(3) - 52, y], [columnX(3) + 58, y], {
+      width: 7,
+      dash: [dashVisible, dashGap, dashPhase],
+      color: COOL,
+    });
 
     const zigzag = (x: number): Vec2[] => [
       [x - 54, y + 22],
@@ -368,14 +376,20 @@ function lines2D(recorder: FrameRecorder): void {
       [x - 50, y - 26],
     ];
 
-    // The dashed pair repeats the solid shapes so a reader compares dashes against the same
-    // geometry. On the loop the phase accumulates across the closing segment too, which is why
-    // the last corner does not restart the pattern.
     d2.lineStrip(zigzag(columnX(4)), { width: 11, joint: joints[row]!, color: RING });
-    d2.lineStrip(zigzag(columnX(5)), { width: 11, joint: joints[row]!, dash: stripDash, color: ACTION });
+    d2.lineStrip(zigzag(columnX(5)), {
+      width: 11,
+      joint: joints[row]!,
+      dash: [stripDash[0], stripDash[1], dashPhase],
+      color: ACTION,
+    });
     // Closed paths: the last point joins the first and the corner joints wrap around.
     d2.lineStrip(loopPath(columnX(6)), { width: 11, joint: joints[row]!, color: WARM }, true);
-    d2.lineStrip(loopPath(columnX(7)), { width: 11, joint: joints[row]!, dash: stripDash, color: ACCENT }, true);
+    d2.lineStrip(
+      loopPath(columnX(7)),
+      { width: 11, joint: joints[row]!, dash: [stripDash[0], stripDash[1], dashPhase], color: ACCENT },
+      true,
+    );
   }
 }
 
@@ -658,7 +672,7 @@ export function buildScene2D(
       shapes2D(recorder);
       return true;
     case "2d-lines":
-      lines2D(recorder);
+      lines2D(recorder, time);
       return true;
     case "2d-curves":
       curves2D(recorder);
@@ -766,7 +780,7 @@ function gizmos2D(recorder: FrameRecorder, time: number): void {
     [[-460, 60], [-410, 0], [-360, 60], [-310, 0], [-260, 60]],
     { width: 6, joint: "round", color: RING },
   );
-  d2.line([-460, -20], [-260, -20], { width: 6, dash: [20, 14, 0], color: RING });
+  d2.line([-460, -20], [-260, -20], { width: 6, dash: [20, 14, time * 30], color: RING });
 
   // Outlined boxes, one with rounded corners.
   d2.rect([-120, 170], [120, 80], { fill: false, strokeWidth: 4, color: WARM });
