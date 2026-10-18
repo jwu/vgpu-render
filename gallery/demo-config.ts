@@ -7,6 +7,8 @@
  */
 
 export type ProjectionMode = "perspective" | "orthographic";
+/** Which layer the 3D infinite grid draws: line grid or dot lattice. */
+export type GridDisplayMode = "grid" | "dots";
 /** Which camera the selected example drives: the gallery's 3D orbit/FPS camera, or the 2D pan/zoom one. */
 export type CameraMode = "3d" | "2d";
 export type LineJoint = "none" | "round" | "bevel" | "miter";
@@ -67,6 +69,17 @@ export type DemoGridConfig = {
   thinLineColor: [number, number, number, number];
   thickLineColor: [number, number, number, number];
   debugLodColors: boolean;
+  /** Gallery extension: line grid or dot lattice on the same quad. */
+  displayMode: GridDisplayMode;
+  /** Gallery extension: dot radius in screen pixels. */
+  dotRadiusPixels: number;
+  /** Gallery extension: on-screen dot spacing below which a layer fades out. */
+  dotFadeFromPixels: number;
+  /** Gallery extension: on-screen dot spacing at which a layer is fully opaque. */
+  dotFadeToPixels: number;
+  /** Gallery extension: spacing factor between neighbouring dot layers. */
+  dotSpacingFactor: number;
+  dotColor: [number, number, number, number];
 };
 
 export type DemoConfig = {
@@ -106,6 +119,18 @@ export const REFERENCE_THICK_LINE_COLOR: readonly [number, number, number, numbe
 export const SCENE_THIN_LINE_COLOR: readonly [number, number, number, number] = [0.33847278, 0.33847293, 0.33847287, 0.5019608];
 export const SCENE_THICK_LINE_COLOR: readonly [number, number, number, number] = [0.46034712, 0.46034718, 0.460347, 0.7019608];
 
+/**
+ * Dot-lattice defaults. There is no reference addon value to mirror here: the dot field is a
+ * gallery extension ported from the tldraw-style canvas dots in `~/dev/tools/ai-workflow` (2 px
+ * dots, 6 -> 20 px fade-in, 4x spacing ladder), tuned against the reference camera pose rather
+ * than the flat canvas.
+ */
+export const DEFAULT_DOT_COLOR: readonly [number, number, number, number] = [0.62, 0.62, 0.62, 0.55];
+export const DEFAULT_DOT_RADIUS_PIXELS = 2;
+export const DEFAULT_DOT_FADE_FROM_PIXELS = 6;
+export const DEFAULT_DOT_FADE_TO_PIXELS = 20;
+export const DEFAULT_DOT_SPACING_FACTOR = 4;
+
 /** Deep-copies the reference grid defaults for each preset. */
 export function defaultGridConfig(): DemoGridConfig {
   return {
@@ -129,6 +154,12 @@ export function defaultGridConfig(): DemoGridConfig {
     thinLineColor: [...REFERENCE_THIN_LINE_COLOR],
     thickLineColor: [...REFERENCE_THICK_LINE_COLOR],
     debugLodColors: false,
+    displayMode: "grid",
+    dotRadiusPixels: DEFAULT_DOT_RADIUS_PIXELS,
+    dotFadeFromPixels: DEFAULT_DOT_FADE_FROM_PIXELS,
+    dotFadeToPixels: DEFAULT_DOT_FADE_TO_PIXELS,
+    dotSpacingFactor: DEFAULT_DOT_SPACING_FACTOR,
+    dotColor: [...DEFAULT_DOT_COLOR],
   };
 }
 
@@ -323,6 +354,16 @@ function readLineJoint(value: unknown): LineJoint {
   return value;
 }
 
+function readGridDisplayMode(value: unknown): GridDisplayMode {
+  // "grid+dots" was an early gallery option; it now maps to the lattice, which is the closest
+  // remaining mode, so a stored config keeps rendering dots instead of being rejected wholesale.
+  if (value === "grid+dots") return "dots";
+  if (value !== "grid" && value !== "dots") {
+    throw new RangeError('config.grid.displayMode must be "grid" or "dots"');
+  }
+  return value;
+}
+
 type NumberRule = { readonly min: number; readonly max?: number; readonly integer?: boolean };
 
 /** Reads a bounded number with the same clamps the reference setters apply. */
@@ -350,6 +391,10 @@ export const GRID_NUMBER_RULES = {
   grazingFadeStart: { min: 0, max: 90 },
   grazingFadeEnd: { min: 0, max: 90 },
   lodCenterFadeLineCount: { min: 1, max: 4096 },
+  dotRadiusPixels: { min: 0.25, max: 8 },
+  dotFadeFromPixels: { min: 0.5, max: 256 },
+  dotFadeToPixels: { min: 1, max: 512 },
+  dotSpacingFactor: { min: 1.5, max: 16 },
 } as const satisfies Record<string, NumberRule>;
 
 function readGridColor(value: unknown, path: string): [number, number, number, number] {
@@ -361,6 +406,7 @@ function parseGridConfig(value: unknown, base: DemoGridConfig): DemoGridConfig {
   const grid = value === undefined ? {} : readRecord(value, "config.grid");
   const number = (key: keyof typeof GRID_NUMBER_RULES, fallback: number): number =>
     grid[key] === undefined ? fallback : readGridNumber(grid[key], `config.grid.${key}`, GRID_NUMBER_RULES[key]);
+  const dotFadeFromPixels = number("dotFadeFromPixels", base.dotFadeFromPixels);
   return {
     gridSize: number("gridSize", base.gridSize),
     cellSize: number("cellSize", base.cellSize),
@@ -379,6 +425,14 @@ function parseGridConfig(value: unknown, base: DemoGridConfig): DemoGridConfig {
     thinLineColor: grid.thinLineColor === undefined ? base.thinLineColor : readGridColor(grid.thinLineColor, "config.grid.thinLineColor"),
     thickLineColor: grid.thickLineColor === undefined ? base.thickLineColor : readGridColor(grid.thickLineColor, "config.grid.thickLineColor"),
     debugLodColors: grid.debugLodColors === undefined ? base.debugLodColors : readBoolean(grid.debugLodColors, "config.grid.debugLodColors"),
+    displayMode: grid.displayMode === undefined ? base.displayMode : readGridDisplayMode(grid.displayMode),
+    dotRadiusPixels: number("dotRadiusPixels", base.dotRadiusPixels),
+    dotFadeFromPixels,
+    // Same non-degenerate rule the 3D grid resolve applies, so the stricter `InfiniteGrid2D`
+    // resolve can never be handed a fade window the gallery panel itself produced.
+    dotFadeToPixels: Math.max(number("dotFadeToPixels", base.dotFadeToPixels), dotFadeFromPixels + 0.5),
+    dotSpacingFactor: number("dotSpacingFactor", base.dotSpacingFactor),
+    dotColor: grid.dotColor === undefined ? base.dotColor : readGridColor(grid.dotColor, "config.grid.dotColor"),
   };
 }
 
@@ -403,6 +457,7 @@ export function cloneDemoConfig(config: DemoConfig): DemoConfig {
       ...config.grid,
       thinLineColor: [config.grid.thinLineColor[0], config.grid.thinLineColor[1], config.grid.thinLineColor[2], config.grid.thinLineColor[3]],
       thickLineColor: [config.grid.thickLineColor[0], config.grid.thickLineColor[1], config.grid.thickLineColor[2], config.grid.thickLineColor[3]],
+      dotColor: [config.grid.dotColor[0], config.grid.dotColor[1], config.grid.dotColor[2], config.grid.dotColor[3]],
     },
   };
 }

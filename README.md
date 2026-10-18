@@ -101,8 +101,37 @@ is `bgra8unorm` (Chromium rejects `bgra8unorm-srgb` as a canvas format). Line
 positions, LOD banding and coverage therefore match, but blended line pixels are
 darker than the reference. See `docs/visual-comparison.md`.
 
+### Dot lattice (gallery extension, not reference parity)
+
+`displayMode` and the `dot*` options ride on the existing infinite-grid shaders — the 3D finite
+quad and the 2D full-viewport quad — so the endless dot lattice needs no extra geometry, draw call
+or LOD scheme of its own. `InfiniteGrid3D` and `InfiniteGrid2D` share the option names, defaults
+and shader maths; the 2D grid derives the pixel scale from `zoom`, the 3D one from `dpdx/dpdy` of
+the world position:
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `displayMode` | `"grid"` | `"grid"` (reference lines) or `"dots"` (lattice) |
+| `dotRadiusPixels` | `2` | dot radius, held in screen pixels |
+| `dotFadeFromPixels` / `dotFadeToPixels` | `6` / `20` | on-screen spacing at which a layer fades out / reaches full strength |
+| `dotSpacingFactor` | `4` | spacing factor between neighbouring dot layers |
+| `dotColor` | `[0.62, 0.62, 0.62, 0.55]` | dot color; alpha participates like the line alphas |
+
+The lattice is ported from the tldraw-style canvas dots in
+`~/dev/tools/ai-workflow/src/canvas/dots.tsx`: a dot keeps a fixed screen radius, a
+4x spacing ladder keeps its on-screen density roughly constant, and layers whose
+spacing gets too narrow fade out instead of turning into a grey wash. Four layers
+(-1..2 in the ladder) are combined with `max` so overlapping lattice points do not
+brighten. On the 3D plane the edge, grazing, far-clip and center fades still apply
+unchanged; the 2D quad has no such fades to begin with, so it only gates the lattice
+by on-screen spacing. `displayMode` is an exclusive choice: the lattice replaces the
+reference lines rather than blending with them, so the two sets of panel options never
+apply at the same time.
+Because the reference addon has no dot field, nothing here counts as parity — the
+gallery exposes it purely as a configurable option.
+
 `setOpacity()` is a gallery extension: it scales the two reference line-colour
-alphas, which the addon does not expose.
+alphas plus the dot alpha, which the addon does not expose.
 ```
 
 ## Pipeline
@@ -179,7 +208,9 @@ does not write depth. Screen-space text remains the last thing drawn.
 - `InfiniteGrid2D` renders the reference's 2D grid as a full-viewport shader quad: decimal LOD levels,
   screen-space line width and the same three-layer alpha de-duplication as the 3D grid. It reads
   `cellSize`, `lineWidthPixels`, `minPixelsBetweenCells`, the LOD range and both line colors from
-  the gallery's grid panel, and draws as the 2D layer's background.
+  the gallery's grid panel, and draws as the 2D layer's background. The same `displayMode` and
+  `dot*` options give it the endless dot lattice too, with the identical 4x ladder, screen radius
+  and spacing fade as the 3D grid (see *Dot lattice* above).
 - The 2D camera is independent of the 3D one (`mode: "3d" | "2d"` in the gallery config); the
 `2d-*` pages fit their declared `view2d` extent, drag or hold WASD to pan, hold shift to sprint, and scroll to zoom. The gallery
 classifies the 2D layer like the 3D scenes: `2d-index` is the API index, the twelve shape pages
@@ -560,7 +591,10 @@ and injected storage helpers. Gallery controls support grid, opacity, animation,
 width multiplier, projection, background, camera preset and reset; camera
 interaction is persisted. The sidebar groups them into three collapsible
 sections — display, Geometry 3D and Infinite Grid — and remembers which ones are
-open next to the config. The display group (background, projection, animation,
+open next to the config. The infinite-grid section follows `displayMode`: `grid` shows only the
+line fields and `dots` only the lattice fields, while `cellSize` and the 3D plane
+size/edge/grazing/center fades stay visible in every mode because they gate both layers.
+The display group (background, projection, animation,
 grid visibility, grid opacity) is stored per example: switching examples restores
 what that scene was set up with, and a scene that hides the grid opens with the
 toggle off. Line width, joints and the infinite grid options stay shared. The camera preset offers three poses of the same gallery

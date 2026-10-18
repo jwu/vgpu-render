@@ -431,11 +431,17 @@ export class DemoEngine {
    * Sets one line color from a `#rrggbb` input. Alpha keeps the current value so
    * changing a hue never silently changes line opacity.
    */
-  setGridLineColor(target: "thin" | "thick", hex: string): void {
+  setGridLineColor(target: "thin" | "thick" | "dot", hex: string): void {
     const rgb = hexToRgb(hex);
     if (rgb === undefined) return;
-    const alpha = target === "thin" ? this.config.grid.thinLineColor[3] : this.config.grid.thickLineColor[3];
+    const grid = this.config.grid;
+    const alpha =
+      target === "thin" ? grid.thinLineColor[3] : target === "thick" ? grid.thickLineColor[3] : grid.dotColor[3];
     const color: [number, number, number, number] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, alpha];
+    if (target === "dot") {
+      this.setGridOptions({ dotColor: color });
+      return;
+    }
     this.setGridOptions(target === "thin" ? { thinLineColor: color } : { thickLineColor: color });
   }
 
@@ -736,6 +742,12 @@ export class DemoEngine {
       thinLineColor: grid.thinLineColor,
       thickLineColor: grid.thickLineColor,
       debugLodColors: grid.debugLodColors,
+      displayMode: grid.displayMode,
+      dotRadiusPixels: grid.dotRadiusPixels,
+      dotFadeFromPixels: grid.dotFadeFromPixels,
+      dotFadeToPixels: grid.dotFadeToPixels,
+      dotSpacingFactor: grid.dotSpacingFactor,
+      dotColor: grid.dotColor,
     };
   }
 
@@ -751,6 +763,12 @@ export class DemoEngine {
       thinLineColor: grid.thinLineColor,
       thickLineColor: grid.thickLineColor,
       debugLodColors: grid.debugLodColors,
+      displayMode: grid.displayMode,
+      dotRadiusPixels: grid.dotRadiusPixels,
+      dotFadeFromPixels: grid.dotFadeFromPixels,
+      dotFadeToPixels: grid.dotFadeToPixels,
+      dotSpacingFactor: grid.dotSpacingFactor,
+      dotColor: grid.dotColor,
     };
   }
 

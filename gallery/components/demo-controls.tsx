@@ -25,9 +25,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
-import type { CameraPreset, DemoConfig, LineJoint, ProjectionMode } from "@/demo-config.js";
+import type { CameraPreset, DemoConfig, GridDisplayMode, LineJoint, ProjectionMode } from "@/demo-config.js";
 import type { ControlHandlers } from "@/demo-hooks";
-import { backgroundHex, gridColorToHex } from "@/demo-hooks";
+import { backgroundToHex } from "@/demo-engine";
 
 const PROJECTIONS: readonly { value: ProjectionMode; label: string }[] = [
   { value: "perspective", label: "透视 perspective" },
@@ -39,6 +39,11 @@ const JOINTS: readonly { value: LineJoint; label: string }[] = [
   { value: "round", label: "圆角 round" },
   { value: "bevel", label: "斜切 bevel" },
   { value: "miter", label: "尖角 miter" },
+];
+
+const GRID_DISPLAY_MODES: readonly { value: GridDisplayMode; label: string }[] = [
+  { value: "grid", label: "线条 grid" },
+  { value: "dots", label: "网点 dots" },
 ];
 
 // Buttons rather than a select: the pose is an action (the camera keeps orbiting freely
@@ -263,7 +268,7 @@ function DisplayControls({ config, handlers }: DemoControlsProps) {
         id="background"
         label="背景色"
         name="background"
-        value={backgroundHex(config)}
+        value={backgroundToHex(config.view.background)}
         onValueChange={handlers.onBackgroundChange}
       />
       {is3D ? (
@@ -388,24 +393,37 @@ function GeometryControls({ config, handlers }: DemoControlsProps) {
  */
 function GridControls({ config, handlers }: DemoControlsProps) {
   // The 2D grid reads a subset of the same panel: the addon's 2D shader has no finite quad,
-  // edge/grazing/centre fades or stipple, and it has one field the 3D one does not.
+  // edge/grazing/centre fades or stipple, and it has one field the 3D one does not. The display
+  // mode and the dot lattice apply to both grids and stay outside the `is2D` branches.
   const is2D = config.camera.mode === "2d";
   const grid = config.grid;
   const patch = handlers.onGridOptionsChange;
+  // The panel follows the display mode: line-only fields disappear in `dots`, dot-only fields
+  // disappear in `grid`. `cellSize` and the 3D plane fades stay visible in both: the dot ladder is
+  // anchored on `cellSize`, and the edge/grazing/center fades gate the whole quad, dots included.
+  const showLines = grid.displayMode === "grid";
+  const showDots = grid.displayMode === "dots";
   return (
     <>
-      {!is2D && (
-      <NumberRow
-        id="grid-size"
-        label="网格范围"
-        name="grid_size"
-        min={1}
-        max={20000}
-        step={100}
-        value={grid.gridSize}
-        onValueChange={(value) => patch({ gridSize: value })}
-      />
-      )}
+      <ControlRow label="显示层" name="display_mode">
+        <Select
+          value={grid.displayMode}
+          onValueChange={(value) => patch({ displayMode: value as GridDisplayMode })}
+        >
+          <SelectTrigger id="grid-display-mode" className="w-full">
+            <SelectValue>
+              {(value: GridDisplayMode) => GRID_DISPLAY_MODES.find((option) => option.value === value)?.label ?? value}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {GRID_DISPLAY_MODES.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ControlRow>
       <NumberRow
         id="grid-cell-size"
         label="单元尺寸"
@@ -416,167 +434,247 @@ function GridControls({ config, handlers }: DemoControlsProps) {
         value={grid.cellSize}
         onValueChange={(value) => patch({ cellSize: value })}
       />
-      <SliderInputRow
-        id="grid-line-width"
-        label="网格线宽"
-        name="line_width_pixels"
-        min={0.25}
-        max={6}
-        step={0.25}
-        value={grid.lineWidthPixels}
-        onValueChange={(value) => patch({ lineWidthPixels: value })}
-        format={(value) => `${value.toFixed(2)}px`}
-      />
-      {is2D && (
-        <NumberRow
-          id="grid-min-pixels"
-          label="最小像素间距"
-          name="min_pixels_between_cells"
-          min={0.1}
-          max={100}
-          step={0.1}
-          value={grid.minPixelsBetweenCells}
-          onValueChange={(value) => patch({ minPixelsBetweenCells: value })}
-        />
-      )}
-      <NumberRow
-        id="grid-lod-finer"
-        label="精细层级数"
-        name="lod_finer_levels"
-        min={0}
-        max={12}
-        step={1}
-        value={grid.lodFinerLevels}
-        integer
-        onValueChange={(value) => patch({ lodFinerLevels: value })}
-      />
-      <NumberRow
-        id="grid-lod-total"
-        label="总层级数"
-        name="lod_total_levels"
-        min={3}
-        max={24}
-        step={1}
-        value={grid.lodTotalLevels}
-        integer
-        onValueChange={(value) => patch({ lodTotalLevels: value })}
-      />
+      {/* The plane's size and fades gate every layer on the quad, so they are not tied to
+        * `showLines`; only the line-only fields below are. */}
       {!is2D && (<>
-      <NumberRow
-        id="grid-center-fade-lines"
-        label="中心淡出线条数"
-        name="lod_center_fade_line_count"
-        min={1}
-        max={4096}
-        step={2}
-        value={grid.lodCenterFadeLineCount}
-        onValueChange={(value) => patch({ lodCenterFadeLineCount: value })}
-      />
-      <SliderInputRow
-        id="grid-edge-start"
-        label="边缘淡出起点"
-        name="edge_fade_start_ratio"
-        min={0}
-        max={1}
-        step={0.05}
-        value={grid.edgeFadeStartRatio}
-        onValueChange={(value) => patch({ edgeFadeStartRatio: value })}
-        format={(value) => value.toFixed(2)}
-      />
-      <SliderInputRow
-        id="grid-edge-end"
-        label="边缘淡出终点"
-        name="edge_fade_end_ratio"
-        min={0}
-        max={1}
-        step={0.05}
-        value={grid.edgeFadeEndRatio}
-        onValueChange={(value) => patch({ edgeFadeEndRatio: value })}
-        format={(value) => value.toFixed(2)}
-      />
-      <ToggleRow
-        label="掠射淡出"
-        name="enable_grazing_opacity"
-        checked={grid.enableGrazingOpacity}
-        onCheckedChange={(checked) => patch({ enableGrazingOpacity: checked })}
-      />
-      <SliderInputRow
-        id="grid-grazing-start"
-        label="掠射淡出起点"
-        name="grazing_fade_start"
-        min={0}
-        max={90}
-        step={0.5}
-        value={grid.grazingFadeStart}
-        onValueChange={(value) => patch({ grazingFadeStart: value })}
-        format={(value) => `${value.toFixed(1)}°`}
-      />
-      <SliderInputRow
-        id="grid-grazing-end"
-        label="掠射淡出终点"
-        name="grazing_fade_end"
-        min={0}
-        max={90}
-        step={0.5}
-        value={grid.grazingFadeEnd}
-        onValueChange={(value) => patch({ grazingFadeEnd: value })}
-        format={(value) => `${value.toFixed(1)}°`}
-      />
-      <ToggleRow
-        label="中心淡出"
-        name="enable_lod_center_fade"
-        checked={grid.enableLodCenterFade}
-        onCheckedChange={(checked) => patch({ enableLodCenterFade: checked })}
-      />
-      <ToggleRow
-        label="点刻剔除"
-        name="enable_stipple_discard"
-        checked={grid.enableStippleDiscard}
-        onCheckedChange={(checked) => patch({ enableStippleDiscard: checked })}
-      />
+        <NumberRow
+          id="grid-size"
+          label="网格范围"
+          name="grid_size"
+          min={1}
+          max={20000}
+          step={100}
+          value={grid.gridSize}
+          onValueChange={(value) => patch({ gridSize: value })}
+        />
+        <NumberRow
+          id="grid-center-fade-lines"
+          label="中心淡出线条数"
+          name="lod_center_fade_line_count"
+          min={1}
+          max={4096}
+          step={2}
+          value={grid.lodCenterFadeLineCount}
+          onValueChange={(value) => patch({ lodCenterFadeLineCount: value })}
+        />
+        <SliderInputRow
+          id="grid-edge-start"
+          label="边缘淡出起点"
+          name="edge_fade_start_ratio"
+          min={0}
+          max={1}
+          step={0.05}
+          value={grid.edgeFadeStartRatio}
+          onValueChange={(value) => patch({ edgeFadeStartRatio: value })}
+          format={(value) => value.toFixed(2)}
+        />
+        <SliderInputRow
+          id="grid-edge-end"
+          label="边缘淡出终点"
+          name="edge_fade_end_ratio"
+          min={0}
+          max={1}
+          step={0.05}
+          value={grid.edgeFadeEndRatio}
+          onValueChange={(value) => patch({ edgeFadeEndRatio: value })}
+          format={(value) => value.toFixed(2)}
+        />
+        <ToggleRow
+          label="掠射淡出"
+          name="enable_grazing_opacity"
+          checked={grid.enableGrazingOpacity}
+          onCheckedChange={(checked) => patch({ enableGrazingOpacity: checked })}
+        />
+        <SliderInputRow
+          id="grid-grazing-start"
+          label="掠射淡出起点"
+          name="grazing_fade_start"
+          min={0}
+          max={90}
+          step={0.5}
+          value={grid.grazingFadeStart}
+          onValueChange={(value) => patch({ grazingFadeStart: value })}
+          format={(value) => `${value.toFixed(1)}°`}
+        />
+        <SliderInputRow
+          id="grid-grazing-end"
+          label="掠射淡出终点"
+          name="grazing_fade_end"
+          min={0}
+          max={90}
+          step={0.5}
+          value={grid.grazingFadeEnd}
+          onValueChange={(value) => patch({ grazingFadeEnd: value })}
+          format={(value) => `${value.toFixed(1)}°`}
+        />
+        <ToggleRow
+          label="中心淡出"
+          name="enable_lod_center_fade"
+          checked={grid.enableLodCenterFade}
+          onCheckedChange={(checked) => patch({ enableLodCenterFade: checked })}
+        />
       </>)}
-      <ToggleRow
-        label="LOD 调试配色"
-        name="debug_lod_colors"
-        checked={grid.debugLodColors}
-        onCheckedChange={(checked) => patch({ debugLodColors: checked })}
-      />
-      <ColorRow
-        id="grid-thin-color"
-        label="细线颜色"
-        name="thin_line_color"
-        value={gridColorToHex(grid.thinLineColor)}
-        onValueChange={(hex) => handlers.onGridLineColorChange("thin", hex)}
-      />
-      <SliderInputRow
-        id="grid-thin-alpha"
-        label="细线透明度"
-        name="thin_line_color alpha"
-        min={0}
-        max={1}
-        step={0.05}
-        value={grid.thinLineColor[3]}
-        onValueChange={(value) => patch({ thinLineColor: [grid.thinLineColor[0], grid.thinLineColor[1], grid.thinLineColor[2], value] })}
-        format={(value) => value.toFixed(2)}
-      />
-      <ColorRow
-        id="grid-thick-color"
-        label="粗线颜色"
-        name="thick_line_color"
-        value={gridColorToHex(grid.thickLineColor)}
-        onValueChange={(hex) => handlers.onGridLineColorChange("thick", hex)}
-      />
-      <SliderInputRow
-        id="grid-thick-alpha"
-        label="粗线透明度"
-        name="thick_line_color alpha"
-        min={0}
-        max={1}
-        step={0.05}
-        value={grid.thickLineColor[3]}
-        onValueChange={(value) => patch({ thickLineColor: [grid.thickLineColor[0], grid.thickLineColor[1], grid.thickLineColor[2], value] })}
-        format={(value) => value.toFixed(2)}
-      />
+      {showLines && (<>
+        <SliderInputRow
+          id="grid-line-width"
+          label="网格线宽"
+          name="line_width_pixels"
+          min={0.25}
+          max={6}
+          step={0.25}
+          value={grid.lineWidthPixels}
+          onValueChange={(value) => patch({ lineWidthPixels: value })}
+          format={(value) => `${value.toFixed(2)}px`}
+        />
+        {is2D && (
+          <NumberRow
+            id="grid-min-pixels"
+            label="最小像素间距"
+            name="min_pixels_between_cells"
+            min={0.1}
+            max={100}
+            step={0.1}
+            value={grid.minPixelsBetweenCells}
+            onValueChange={(value) => patch({ minPixelsBetweenCells: value })}
+          />
+        )}
+        <NumberRow
+          id="grid-lod-finer"
+          label="精细层级数"
+          name="lod_finer_levels"
+          min={0}
+          max={12}
+          step={1}
+          value={grid.lodFinerLevels}
+          integer
+          onValueChange={(value) => patch({ lodFinerLevels: value })}
+        />
+        <NumberRow
+          id="grid-lod-total"
+          label="总层级数"
+          name="lod_total_levels"
+          min={3}
+          max={24}
+          step={1}
+          value={grid.lodTotalLevels}
+          integer
+          onValueChange={(value) => patch({ lodTotalLevels: value })}
+        />
+        {!is2D && (
+          <ToggleRow
+            label="点刻剔除"
+            name="enable_stipple_discard"
+            checked={grid.enableStippleDiscard}
+            onCheckedChange={(checked) => patch({ enableStippleDiscard: checked })}
+          />
+        )}
+        <ToggleRow
+          label="LOD 调试配色"
+          name="debug_lod_colors"
+          checked={grid.debugLodColors}
+          onCheckedChange={(checked) => patch({ debugLodColors: checked })}
+        />
+        <ColorRow
+          id="grid-thin-color"
+          label="细线颜色"
+          name="thin_line_color"
+          value={backgroundToHex(grid.thinLineColor)}
+          onValueChange={(hex) => handlers.onGridLineColorChange("thin", hex)}
+        />
+        <SliderInputRow
+          id="grid-thin-alpha"
+          label="细线透明度"
+          name="thin_line_color alpha"
+          min={0}
+          max={1}
+          step={0.05}
+          value={grid.thinLineColor[3]}
+          onValueChange={(value) => patch({ thinLineColor: [grid.thinLineColor[0], grid.thinLineColor[1], grid.thinLineColor[2], value] })}
+          format={(value) => value.toFixed(2)}
+        />
+        <ColorRow
+          id="grid-thick-color"
+          label="粗线颜色"
+          name="thick_line_color"
+          value={backgroundToHex(grid.thickLineColor)}
+          onValueChange={(hex) => handlers.onGridLineColorChange("thick", hex)}
+        />
+        <SliderInputRow
+          id="grid-thick-alpha"
+          label="粗线透明度"
+          name="thick_line_color alpha"
+          min={0}
+          max={1}
+          step={0.05}
+          value={grid.thickLineColor[3]}
+          onValueChange={(value) => patch({ thickLineColor: [grid.thickLineColor[0], grid.thickLineColor[1], grid.thickLineColor[2], value] })}
+          format={(value) => value.toFixed(2)}
+        />
+      </>)}
+      {showDots && (<>
+        <SliderInputRow
+          id="grid-dot-radius"
+          label="网点半径"
+          name="dot_radius_pixels"
+          min={0.25}
+          max={6}
+          step={0.25}
+          value={grid.dotRadiusPixels}
+          onValueChange={(value) => patch({ dotRadiusPixels: value })}
+          format={(value) => `${value.toFixed(2)}px`}
+        />
+        <SliderInputRow
+          id="grid-dot-fade-from"
+          label="网点淡入间距"
+          name="dot_fade_from_pixels"
+          min={0.5}
+          max={64}
+          step={0.5}
+          value={grid.dotFadeFromPixels}
+          onValueChange={(value) => patch({ dotFadeFromPixels: value })}
+          format={(value) => `${value.toFixed(1)}px`}
+        />
+        <SliderInputRow
+          id="grid-dot-fade-to"
+          label="网点满强度间距"
+          name="dot_fade_to_pixels"
+          min={1}
+          max={128}
+          step={1}
+          value={grid.dotFadeToPixels}
+          onValueChange={(value) => patch({ dotFadeToPixels: value })}
+          format={(value) => `${value.toFixed(0)}px`}
+        />
+        <SliderInputRow
+          id="grid-dot-spacing-factor"
+          label="网点间距倍率"
+          name="dot_spacing_factor"
+          min={1.5}
+          max={16}
+          step={0.5}
+          value={grid.dotSpacingFactor}
+          onValueChange={(value) => patch({ dotSpacingFactor: value })}
+          format={(value) => `${value.toFixed(1)}×`}
+        />
+        <ColorRow
+          id="grid-dot-color"
+          label="网点颜色"
+          name="dot_color"
+          value={backgroundToHex(grid.dotColor)}
+          onValueChange={(hex) => handlers.onGridLineColorChange("dot", hex)}
+        />
+        <SliderInputRow
+          id="grid-dot-alpha"
+          label="网点透明度"
+          name="dot_color alpha"
+          min={0}
+          max={1}
+          step={0.05}
+          value={grid.dotColor[3]}
+          onValueChange={(value) => patch({ dotColor: [grid.dotColor[0], grid.dotColor[1], grid.dotColor[2], value] })}
+          format={(value) => value.toFixed(2)}
+        />
+      </>)}
     </>
   );
 }

@@ -214,11 +214,44 @@ describe("demo config", () => {
     expect(grid.debugLodColors).toBe(false);
   });
 
+  test("grid dot extensions default to the gallery lattice and keep the reference grid on", () => {
+    const grid = parseDemoConfig({}).grid;
+    expect(grid.displayMode).toBe("grid");
+    expect(grid.dotRadiusPixels).toBe(2);
+    expect(grid.dotFadeFromPixels).toBe(6);
+    expect(grid.dotFadeToPixels).toBe(20);
+    expect(grid.dotSpacingFactor).toBe(4);
+    expect(grid.dotColor).toEqual([0.62, 0.62, 0.62, 0.55]);
+  });
+
   test("merges partial grid patches over the defaults", () => {
     const config = parseDemoConfig({ grid: { cellSize: 0.5, debugLodColors: true } });
     expect(config.grid.cellSize).toBe(0.5);
     expect(config.grid.debugLodColors).toBe(true);
     expect(config.grid.lodFinerLevels).toBe(DEFAULT_DEMO_CONFIG.grid.lodFinerLevels);
+  });
+
+  test("merges dot patches and copies the dot color when cloning", () => {
+    const config = parseDemoConfig({ grid: { displayMode: "dots", dotRadiusPixels: 2, dotFadeFromPixels: 12 } });
+    expect(config.grid.displayMode).toBe("dots");
+    expect(config.grid.dotRadiusPixels).toBe(2);
+    expect(config.grid.dotFadeFromPixels).toBe(12);
+    expect(config.grid.dotFadeToPixels).toBe(DEFAULT_DEMO_CONFIG.grid.dotFadeToPixels);
+    const clone = cloneDemoConfig(config);
+    expect(clone.grid.dotColor).toEqual(config.grid.dotColor);
+    expect(clone.grid.dotColor).not.toBe(config.grid.dotColor);
+  });
+
+  test("maps the retired grid+dots mode onto the lattice instead of rejecting the config", () => {
+    // Stored configs may still carry the removed additive mode; keeping the config beats a reset.
+    expect(parseDemoConfig({ grid: { displayMode: "grid+dots" } }).grid.displayMode).toBe("dots");
+  });
+
+  test("keeps the grid dot fade window non-degenerate like the 3D resolve", () => {
+    // A panel or URL patch may invert the window; the stricter 2D resolve must never see it.
+    const config = parseDemoConfig({ grid: { dotFadeFromPixels: 40, dotFadeToPixels: 20 } });
+    expect(config.grid.dotFadeFromPixels).toBe(40);
+    expect(config.grid.dotFadeToPixels).toBe(40.5);
   });
 
   test("rejects grid values the reference setters would clamp away", () => {
@@ -233,6 +266,12 @@ describe("demo config", () => {
     expect(() => parseDemoConfig({ grid: { thinLineColor: [1, 1, 1] } })).toThrow(/thinLineColor/);
     expect(() => parseDemoConfig({ grid: { debugLodColors: "yes" } })).toThrow(/debugLodColors/);
     expect(() => parseDemoConfig({ grid: { enableLodCenterFade: 1 } })).toThrow(/enableLodCenterFade/);
+    expect(() => parseDemoConfig({ grid: { displayMode: "points" } })).toThrow(/grid.displayMode/);
+    expect(() => parseDemoConfig({ grid: { dotRadiusPixels: 0 } })).toThrow(/grid.dotRadiusPixels/);
+    expect(() => parseDemoConfig({ grid: { dotFadeFromPixels: 0 } })).toThrow(/grid.dotFadeFromPixels/);
+    expect(() => parseDemoConfig({ grid: { dotFadeToPixels: 0 } })).toThrow(/grid.dotFadeToPixels/);
+    expect(() => parseDemoConfig({ grid: { dotSpacingFactor: 1 } })).toThrow(/grid.dotSpacingFactor/);
+    expect(() => parseDemoConfig({ grid: { dotColor: [1, 1, 1] } })).toThrow(/dotColor/);
   });
 
   test("rejects structurally invalid and out-of-range values", () => {

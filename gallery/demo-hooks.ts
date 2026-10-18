@@ -45,7 +45,7 @@ export type ControlHandlers = {
   readonly onCameraPresetChange: (value: CameraPreset) => void;
   readonly onBackgroundChange: (value: string) => void;
   readonly onGridOptionsChange: (patch: Partial<DemoGridConfig>) => void;
-  readonly onGridLineColorChange: (target: "thin" | "thick", hex: string) => void;
+  readonly onGridLineColorChange: (target: "thin" | "thick" | "dot", hex: string) => void;
   readonly onReset: () => void;
 };
 
@@ -62,7 +62,7 @@ export function useControlHandlers(engine: DemoEngine): ControlHandlers {
       onCameraPresetChange: (value: CameraPreset) => engine.setCameraPreset(value),
       onBackgroundChange: (value: string) => engine.setBackgroundHex(value),
       onGridOptionsChange: (patch: Partial<DemoGridConfig>) => engine.setGridOptions(patch),
-      onGridLineColorChange: (target: "thin" | "thick", hex: string) => engine.setGridLineColor(target, hex),
+      onGridLineColorChange: (target: "thin" | "thick" | "dot", hex: string) => engine.setGridLineColor(target, hex),
       onReset: () => engine.resetConfig(),
     }),
     [engine],
