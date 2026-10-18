@@ -165,3 +165,24 @@ test("lod_total_levels below 3 is clamped and still renders", async () => {
   const pixels = await renderGrid({ lodTotalLevels: 1, lodFinerLevels: -5 });
   expect(countLit(pixels, (r, g, b) => Math.max(r, g, b) > 6)).toBeGreaterThan(0);
 });
+
+test("displayMode dots draws the lattice instead of the line grid", async () => {
+  const dots = await renderGrid({ displayMode: "dots", debugLodColors: true });
+  // The dot color is neutral gray: no LOD-debug line tint may survive.
+  expect(blueDominantRows(dots)).toBe(0);
+  expect(countLit(dots, (r, g, b) => Math.max(r, g, b) > 6)).toBeGreaterThan(0);
+});
+
+test("dot_radius_pixels controls the covered pixel count", async () => {
+  const small = await renderGrid({ displayMode: "dots", dotRadiusPixels: 0.5 });
+  const large = await renderGrid({ displayMode: "dots", dotRadiusPixels: 4 });
+  expect(countLit(large, (r) => r > 6)).toBeGreaterThan(countLit(small, (r) => r > 6));
+});
+
+test("a zero dot alpha hides the lattice and leaves the line grid intact", async () => {
+  const dots = await renderGrid({ displayMode: "dots", dotColor: [0.62, 0.62, 0.62, 0] });
+  const lines = await renderGrid({ displayMode: "grid" });
+  const lit = (pixels: Uint8Array) => countLit(pixels, (r, g, b) => Math.max(r, g, b) > 6);
+  expect(lit(dots)).toBe(0);
+  expect(lit(lines)).toBeGreaterThan(0);
+});

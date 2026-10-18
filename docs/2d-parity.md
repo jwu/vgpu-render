@@ -165,6 +165,9 @@
 - 与参考的差异：
   - `world2d` 的 +y 向上，`screen_to_world` 对 y 偏移取反（Godot 2D 是 +y 向下）。
   - 参考的 `camera_rotation` 在本项目固定为 0（2D 相机不带旋转），uniform 仍保留。
+  - `displayMode` 与 `dot*`（点阵）是本项目 gallery 扩展，参考 addon 的 2D shader 没有点阵。
+    它与 3D `InfiniteGrid3D` 共用同一套选项、默认值与算法（屏幕固定半径、4 倍间距梯子、
+    屏幕间距淡入），接入方式见 README 的 *Dot lattice*；因此不计入 2D parity。
   - 颜色与 `cell_size` 等参数与 3D 网格共用侧栏面板：同一个字段对两种网格同时生效。
   - `min_pixels_between_cells` 的库默认沿用参考的 2；gallery 默认 20。2D 页把 bevy 的千像素级
     矩阵压在约 0.7 px/单位下，2 会让最细层每隔 3-7 像素一条线，20 把最细层拉到约 70 像素一格。

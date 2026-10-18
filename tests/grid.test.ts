@@ -73,6 +73,38 @@ describe("grid option resolution", () => {
   });
 });
 
+describe("dot field options", () => {
+  test("defaults to the line grid with the gallery dot lattice values", () => {
+    const resolved = resolveGridOptions({});
+    expect(resolved.displayMode).toBe("grid");
+    expect(resolved.dotRadiusPixels).toBe(2);
+    expect(resolved.dotFadeFromPixels).toBe(6);
+    expect(resolved.dotFadeToPixels).toBe(20);
+    expect(resolved.dotSpacingFactor).toBe(4);
+    expect(resolved.dotColor).toEqual([0.62, 0.62, 0.62, 0.55]);
+  });
+
+  test("accepts both display modes and clamps the dot setters", () => {
+    expect(resolveGridOptions({ displayMode: "dots" }).displayMode).toBe("dots");
+    expect(resolveGridOptions({ displayMode: "grid" }).displayMode).toBe("grid");
+    const resolved = resolveGridOptions({
+      dotRadiusPixels: 0,
+      dotFadeFromPixels: 0,
+      dotFadeToPixels: 0,
+      dotSpacingFactor: 100,
+    });
+    expect(resolved.dotRadiusPixels).toBe(0.25);
+    expect(resolved.dotFadeFromPixels).toBe(0.5);
+    expect(resolved.dotFadeToPixels).toBe(1);
+    expect(resolved.dotSpacingFactor).toBe(16);
+  });
+
+  test("keeps the fade window non-degenerate", () => {
+    const resolved = resolveGridOptions({ dotFadeFromPixels: 40, dotFadeToPixels: 20 });
+    expect(resolved.dotFadeToPixels).toBe(40.5);
+  });
+});
+
 describe("grid LOD range", () => {
   test("matches the reference documented range", () => {
     const resolved = resolveGridOptions({ cellSize: 1, lodFinerLevels: 3, lodTotalLevels: 8 });
@@ -190,5 +222,28 @@ describe("2D grid", () => {
     expect(options.cellSize).toBe(4);
     expect(options.debugLodColors).toBe(true);
     expect(options.thinLineColor).toEqual([0.3, 0.3, 0.3, 0.5]);
+  });
+
+  test("defaults the dot lattice to the shared 3D values", () => {
+    const options = resolveGrid2DOptions();
+    expect(options.displayMode).toBe("grid");
+    expect(options.dotRadiusPixels).toBe(2);
+    expect(options.dotFadeFromPixels).toBe(6);
+    expect(options.dotFadeToPixels).toBe(20);
+    expect(options.dotSpacingFactor).toBe(4);
+    expect(options.dotColor).toEqual([0.62, 0.62, 0.62, 0.55]);
+  });
+
+  test("accepts both display modes and rejects invalid dot values", () => {
+    expect(resolveGrid2DOptions({ displayMode: "dots" }).displayMode).toBe("dots");
+    expect(resolveGrid2DOptions({ displayMode: "grid" }).displayMode).toBe("grid");
+    expect(() => resolveGrid2DOptions({ displayMode: "points" as never })).toThrow(/displayMode/);
+    expect(() => resolveGrid2DOptions({ dotRadiusPixels: 0 })).toThrow(/dotRadiusPixels/);
+    expect(() => resolveGrid2DOptions({ dotFadeFromPixels: 0 })).toThrow(/dotFadeFromPixels/);
+    expect(() => resolveGrid2DOptions({ dotFadeFromPixels: 20, dotFadeToPixels: 10 })).toThrow(
+      /dotFadeToPixels must be greater/,
+    );
+    expect(() => resolveGrid2DOptions({ dotSpacingFactor: 1 })).toThrow(/dotSpacingFactor/);
+    expect(() => resolveGrid2DOptions({ dotColor: [1, 1, 1] as never })).toThrow(/dotColor/);
   });
 });

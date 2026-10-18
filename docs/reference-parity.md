@@ -106,7 +106,11 @@ These are deliberately not claimed as exact parity:
   (parameter names, LOD range, fade stack, camera LOD distance). The earlier
   brightness gap is fixed: primitives blend on a linear `rgba16float` target and a
   present pass encodes to sRGB, so grid peak luminance now matches the reference.
-  See `docs/visual-comparison.md`.
+  See `docs/visual-comparison.md`. Its `displayMode` / `dot*` options are a
+  **gallery extension, not parity**: the reference addon has no dot lattice, so the
+  endless dot field (ported from the tldraw-style canvas dots in
+  `~/dev/tools/ai-workflow`) is documented in the README and is never counted as a
+  reference behaviour.
 - **Joints**: round, bevel and miter use the reference wedge geometry instead of
 the earlier disc-cap patch. Out-of-range fan vertices are parked behind the far
 plane, which is how one 24-vertex pipeline draws all three kinds. Normal-aware

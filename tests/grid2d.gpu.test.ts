@@ -85,3 +85,32 @@ test("real GPU switches the 2D grid to the debug LOD palette", async () => {
   expect(red).toBeGreaterThan(0);
   expect(blue).toBeGreaterThan(0);
 });
+
+test("real GPU draws the dot lattice instead of the 2D lines", async () => {
+  const dots = await render({ position: [0, 0], zoom: 1 }, {
+    displayMode: "dots",
+    dotColor: [1, 1, 1, 1],
+    debugLodColors: true,
+  });
+  // Neutral white dots: no LOD-debug tint may survive from the disabled line layers.
+  let blueDominant = 0;
+  let litPixels = 0;
+  for (let index = 0; index < dots.length; index += 4) {
+    const red = dots[index]!;
+    const green = dots[index + 1]!;
+    const blue = dots[index + 2]!;
+    if (blue > red + 24 && blue > green + 24) blueDominant++;
+    if (red > 10) litPixels++;
+  }
+  expect(blueDominant).toBe(0);
+  expect(litPixels).toBeGreaterThan(0);
+});
+
+test("real GPU fades the 2D dot lattice with opacity and radius", async () => {
+  const small = await render({ position: [0, 0], zoom: 1 }, { displayMode: "dots", dotColor: [1, 1, 1, 1], dotRadiusPixels: 0.5 });
+  const large = await render({ position: [0, 0], zoom: 1 }, { displayMode: "dots", dotColor: [1, 1, 1, 1], dotRadiusPixels: 4 });
+  const hidden = await render({ position: [0, 0], zoom: 1 }, { displayMode: "dots", dotColor: [1, 1, 1, 1] }, 0);
+  const count = (pixels: Uint8Array) => pixels.reduce((total, _value, index) => (index % 4 === 0 && pixels[index]! > 10 ? total + 1 : total), 0);
+  expect(count(large)).toBeGreaterThan(count(small));
+  expect(count(hidden)).toBe(0);
+});

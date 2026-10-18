@@ -11,11 +11,17 @@
  * Unlike the Godot shader, `world2d` has +y up while the framebuffer's y points down, so
  * `screen_to_world` mirrors the y offset. Everything else — cell size, pixel width, LOD range,
  * colors and the debug palette — mirrors the reference uniforms one to one.
+ *
+ * `displayMode` and the `dot*` options are a gallery extension (the reference has no dot field):
+ * the same fragment shader can additionally draw an endless dot lattice, ported from the
+ * tldraw-style canvas dots in `~/dev/tools/ai-workflow/src/canvas/dots.tsx` and matching the 3D
+ * `InfiniteGrid3D` dot options one to one.
  */
 
 import { draw, geometry, type Draw, type FramePass, type Gpu } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 import { linearGridColor } from "./color-space.js";
+import type { GridDisplayMode } from "./infinite-grid-3d.js";
 
 const GRID_2D_SHADER = prepareShader(`
 struct Grid2DUniforms {
@@ -30,6 +36,12 @@ struct Grid2DUniforms {
   minLodPower: f32,
   maxLodPower: f32,
   debugLodColors: u32,
+  // Gallery extension (no reference counterpart), same layout as the 3D grid: x = dot radius in
+  // screen pixels, y / z = screen-spacing fade range, w = spacing factor between dot layers.
+  dotOptions: vec4f,
+  dotColor: vec4f,
+  // x = enable_dot_field, y = enable_grid_lines.
+  layerOptions: vec4<u32>,
   thinLineColor: vec4f,
   thickLineColor: vec4f,
 }
@@ -75,53 +87,104 @@ fn grid_line_alpha(uv: vec2f, currentCellSize: f32) -> f32 {
   return max(coverage.x, coverage.y);
 }
 
+// Dot field ported from ai-workflow's canvas (dots.tsx, itself tldraw's DefaultGrid): a fixed
+// screen radius and a spacing-driven fade-in, so zooming never turns the lattice into a wash.
+fn dot_layer_alpha(uv: vec2f, spacing: f32) -> f32 {
+  let coord = uv / spacing;
+  let pixelSize = max(abs(dpdx(coord)) + abs(dpdy(coord)), vec2f(0.00001));
+  let cellPixels = 1.0 / pixelSize;
+  let toNearest = fract(coord + 0.5) - 0.5;
+  let distancePixels = length(toNearest * cellPixels);
+  let radius = max(grid.dotOptions.x, 0.25);
+  let coverage = 1.0 - smoothstep(radius - 0.5, radius + 0.5, distancePixels);
+  let spacingPixels = min(cellPixels.x, cellPixels.y);
+  let fadeFrom = grid.dotOptions.y;
+  let fadeTo = max(grid.dotOptions.z, fadeFrom + 0.00001);
+  let fade = clamp((spacingPixels - fadeFrom) / (fadeTo - fadeFrom), 0.0, 1.0);
+  return coverage * fade;
+}
+
+// Four layers spaced by dotOptions.w (default 4x) keep a roughly constant screen density at any
+// zoom. The ladder slides with the zoom; the layer leaving the window is the sparsest one.
+fn dot_field_alpha(uv: vec2f) -> f32 {
+  let safeCellSize = max(grid.cellSize, 0.00001);
+  let factor = max(grid.dotOptions.w, 1.5);
+  let worldPerPixel = 1.0 / max(abs(grid.cameraZoom), 0.00001);
+  let steps = clamp(
+    floor(log(grid.dotOptions.z * worldPerPixel / safeCellSize) / log(factor)),
+    -12.0,
+    12.0
+  );
+  let baseSpacing = safeCellSize * pow(factor, steps);
+  var alpha = 0.0;
+  for (var layer = -1; layer <= 2; layer = layer + 1) {
+    alpha = max(alpha, dot_layer_alpha(uv, baseSpacing * pow(factor, f32(layer))));
+  }
+  return alpha;
+}
+
 @fragment fn fs_main(input: Out) -> @location(0) vec4f {
   let worldPosition = screen_to_world(input.clip.xy);
   let uv = worldPosition - grid.gridOrigin;
 
-  let safeCellSize = max(grid.cellSize, 0.00001);
-  let minPower = min(grid.minLodPower, grid.maxLodPower - 2.0);
-  let maxPower = max(grid.maxLodPower, minPower + 2.0);
-  let worldPerPixel = 1.0 / max(abs(grid.cameraZoom), 0.00001);
-  let lodLevel = log(max((worldPerPixel * grid.minPixelsBetweenCells) / safeCellSize, 0.000001)) / log(10.0) + 1.0;
-  let currentLodPower = clamp(floor(lodLevel), minPower, maxPower);
-  let lodFade = fract(clamp(lodLevel, minPower, maxPower));
+  var lineAlpha = 0.0;
+  var lineColor = vec3f(0.0);
+  if (grid.layerOptions.y != 0u) {
+    let safeCellSize = max(grid.cellSize, 0.00001);
+    let minPower = min(grid.minLodPower, grid.maxLodPower - 2.0);
+    let maxPower = max(grid.maxLodPower, minPower + 2.0);
+    let worldPerPixel = 1.0 / max(abs(grid.cameraZoom), 0.00001);
+    let lodLevel = log(max((worldPerPixel * grid.minPixelsBetweenCells) / safeCellSize, 0.000001)) / log(10.0) + 1.0;
+    let currentLodPower = clamp(floor(lodLevel), minPower, maxPower);
+    let lodFade = fract(clamp(lodLevel, minPower, maxPower));
 
-  let lod0CellSize = safeCellSize * pow(10.0, clamp(currentLodPower, minPower, maxPower));
-  let lod1CellSize = safeCellSize * pow(10.0, clamp(currentLodPower + 1.0, minPower, maxPower));
-  let lod2CellSize = safeCellSize * pow(10.0, clamp(currentLodPower + 2.0, minPower, maxPower));
+    let lod0CellSize = safeCellSize * pow(10.0, clamp(currentLodPower, minPower, maxPower));
+    let lod1CellSize = safeCellSize * pow(10.0, clamp(currentLodPower + 1.0, minPower, maxPower));
+    let lod2CellSize = safeCellSize * pow(10.0, clamp(currentLodPower + 2.0, minPower, maxPower));
 
-  let lod0Alpha = grid_line_alpha(uv, lod0CellSize) * (1.0 - lodFade);
-  let lod1Alpha = grid_line_alpha(uv, lod1CellSize);
-  let lod2Alpha = grid_line_alpha(uv, lod2CellSize);
+    let lod0Alpha = grid_line_alpha(uv, lod0CellSize) * (1.0 - lodFade);
+    let lod1Alpha = grid_line_alpha(uv, lod1CellSize);
+    let lod2Alpha = grid_line_alpha(uv, lod2CellSize);
 
-  // De-duplicate: a coarser layer owns the pixels it covers, so the sum never exceeds 1.
-  let lod2VisibleAlpha = lod2Alpha;
-  let lod1VisibleAlpha = lod1Alpha * (1.0 - lod2VisibleAlpha);
-  let lod0VisibleAlpha = lod0Alpha * (1.0 - lod1Alpha) * (1.0 - lod2VisibleAlpha);
+    // De-duplicate: a coarser layer owns the pixels it covers, so the sum never exceeds 1.
+    let lod2VisibleAlpha = lod2Alpha;
+    let lod1VisibleAlpha = lod1Alpha * (1.0 - lod2VisibleAlpha);
+    let lod0VisibleAlpha = lod0Alpha * (1.0 - lod1Alpha) * (1.0 - lod2VisibleAlpha);
 
-  var lod0Color = grid.thinLineColor;
-  var lod1Color = mix(grid.thickLineColor, grid.thinLineColor, lodFade);
-  var lod2Color = grid.thickLineColor;
-  if (grid.debugLodColors != 0u) {
-    lod0Color = vec4f(0.1, 0.35, 1.0, lod0Color.a);
-    lod1Color = vec4f(0.1, 1.0, 0.25, lod1Color.a);
-    lod2Color = vec4f(1.0, 0.15, 0.1, lod2Color.a);
+    var lod0Color = grid.thinLineColor;
+    var lod1Color = mix(grid.thickLineColor, grid.thinLineColor, lodFade);
+    var lod2Color = grid.thickLineColor;
+    if (grid.debugLodColors != 0u) {
+      lod0Color = vec4f(0.1, 0.35, 1.0, lod0Color.a);
+      lod1Color = vec4f(0.1, 1.0, 0.25, lod1Color.a);
+      lod2Color = vec4f(1.0, 0.15, 0.1, lod2Color.a);
+    }
+
+    let lod0LayerAlpha = lod0VisibleAlpha * lod0Color.a;
+    let lod1LayerAlpha = lod1VisibleAlpha * lod1Color.a;
+    let lod2LayerAlpha = lod2VisibleAlpha * lod2Color.a;
+    let lineCompositeAlpha = clamp(lod0LayerAlpha + lod1LayerAlpha + lod2LayerAlpha, 0.0, 1.0);
+
+    lineColor = (
+      lod0Color.rgb * lod0LayerAlpha +
+      lod1Color.rgb * lod1LayerAlpha +
+      lod2Color.rgb * lod2LayerAlpha
+    ) / max(lineCompositeAlpha, 0.00001);
+    lineAlpha = lineCompositeAlpha;
   }
 
-  let lod0LayerAlpha = lod0VisibleAlpha * lod0Color.a;
-  let lod1LayerAlpha = lod1VisibleAlpha * lod1Color.a;
-  let lod2LayerAlpha = lod2VisibleAlpha * lod2Color.a;
-  let lineAlpha = clamp(lod0LayerAlpha + lod1LayerAlpha + lod2LayerAlpha, 0.0, 1.0);
+  var dotAlpha = 0.0;
+  if (grid.layerOptions.x != 0u) {
+    dotAlpha = dot_field_alpha(uv) * grid.dotColor.a;
+  }
 
-  let lineColor = (
-    lod0Color.rgb * lod0LayerAlpha +
-    lod1Color.rgb * lod1LayerAlpha +
-    lod2Color.rgb * lod2LayerAlpha
-  ) / max(lineAlpha, 0.00001);
-
-  if (lineAlpha <= 0.001) { discard; }
-  return vec4f(lineColor, lineAlpha);
+  // Lines sit above the dots; one straight-alpha composite keeps the overlay contract.
+  let alpha = clamp(lineAlpha + dotAlpha * (1.0 - lineAlpha), 0.0, 1.0);
+  if (alpha <= 0.001) { discard; }
+  let color = (
+    lineColor * lineAlpha + grid.dotColor.rgb * dotAlpha * (1.0 - lineAlpha)
+  ) / max(alpha, 0.00001);
+  return vec4f(color, alpha);
 }
 `);
 
@@ -138,6 +201,18 @@ export type InfiniteGrid2DOptions = {
   readonly thinLineColor?: readonly [number, number, number, number];
   readonly thickLineColor?: readonly [number, number, number, number];
   readonly debugLodColors?: boolean;
+  /** Gallery extension: which layers the shader draws. Default `"grid"`. */
+  readonly displayMode?: GridDisplayMode;
+  /** Gallery extension: dot radius in screen pixels. Default 2. */
+  readonly dotRadiusPixels?: number;
+  /** Gallery extension: dot layers narrower than this on screen fade out. Default 6. */
+  readonly dotFadeFromPixels?: number;
+  /** Gallery extension: dot layers at this on-screen spacing reach full strength. Default 20. */
+  readonly dotFadeToPixels?: number;
+  /** Gallery extension: spacing factor between neighbouring dot layers. Default 4. */
+  readonly dotSpacingFactor?: number;
+  /** Gallery extension: dot color; alpha participates like the line alphas. */
+  readonly dotColor?: readonly [number, number, number, number];
 };
 
 export type ResolvedGrid2DOptions = {
@@ -149,6 +224,12 @@ export type ResolvedGrid2DOptions = {
   readonly thinLineColor: readonly [number, number, number, number];
   readonly thickLineColor: readonly [number, number, number, number];
   readonly debugLodColors: boolean;
+  readonly displayMode: GridDisplayMode;
+  readonly dotRadiusPixels: number;
+  readonly dotFadeFromPixels: number;
+  readonly dotFadeToPixels: number;
+  readonly dotSpacingFactor: number;
+  readonly dotColor: readonly [number, number, number, number];
 };
 
 /** Reference defaults from `infinite_grid_2d.gd`, which differs from the 3D shader on purpose. */
@@ -161,6 +242,13 @@ export const DEFAULT_GRID_2D_OPTIONS: ResolvedGrid2DOptions = {
   thinLineColor: [0.3, 0.3, 0.3, 0.5],
   thickLineColor: [0.42, 0.42, 0.42, 0.7],
   debugLodColors: false,
+  // The dot lattice is a gallery extension, kept in sync with `InfiniteGrid3D`'s defaults.
+  displayMode: "grid",
+  dotRadiusPixels: 2,
+  dotFadeFromPixels: 6,
+  dotFadeToPixels: 20,
+  dotSpacingFactor: 4,
+  dotColor: [0.62, 0.62, 0.62, 0.55],
 };
 
 /** The 2D camera state the shader reads, in `world2d` units and canvas pixels per unit. */
@@ -188,12 +276,29 @@ function colorValue(value: readonly [number, number, number, number], name: stri
   return [finite(value[0], `${name}[0]`), finite(value[1], `${name}[1]`), finite(value[2], `${name}[2]`), finite(value[3], `${name}[3]`)];
 }
 
+function ranged(value: number, name: string, min: number, max: number): number {
+  const resolved = finite(value, name);
+  if (resolved < min || resolved > max) throw new RangeError(`${name} must be between ${min} and ${max}`);
+  return resolved;
+}
+
+function displayModeValue(value: GridDisplayMode | undefined): GridDisplayMode {
+  const resolved = value ?? DEFAULT_GRID_2D_OPTIONS.displayMode;
+  if (resolved !== "grid" && resolved !== "dots") {
+    throw new RangeError('displayMode must be "grid" or "dots"');
+  }
+  return resolved;
+}
+
 /** Validates and freezes the options; the shader's own clamps then only guard the LOD range. */
 export function resolveGrid2DOptions(options: InfiniteGrid2DOptions = {}): ResolvedGrid2DOptions {
   const finer = Math.trunc(finite(options.lodFinerLevels ?? DEFAULT_GRID_2D_OPTIONS.lodFinerLevels, "lodFinerLevels"));
   if (finer < 0 || finer > 12) throw new RangeError("lodFinerLevels must be between 0 and 12");
   const total = Math.trunc(finite(options.lodTotalLevels ?? DEFAULT_GRID_2D_OPTIONS.lodTotalLevels, "lodTotalLevels"));
   if (total < 3 || total > 24) throw new RangeError("lodTotalLevels must be between 3 and 24");
+  const dotFadeFromPixels = positive(options.dotFadeFromPixels ?? DEFAULT_GRID_2D_OPTIONS.dotFadeFromPixels, "dotFadeFromPixels");
+  const dotFadeToPixels = positive(options.dotFadeToPixels ?? DEFAULT_GRID_2D_OPTIONS.dotFadeToPixels, "dotFadeToPixels");
+  if (dotFadeToPixels <= dotFadeFromPixels) throw new RangeError("dotFadeToPixels must be greater than dotFadeFromPixels");
   return {
     cellSize: positive(options.cellSize ?? DEFAULT_GRID_2D_OPTIONS.cellSize, "cellSize"),
     minPixelsBetweenCells: positive(options.minPixelsBetweenCells ?? DEFAULT_GRID_2D_OPTIONS.minPixelsBetweenCells, "minPixelsBetweenCells"),
@@ -203,6 +308,17 @@ export function resolveGrid2DOptions(options: InfiniteGrid2DOptions = {}): Resol
     thinLineColor: colorValue(options.thinLineColor ?? DEFAULT_GRID_2D_OPTIONS.thinLineColor, "thinLineColor"),
     thickLineColor: colorValue(options.thickLineColor ?? DEFAULT_GRID_2D_OPTIONS.thickLineColor, "thickLineColor"),
     debugLodColors: options.debugLodColors ?? DEFAULT_GRID_2D_OPTIONS.debugLodColors,
+    displayMode: displayModeValue(options.displayMode),
+    dotRadiusPixels: positive(options.dotRadiusPixels ?? DEFAULT_GRID_2D_OPTIONS.dotRadiusPixels, "dotRadiusPixels"),
+    dotFadeFromPixels,
+    dotFadeToPixels,
+    dotSpacingFactor: ranged(
+      options.dotSpacingFactor ?? DEFAULT_GRID_2D_OPTIONS.dotSpacingFactor,
+      "dotSpacingFactor",
+      1.5,
+      16,
+    ),
+    dotColor: colorValue(options.dotColor ?? DEFAULT_GRID_2D_OPTIONS.dotColor, "dotColor"),
   };
 }
 
@@ -260,7 +376,7 @@ export class InfiniteGrid2D {
     this.#options = resolveGrid2DOptions({ ...this.#options, ...options });
   }
 
-  /** Demo extension: scales both line alphas without discarding their reference ratio. */
+  /** Demo extension: scales the line alphas and the dot alpha without discarding their ratio. */
   setOpacity(opacity: number): void {
     this.#opacity = Math.min(Math.max(opacity, 0), 1);
   }
@@ -285,6 +401,19 @@ export class InfiniteGrid2D {
         minLodPower: powers.min,
         maxLodPower: powers.max,
         debugLodColors: options.debugLodColors ? 1 : 0,
+        dotOptions: [
+          options.dotRadiusPixels,
+          options.dotFadeFromPixels,
+          options.dotFadeToPixels,
+          options.dotSpacingFactor,
+        ],
+        dotColor: linearGridColor(options.dotColor, options.dotColor[3] * this.#opacity),
+        layerOptions: [
+          options.displayMode === "grid" ? 0 : 1,
+          options.displayMode === "dots" ? 0 : 1,
+          0,
+          0,
+        ],
         thinLineColor: linearGridColor(options.thinLineColor, options.thinLineColor[3] * this.#opacity),
         thickLineColor: linearGridColor(options.thickLineColor, options.thickLineColor[3] * this.#opacity),
       },

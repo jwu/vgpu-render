@@ -12,8 +12,15 @@
  *
  * Everything else (`grid_size`, `cell_size`, `line_width_pixels`, LOD ranges,
  * center/grazing/edge/far fades, stipple discard and line colors) mirrors the
- * reference uniforms one to one. `setOpacity` is the only demo-side extension:
- * it scales the two reference line alphas instead of replacing them.
+ * reference uniforms one to one. `setOpacity` is the first demo-side extension:
+ * it scales the reference line alphas (and the dot alpha) instead of replacing them.
+ *
+ * `displayMode` and the `dot*` options are a second, non-reference extension: the
+ * same quad can additionally render an endless dot lattice, ported from the
+ * tldraw-style dot field in `~/dev/tools/ai-workflow/src/canvas/dots.tsx` (fixed
+ * screen radius, 4x spacing ladder, 6 -> 20 px fade-in). The reference addon has no
+ * dot field, so those uniforms are appended after its own and documented as gallery
+ * extensions in the README.
  */
 
 
@@ -43,12 +50,18 @@ struct GridUniforms {
   optionsB: vec4<u32>,
   thinLineColor: vec4f,
   thickLineColor: vec4f,
+  // Demo extension (the reference addon has no dot field): x = dot radius in screen
+  // pixels, y / z = screen-spacing fade range, w = spacing factor between dot layers.
+  dotOptions: vec4f,
+  dotColor: vec4f,
 }
 @group(0) @binding(0) var<uniform> grid: GridUniforms;
 
 // optionsA: x = camera_is_orthogonal, y = debug_lod_colors, z = enable_grazing_opacity,
 //           w = enable_stipple_discard.
-// optionsB: x = enable_lod_center_fade.
+// optionsB: x = enable_lod_center_fade, y = enable_dot_field, z = enable_grid_lines.
+// displayMode is exclusive, so exactly one of y / z is set; the fragment stage still
+// composites both layers when both bits are set, which keeps the two paths symmetric.
 
 struct In { @location(0) position: vec3f }
 struct Out {
@@ -94,69 +107,53 @@ fn lodCenterFade(uv: vec2f, currentCellSize: f32) -> f32 {
   return 1.0 - min(1.0, length(levelCoord));
 }
 
+// Dot field ported from ai-workflow's canvas (dots.tsx, itself tldraw's DefaultGrid):
+// dots on the grid lattice with a screen-space radius, a 4x spacing ladder and a
+// spacing-driven fade-in, so zooming never turns distant dots into a grey wash.
+fn dotLayerAlpha(uv: vec2f, spacing: f32) -> f32 {
+  let coord = uv / spacing;
+  let derivative = max(abs(dpdx(coord)) + abs(dpdy(coord)), vec2f(0.00001));
+  // Pixels spanned by one cell on each axis; anisotropic when the plane is foreshortened.
+  let cellPixels = 1.0 / derivative;
+  // Offset to the nearest lattice point, at most half a cell per axis.
+  let toNearest = fract(coord + 0.5) - 0.5;
+  let distancePixels = length(toNearest * cellPixels);
+  let radius = max(grid.dotOptions.x, 0.25);
+  let coverage = 1.0 - smoothstep(radius - 0.5, radius + 0.5, distancePixels);
+  // Fade the whole layer by its narrowest on-screen spacing.
+  let spacingPixels = min(cellPixels.x, cellPixels.y);
+  let fadeFrom = grid.dotOptions.y;
+  let fadeTo = max(grid.dotOptions.z, fadeFrom + 0.00001);
+  let fade = clamp((spacingPixels - fadeFrom) / (fadeTo - fadeFrom), 0.0, 1.0);
+  return coverage * fade;
+}
+
+// Four layers spaced by dotOptions.w (default 4x) keep a roughly constant screen
+// density at any camera distance. The ladder slides with the camera, and the layer that
+// leaves the window is the sparsest one, so its removal costs under one dot per viewport.
+fn dotFieldAlpha(uv: vec2f) -> f32 {
+  let safeCellSize = max(grid.cellSize, 0.00001);
+  let factor = max(grid.dotOptions.w, 1.5);
+  // World size of one screen pixel across the plane picks the finest visible layer.
+  let pixelWorld = max(length(vec2f(length(dpdx(uv)), length(dpdy(uv)))), 0.000001);
+  let steps = clamp(
+    floor(log(grid.dotOptions.z * pixelWorld / safeCellSize) / log(factor)),
+    -12.0,
+    12.0
+  );
+  let baseSpacing = safeCellSize * pow(factor, steps);
+  var alpha = 0.0;
+  for (var layer = -1; layer <= 2; layer = layer + 1) {
+    alpha = max(alpha, dotLayerAlpha(uv, baseSpacing * pow(factor, f32(layer))));
+  }
+  // The dot field shares the reference center fade so it stays inside the visible band.
+  return alpha * lodCenterFade(uv, baseSpacing);
+}
+
 @fragment fn fs_main(input: Out) -> @location(0) vec4f {
   let uv = input.world.xz;
 
-  let safeCellSize = max(grid.cellSize, 0.00001);
-  let minPower = min(grid.minLodPower, grid.maxLodPower - 2.0);
-  let maxPower = max(grid.maxLodPower, minPower + 2.0);
-  let minLodCellSize = safeCellSize * pow(10.0, minPower);
-  let lodDistance = max(grid.cameraLodDistance, minLodCellSize);
-  let currentLodPower = clamp(
-    floor(log(lodDistance / safeCellSize) / log(10.0)),
-    minPower,
-    maxPower
-  );
-
-  // Select the current decimal LOD and fade toward the next coarser cell size.
-  let currentLodCellSize = safeCellSize * pow(10.0, currentLodPower);
-  let nextLodCellSize = currentLodCellSize * 10.0;
-  let lodFade = clamp(
-    (lodDistance - currentLodCellSize) / max(nextLodCellSize - currentLodCellSize, 0.00001),
-    0.0,
-    1.0
-  );
-
-  // Three neighboring LOD layers: fine lines fade out while major lines remain.
-  let lod0Power = clamp(currentLodPower - 1.0, minPower, maxPower);
-  let lod1Power = clamp(currentLodPower, minPower, maxPower);
-  let lod2Power = clamp(currentLodPower + 1.0, minPower, maxPower);
-  let lod0CellSize = safeCellSize * pow(10.0, lod0Power);
-  let lod1CellSize = safeCellSize * pow(10.0, lod1Power);
-  let lod2CellSize = safeCellSize * pow(10.0, lod2Power);
-
-  let lod0Alpha = gridLineAlpha(uv, lod0CellSize) * lodCenterFade(uv, lod0CellSize) * (1.0 - lodFade);
-  let lod1Alpha = gridLineAlpha(uv, lod1CellSize) * lodCenterFade(uv, lod1CellSize);
-  let lod2Alpha = gridLineAlpha(uv, lod2CellSize) * lodCenterFade(uv, lod2CellSize);
-
-  // Prevent overlapping LOD layers from stacking alpha and causing brightness jumps.
-  let lod2VisibleAlpha = lod2Alpha;
-  let lod1VisibleAlpha = lod1Alpha * (1.0 - lod2VisibleAlpha);
-  let lod0VisibleAlpha = lod0Alpha * (1.0 - lod1Alpha) * (1.0 - lod2VisibleAlpha);
-
-  // Blend minor/current/major line colors across the active LOD transition.
-  var lod0Color = grid.thinLineColor;
-  var lod1Color = mix(grid.thickLineColor, grid.thinLineColor, lodFade);
-  var lod2Color = grid.thickLineColor;
-  if (grid.optionsA.y != 0u) {
-    // Debug layers: blue = lower/finer, green = current, red = upper/coarser.
-    // Only RGB is replaced so alpha stays directly comparable with debug off.
-    lod0Color = vec4f(0.1, 0.35, 1.0, lod0Color.a);
-    lod1Color = vec4f(0.1, 1.0, 0.25, lod1Color.a);
-    lod2Color = vec4f(1.0, 0.15, 0.1, lod2Color.a);
-  }
-
-  let lod0LayerAlpha = lod0VisibleAlpha * lod0Color.a;
-  let lod1LayerAlpha = lod1VisibleAlpha * lod1Color.a;
-  let lod2LayerAlpha = lod2VisibleAlpha * lod2Color.a;
-  let lineAlpha = clamp(lod0LayerAlpha + lod1LayerAlpha + lod2LayerAlpha, 0.0, 1.0);
-  let lineColor = (
-    lod0Color.rgb * lod0LayerAlpha +
-    lod1Color.rgb * lod1LayerAlpha +
-    lod2Color.rgb * lod2LayerAlpha
-  ) / max(lineAlpha, 0.00001);
-
-  // Fade out near the finite mesh bounds so the grid appears endless.
+  // Fade out near the finite mesh bounds so the field appears endless.
   let halfGridSize = max(grid.gridSize * 0.5, 0.00001);
   let normalizedGridCoord = (uv - grid.gridCenter) / halfGridSize;
   let edgeStart = clamp(grid.edgeFadeStartRatio, 0.0, 1.0);
@@ -189,33 +186,115 @@ fn lodCenterFade(uv: vec2f, currentCellSize: f32) -> f32 {
     grazingOpacity = smoothstep(0.0, 1.0, grazingProgress);
   }
 
-  // Fade near the camera far clip before the grid is clipped by depth.
+  // Fade near the camera far clip before the plane is clipped by depth.
   let farClip = max(grid.cameraFarClip, 0.00001);
   let cameraDistance = length(grid.cameraPosition - input.world);
   let distanceOpacity = 1.0 - smoothstep(0.0, 0.5 * farClip, cameraDistance - 0.5 * farClip);
 
-  let alpha = lineAlpha * edgeOpacity * distanceOpacity * grazingOpacity;
+  // Lines and dots share the same quad, so they share one set of plane fades.
+  let visibility = edgeOpacity * distanceOpacity * grazingOpacity;
 
-  // Stipple discard below 0.1 alpha avoids muddy trails from transparent depth blending.
-  if (grid.optionsA.w != 0u) {
-    let dashCoord = uv / lod1CellSize;
-    let dashDistanceToLine = min(fract(dashCoord), 1.0 - fract(dashCoord));
-    let dashAxis = select(input.clip.x, input.clip.y, dashDistanceToLine.x < dashDistanceToLine.y);
-    if (alpha < 0.1 && alpha / 0.1 < fract(dashAxis / 4.0)) {
-      discard;
+  var lineAlpha = 0.0;
+  var lineColor = vec3f(0.0);
+  if (grid.optionsB.z != 0u) {
+    let safeCellSize = max(grid.cellSize, 0.00001);
+    let minPower = min(grid.minLodPower, grid.maxLodPower - 2.0);
+    let maxPower = max(grid.maxLodPower, minPower + 2.0);
+    let minLodCellSize = safeCellSize * pow(10.0, minPower);
+    let lodDistance = max(grid.cameraLodDistance, minLodCellSize);
+    let currentLodPower = clamp(
+      floor(log(lodDistance / safeCellSize) / log(10.0)),
+      minPower,
+      maxPower
+    );
+
+    // Select the current decimal LOD and fade toward the next coarser cell size.
+    let currentLodCellSize = safeCellSize * pow(10.0, currentLodPower);
+    let nextLodCellSize = currentLodCellSize * 10.0;
+    let lodFade = clamp(
+      (lodDistance - currentLodCellSize) / max(nextLodCellSize - currentLodCellSize, 0.00001),
+      0.0,
+      1.0
+    );
+
+    // Three neighboring LOD layers: fine lines fade out while major lines remain.
+    let lod0Power = clamp(currentLodPower - 1.0, minPower, maxPower);
+    let lod1Power = clamp(currentLodPower, minPower, maxPower);
+    let lod2Power = clamp(currentLodPower + 1.0, minPower, maxPower);
+    let lod0CellSize = safeCellSize * pow(10.0, lod0Power);
+    let lod1CellSize = safeCellSize * pow(10.0, lod1Power);
+    let lod2CellSize = safeCellSize * pow(10.0, lod2Power);
+
+    let lod0Alpha = gridLineAlpha(uv, lod0CellSize) * lodCenterFade(uv, lod0CellSize) * (1.0 - lodFade);
+    let lod1Alpha = gridLineAlpha(uv, lod1CellSize) * lodCenterFade(uv, lod1CellSize);
+    let lod2Alpha = gridLineAlpha(uv, lod2CellSize) * lodCenterFade(uv, lod2CellSize);
+
+    // Prevent overlapping LOD layers from stacking alpha and causing brightness jumps.
+    let lod2VisibleAlpha = lod2Alpha;
+    let lod1VisibleAlpha = lod1Alpha * (1.0 - lod2VisibleAlpha);
+    let lod0VisibleAlpha = lod0Alpha * (1.0 - lod1Alpha) * (1.0 - lod2VisibleAlpha);
+
+    // Blend minor/current/major line colors across the active LOD transition.
+    var lod0Color = grid.thinLineColor;
+    var lod1Color = mix(grid.thickLineColor, grid.thinLineColor, lodFade);
+    var lod2Color = grid.thickLineColor;
+    if (grid.optionsA.y != 0u) {
+      // Debug layers: blue = lower/finer, green = current, red = upper/coarser.
+      // Only RGB is replaced so alpha stays directly comparable with debug off.
+      lod0Color = vec4f(0.1, 0.35, 1.0, lod0Color.a);
+      lod1Color = vec4f(0.1, 1.0, 0.25, lod1Color.a);
+      lod2Color = vec4f(1.0, 0.15, 0.1, lod2Color.a);
+    }
+
+    let lod0LayerAlpha = lod0VisibleAlpha * lod0Color.a;
+    let lod1LayerAlpha = lod1VisibleAlpha * lod1Color.a;
+    let lod2LayerAlpha = lod2VisibleAlpha * lod2Color.a;
+    let lineCompositeAlpha = clamp(lod0LayerAlpha + lod1LayerAlpha + lod2LayerAlpha, 0.0, 1.0);
+    lineColor = (
+      lod0Color.rgb * lod0LayerAlpha +
+      lod1Color.rgb * lod1LayerAlpha +
+      lod2Color.rgb * lod2LayerAlpha
+    ) / max(lineCompositeAlpha, 0.00001);
+    lineAlpha = lineCompositeAlpha * visibility;
+
+    // Stipple discard below 0.1 alpha avoids muddy trails from transparent depth blending.
+    if (grid.optionsA.w != 0u) {
+      let dashCoord = uv / lod1CellSize;
+      let dashDistanceToLine = min(fract(dashCoord), 1.0 - fract(dashCoord));
+      let dashAxis = select(input.clip.x, input.clip.y, dashDistanceToLine.x < dashDistanceToLine.y);
+      if (lineAlpha < 0.1 && lineAlpha / 0.1 < fract(dashAxis / 4.0)) {
+        discard;
+      }
     }
   }
 
+  var dotAlpha = 0.0;
+  if (grid.optionsB.y != 0u) {
+    dotAlpha = dotFieldAlpha(uv) * grid.dotColor.a * visibility;
+  }
+
+  // Lines sit above the dots; one straight-alpha composite keeps the plane's depth
+  // write and two-sided blending behaviour unchanged.
+  let alpha = clamp(lineAlpha + dotAlpha * (1.0 - lineAlpha), 0.0, 1.0);
   if (alpha <= 0.001) {
     discard;
   }
-
-  return vec4f(lineColor, alpha);
+  let color = (
+    lineColor * lineAlpha + grid.dotColor.rgb * dotAlpha * (1.0 - lineAlpha)
+  ) / max(alpha, 0.00001);
+  return vec4f(color, alpha);
 }
 `);
 
 /** Projection taken from the reference `Camera3D.PROJECTION_*` modes. */
 export type GridProjection = "perspective" | "orthographic";
+
+/**
+ * Which layer the shared finite quad draws. Demo extension: the reference addon
+ * only renders the line grid, and the gallery exposes the two modes as an exclusive
+ * choice rather than an additive one.
+ */
+export type GridDisplayMode = "grid" | "dots";
 
 /** Reference `Color` values; alpha participates in the layer compositing. */
 export type GridColor = readonly [number, number, number, number];
@@ -253,6 +332,18 @@ export type InfiniteGridOptions = {
   thickLineColor?: GridColor;
   /** Reference `debug_lod_colors`. Default false. */
   debugLodColors?: boolean;
+  /** Demo extension: which layers the quad draws. Default `"grid"`. */
+  displayMode?: GridDisplayMode;
+  /** Demo extension: dot radius in screen pixels. Default 2. */
+  dotRadiusPixels?: number;
+  /** Demo extension: dot layers narrower than this on screen fade out. Default 6. */
+  dotFadeFromPixels?: number;
+  /** Demo extension: dot layers at this on-screen spacing reach full strength. Default 20. */
+  dotFadeToPixels?: number;
+  /** Demo extension: spacing factor between neighbouring dot layers. Default 4. */
+  dotSpacingFactor?: number;
+  /** Demo extension: dot color; alpha participates like the line alphas. Default [0.62, 0.62, 0.62, 0.55]. */
+  dotColor?: GridColor;
 };
 
 /**
@@ -272,6 +363,12 @@ export type GridCameraState = {
 
 const REFERENCE_THIN_LINE_COLOR: GridColor = [0.42, 0.42, 0.42, 0.45];
 const REFERENCE_THICK_LINE_COLOR: GridColor = [0.62, 0.62, 0.62, 0.65];
+/** Slightly below the thick line alpha: dots overlap the lines they sit on. */
+const DEFAULT_DOT_COLOR: GridColor = [0.62, 0.62, 0.62, 0.55];
+const DEFAULT_DOT_RADIUS_PIXELS = 2;
+const DEFAULT_DOT_FADE_FROM_PIXELS = 6;
+const DEFAULT_DOT_FADE_TO_PIXELS = 20;
+const DEFAULT_DOT_SPACING_FACTOR = 4;
 const MIN_LOD_CELL_SIZE = 0.0001;
 
 type ResolvedGridOptions = {
@@ -291,10 +388,17 @@ type ResolvedGridOptions = {
   thinLineColor: GridColor;
   thickLineColor: GridColor;
   debugLodColors: boolean;
+  displayMode: GridDisplayMode;
+  dotRadiusPixels: number;
+  dotFadeFromPixels: number;
+  dotFadeToPixels: number;
+  dotSpacingFactor: number;
+  dotColor: GridColor;
 };
 
 /** Mirrors the reference property setters, including their clamps. */
 export function resolveGridOptions(options: InfiniteGridOptions): ResolvedGridOptions {
+  const dotFadeFromPixels = Math.max(options.dotFadeFromPixels ?? DEFAULT_DOT_FADE_FROM_PIXELS, 0.5);
   return {
     size: Math.max(options.size ?? 2000, 1),
     edgeFadeStartRatio: clamp(options.edgeFadeStartRatio ?? 0, 0, 1),
@@ -312,6 +416,12 @@ export function resolveGridOptions(options: InfiniteGridOptions): ResolvedGridOp
     thinLineColor: options.thinLineColor ?? REFERENCE_THIN_LINE_COLOR,
     thickLineColor: options.thickLineColor ?? REFERENCE_THICK_LINE_COLOR,
     debugLodColors: options.debugLodColors ?? false,
+    displayMode: options.displayMode ?? "grid",
+    dotRadiusPixels: Math.max(options.dotRadiusPixels ?? DEFAULT_DOT_RADIUS_PIXELS, 0.25),
+    dotFadeFromPixels,
+    dotFadeToPixels: Math.max(options.dotFadeToPixels ?? DEFAULT_DOT_FADE_TO_PIXELS, dotFadeFromPixels + 0.5),
+    dotSpacingFactor: clamp(options.dotSpacingFactor ?? DEFAULT_DOT_SPACING_FACTOR, 1.5, 16),
+    dotColor: options.dotColor ?? DEFAULT_DOT_COLOR,
   };
 }
 
@@ -422,8 +532,8 @@ export class InfiniteGrid3D {
   }
 
   /**
-   * Demo extension over the reference addon: scales `thin_line_color.a` and
-   * `thick_line_color.a` without discarding their reference ratio.
+   * Demo extension over the reference addon: scales `thin_line_color.a`,
+   * `thick_line_color.a` and the dot alpha without discarding their reference ratio.
    */
   setOpacity(opacity: number): void {
     this.#opacity = clamp(opacity, 0, 1);
@@ -436,6 +546,7 @@ export class InfiniteGrid3D {
     const grazing = grazingFactors(options);
     const thinAlpha = options.thinLineColor[3] * this.#opacity;
     const thickAlpha = options.thickLineColor[3] * this.#opacity;
+    const dotAlpha = options.dotColor[3] * this.#opacity;
 
     this.#draw.set({
       grid: {
@@ -461,9 +572,21 @@ export class InfiniteGrid3D {
           options.enableGrazingOpacity ? 1 : 0,
           options.enableStippleDiscard ? 1 : 0,
         ],
-        optionsB: [options.enableLodCenterFade ? 1 : 0, 0, 0, 0],
+        optionsB: [
+          options.enableLodCenterFade ? 1 : 0,
+          options.displayMode === "grid" ? 0 : 1,
+          options.displayMode === "dots" ? 0 : 1,
+          0,
+        ],
         thinLineColor: linearGridColor(options.thinLineColor, thinAlpha),
         thickLineColor: linearGridColor(options.thickLineColor, thickAlpha),
+        dotOptions: [
+          options.dotRadiusPixels,
+          options.dotFadeFromPixels,
+          options.dotFadeToPixels,
+          options.dotSpacingFactor,
+        ],
+        dotColor: linearGridColor(options.dotColor, dotAlpha),
       },
     });
     pass.draw(this.#draw);
