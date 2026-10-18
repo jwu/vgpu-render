@@ -57,25 +57,30 @@ export type Page2DLabels = {
   readonly title: string;
   readonly note: string;
   readonly columns: readonly Column2D[];
+  /** Column pitch in `world2d` units. Defaults to `COLUMN_SPACING`; a wide page tightens it. */
+  readonly spacing?: number;
 };
 
 const COLUMN_SPACING = 200;
 const ROW_SPACING = 120;
-const COLUMN_TITLE_FONT = 21;
-const SAMPLE_LABEL_FONT = 17;
+const COLUMN_TITLE_FONT = 23;
+const SAMPLE_LABEL_FONT = 19;
 
 /** Column titles and sample labels of every matrix page, shared with `scene-examples.ts`. */
 export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   "2d-lines": {
     title: "2D Lines",
-    note: "line · width, alpha, gradient, dash · open strip and closed loop joints · drag to pan, scroll to zoom",
+    note: "line · width, alpha, gradient, dash · open strip and closed loop, solid and dashed · drag to pan, scroll to zoom",
+    spacing: 175,
     columns: [
       { title: "line(width)", samples: ["w: 2", "w: 6", "w: 12", "w: 24"] },
       { title: "line(alpha)", samples: ["a: .25", "a: .50", "a: .75", "a: 1.0"] },
-      { title: "line(gradient)", samples: ["action→ring", "cool→warm", "accent→cool", "warm→action"] },
+      { title: "line(grad)", samples: ["action→ring", "cool→warm", "accent→cool", "warm→action"] },
       { title: "line(dash)", samples: ["24 / 8", "12 / 12", "6 / 18", "2 / 12"] },
-      { title: "linestrip(joint)", samples: ["none", "round", "bevel", "miter"] },
-      { title: "lineloop(joint)", samples: ["none", "round", "bevel", "miter"] },
+      { title: "strip(joint)", samples: ["none", "round", "bevel", "miter"] },
+      { title: "strip(dash)", samples: ["none", "round", "bevel", "miter"] },
+      { title: "loop(joint)", samples: ["none", "round", "bevel", "miter"] },
+      { title: "loop(dash)", samples: ["none", "round", "bevel", "miter"] },
     ],
   },
   "2d-curves": {
@@ -168,7 +173,8 @@ export function page2DView(id: string): { readonly width: number; readonly heigh
   const labels = LABELS_2D[id];
   const columns = labels?.columns.length ?? 1;
   const rows = tableRows(id);
-  return { width: (columns - 1) * COLUMN_SPACING + 300, height: (rows - 1) * ROW_SPACING + 300 };
+  const spacing = labels?.spacing ?? COLUMN_SPACING;
+  return { width: (columns - 1) * spacing + 300, height: (rows - 1) * ROW_SPACING + 300 };
 }
 
 /**
@@ -181,7 +187,8 @@ function table2D(recorder: FrameRecorder, id: string): Table2D {
   if (labels === undefined) throw new Error(`no 2D label table for "${id}"`);
   const columns = labels.columns.length;
   const rows = tableRows(id);
-  const columnX = (column: number): number => (column - (columns - 1) / 2) * COLUMN_SPACING;
+  const spacing = labels.spacing ?? COLUMN_SPACING;
+  const columnX = (column: number): number => (column - (columns - 1) / 2) * spacing;
   const rowY = (row: number): number => ((rows - 1) / 2 - row) * ROW_SPACING;
   const titleY = (rows * ROW_SPACING) / 2 + 24;
   labels.columns.forEach((column, index) => {
@@ -333,42 +340,42 @@ function lines2D(recorder: FrameRecorder): void {
     [2, 12, 0],
   ];
   const joints: readonly LineJoint[] = ["none", "round", "bevel", "miter"];
+  const stripDash = [24, 14, 0] as const;
   for (let row = 0; row < rows; row++) {
     const y = rowY(row);
-    const start = columnX(0) - 62;
-    const end = columnX(0) + 74;
+    const start = columnX(0) - 52;
+    const end = columnX(0) + 58;
     d2.line([start, y], [end, y], { width: widths[row]!, color: FILL });
-    d2.line([columnX(1) - 62, y], [columnX(1) + 74, y], {
+    d2.line([columnX(1) - 52, y], [columnX(1) + 58, y], {
       width: 9,
       color: [ACTION[0], ACTION[1], ACTION[2], alphas[row]!],
     });
     const [from, to] = gradients[row]!;
-    d2.line([columnX(2) - 62, y], [columnX(2) + 74, y], { width: 7, color: from, colorEnd: to });
-    d2.line([columnX(3) - 62, y], [columnX(3) + 74, y], { width: 7, dash: dashes[row]!, color: COOL });
-    const jointX = columnX(4);
-    d2.lineStrip(
-      [
-        [jointX - 62, y + 24],
-        [jointX - 31, y - 24],
-        [jointX, y + 24],
-        [jointX + 31, y - 24],
-        [jointX + 62, y + 24],
-      ],
-      { width: 11, joint: joints[row]!, color: RING },
-    );
-    // Closed path: the last point joins the first and the corner joints wrap around, so every
-    // corner shows the same wedge treatment as the open strip beside it.
-    const loopX = columnX(5);
-    d2.lineStrip(
-      [
-        [loopX - 58, y + 30],
-        [loopX + 58, y + 30],
-        [loopX + 58, y - 30],
-        [loopX - 58, y - 30],
-      ],
-      { width: 11, joint: joints[row]!, color: WARM },
-      true,
-    );
+    d2.line([columnX(2) - 52, y], [columnX(2) + 58, y], { width: 7, color: from, colorEnd: to });
+    d2.line([columnX(3) - 52, y], [columnX(3) + 58, y], { width: 7, dash: dashes[row]!, color: COOL });
+
+    const zigzag = (x: number): Vec2[] => [
+      [x - 54, y + 22],
+      [x - 27, y - 22],
+      [x, y + 22],
+      [x + 27, y - 22],
+      [x + 54, y + 22],
+    ];
+    const loopPath = (x: number): Vec2[] => [
+      [x - 50, y + 26],
+      [x + 50, y + 26],
+      [x + 50, y - 26],
+      [x - 50, y - 26],
+    ];
+
+    // The dashed pair repeats the solid shapes so a reader compares dashes against the same
+    // geometry. On the loop the phase accumulates across the closing segment too, which is why
+    // the last corner does not restart the pattern.
+    d2.lineStrip(zigzag(columnX(4)), { width: 11, joint: joints[row]!, color: RING });
+    d2.lineStrip(zigzag(columnX(5)), { width: 11, joint: joints[row]!, dash: stripDash, color: ACTION });
+    // Closed paths: the last point joins the first and the corner joints wrap around.
+    d2.lineStrip(loopPath(columnX(6)), { width: 11, joint: joints[row]!, color: WARM }, true);
+    d2.lineStrip(loopPath(columnX(7)), { width: 11, joint: joints[row]!, dash: stripDash, color: ACCENT }, true);
   }
 }
 
