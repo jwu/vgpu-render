@@ -26,54 +26,95 @@
 本项目的 `zoom` 越大物体越大（乘法），二者互为倒数：`zoom = 1 / scale`。
 
 `2d_shapes` 里的 `X_EXTENT = 1000` 是 `world2d` 下的像素尺度坐标，不是左上原点坐标；
-`2d-shapes` 页沿用这个尺度，由 `view2d` 声明页面范围、引擎据此 fit 出初始 `zoom`。
+每个 `2d-<shape>` 页沿用这个尺度，由 `view2d` 声明页面范围、引擎据此 fit 出初始 `zoom`。
 
 ## 图元对照
 
+所有形状都提供三变体：`<shape>`（描边）、`<shape>_s`（填充）、`<shape>_d`（虚线描边）；
+`arc` 没有内部，所以只有 `arc` / `arc_d`。方法名决定填充还是描边，`Shape2DOptions` 不再有 `fill`。
+线条同样按方法名区分虚实：`line` / `line_d`、`ray` / `ray_d`、`lineStrip` / `lineStrip_d`、
+`polyline` / `polyline_d`、`lineLoop` / `lineLoop_d`、`grid` / `grid_d`；`Line2DOptions` 不再有 `dash`。
+
 | bevy 2D | `frame.d2` | 说明 |
 | --- | --- | --- |
-| `gizmos.line_2d` / `ray_2d` | `line` / `ray` | 宽度为像素；`widthMode: "world"` 随 zoom 缩放 |
-| `linestrip_2d` / `linestrip_gradient_2d` | `lineStrip` / `polyline` | 渐变只支持端点 `color` → `colorEnd` |
-| `grid_2d` | `grid` | 扩展了 3D grid 的 `rotation` / `skew` / `outer`（x/y 边界），参数与 3D 对齐 |
-| `rect_2d` / `rounded_rect_2d` | `rect` / `roundedRect` | bevy gizmo 默认描边，这里默认填充，`fill: false` 得到描边 |
+| `gizmos.line_2d` / `ray_2d` | `line` / `line_d`、`ray` / `ray_d` | 宽度为像素；`widthMode: "world"` 随 zoom 缩放；`_d` 接收 `[visible, gap, phase]` |
+| `linestrip_2d` / `linestrip_gradient_2d` | `lineStrip` / `lineStrip_d` / `polyline`、闭合路径用 `lineLoop` / `lineLoop_d` | 渐变只支持端点 `color` → `colorEnd` |
+| `grid_2d` | `grid` / `grid_d` | 扩展了 3D grid 的 `rotation` / `skew` / `outer`（x/y 边界），参数与 3D 对齐 |
+| `rect_2d` / `rounded_rect_2d` | `rect` / `rect_r` | bevy gizmo 与这里都默认描边；`_s` 得到填充，`_d` 得到虚线 |
 | `circle_2d` / `ellipse_2d` | `circle` / `ellipse` | |
 | `arc_2d` | `arc` + `startAngle` / `sweep` | 未提供 `long/short_arc_2d_between` |
 | `cross_2d` | 两条 `line` 组合 | 没有专门的 API |
-| `arrow_2d`（含 `with_double_end`、`with_tip_length`） | `line` + `triangle` 组合 | 未提供 builder |
+| `arrow_2d`（含 `with_double_end`、`with_tip_length`） | `arrow` / `arrow_s` / `arrow_d` / `arrow_s_d` | 默认 line 头，`_s` 填充三角头，`_d` 虚线；未提供 double-end / builder |
 | `curve_gradient_2d` | `lineStrip` + 采样 | 采样在示例场景里完成 |
-| `Circle`（`2d_shapes`） | `circle` | 填充或描边 |
-| `CircularSector` | `sector` | 从 `+x` 逆时针 |
-| `CircularSegment` | `segment` | 弓形，弦与弧之间 |
-| `Ellipse` | `ellipse` | SDF 为近似距离 |
-| `Annulus` / `Ring` | `annulus` | 填充为环带，描边为两条边界 |
-| `Capsule2d` | `capsule` | 直线段沿 y，`length` 为线段长度 |
-| `Rhombus` | `rhombus` | 参数为两条完整对角线 |
-| `Rectangle` | `rect` | 参数为完整宽高 |
-| `RegularPolygon` | `polygon` | 一个顶点在 `+x` |
-| `Triangle2d` | `triangle` | 三个绝对顶点，旋转围绕质心 |
+| —（3D `draw_curve` 的 2D 对应） | `curve` / `curve_d` | `Curve2D` cubic 控制点采样，参数集（width / shape / transform / tolerance / closed）与 3D curve 页对齐 |
+| `Circle`（`2d_shapes`） | `circle` / `circle_s` / `circle_d` | 描边 / 填充 / 虚线 |
+| `CircularSector` | `sector` / `sector_s` / `sector_d` | 从 `+x` 逆时针 |
+| `CircularSegment` | `segment` / `segment_s` / `segment_d` | 弓形，弦与弧之间 |
+| `Ellipse` | `ellipse` / `ellipse_s` / `ellipse_d` | SDF 与虚线弧长均为数值近似 |
+| `Annulus` / `Ring` | `annulus` / `annulus_s` / `annulus_d` | 填充为环带，描边为两条边界 |
+| `Capsule2d` | `capsule` / `capsule_s` / `capsule_d` | 直线段沿 y，`length` 为线段长度 |
+| `Rhombus` | `rhombus` / `rhombus_s` / `rhombus_d` | 参数为两条完整对角线 |
+| `Rectangle` | `rect` / `rect_s` / `rect_d` | 描边 / 填充 / 虚线描边，参数为完整宽高 |
+| `RegularPolygon` | `polygon` / `polygon_s` / `polygon_d` | 一个顶点在 `+x` |
+| `Triangle2d` | `triangle` / `triangle_s` / `triangle_d` | 三个绝对顶点，旋转围绕质心 |
 | `Segment2d` | `line` | 带厚度的线段 |
 | `Polyline2d` | `lineStrip` | |
-| `to_ring` / `Ring` | `fill: false` + `strokeWidth` | 任意形状的轮廓 |
+| `to_ring` / `Ring` | `<shape>` + `strokeWidth` | 任意形状的轮廓 |
+
+## 虚线描边（`<shape>_d`）
+
+每个形状的虚线都沿**周长做弧长参数化**：fragment 先取像素到最近轮廓点的周长位置
+（从 `+x` 或矩形右上角起逆时针累计），再按 `[visible, gap, phase]` 三元组切段。
+因此角上的虚线跨边连续，与 3D `draw_rect_d` 的线段累计距离一致。
+
+- 闭式解：rect、rounded-rect、circle、arc、annulus、capsule、polygon、triangle、rhombus、
+  sector、segment 都有解析周长参数。
+- 数值解：ellipse 的弧长是第二类椭圆积分，没有初等公式，shader 用 12 点 Simpson 积分近似，
+  所以它的虚线间距是近似值而不是精确弧长。
+
+段长单位是 `world2d` 单位，随 zoom 等比缩放；边界用一个画布像素的宽度做软化，
+虚线边缘与形状自身的边一样有抗锯齿。`arc` 没有内部，因此不存在 `arc_s`。
+
+每个 shape 页都按 3D 页的列序组织：先用 **normal** 列展示这个图元能做的参数变化
+（含 `color` 与 `alpha`），然后是同一轮廓的 `_d` 形态，最后是一列 `_s` 综合样例 ——
+每行同时改变尺寸、旋转、颜色和透明度，用来展示填充形态能组合出什么。normal 能做的
+变化对 `_d` 与 `_s` 同样成立，所以变体列不重复参数矩阵。
 
 ## 页面分类
 
-`2D Graphics` 分组下有九页，结构对齐 3D 场景：两页总览，七页参数矩阵。
+`2D Graphics` 分组下有十九页，结构对齐 3D 场景：一页索引（`2d-index`），十八页参数矩阵。
 
 | 页面 | 形态 | 内容 |
 | --- | --- | --- |
-| `2d-gizmos` | 总览拼贴 | bevy `2d_gizmos` 的 line / ray / grid / strip / rect / roundedRect / circle / ellipse / arc / cross / arrow / curve |
-| `2d-shapes` | 图元总览 | `2d_shapes` 的十二个图元，填充行与描边行 |
-| `2d-lines` | 矩阵 | 线宽、透明度、渐变、虚线、strip / loop 的实线与虚线接头 |
-| `2d-curves` | 矩阵 | arc 的 sweep / startAngle、short / long arc between、采样曲线与渐变曲线 |
+| `2d-index` | 索引网格 | 每个 2D API 一个格子（line / line_d / ray / lineStrip / lineLoop / grid / point / arrow / arrow_s / curve / 12 种 shape 与 `_d` / `_s` 变体），对齐 3D `index` 页 |
+| `2d-rect` | 矩阵 | `rect(width)` / `rect(size)` / `rect(rotation)` / `rect(color)` / `rect(alpha)`，然后 `rect_d(dash)` 与综合的 `rect_s(solid)` |
+| `2d-rounded-rect` | 矩阵 | `rect_r(radius)` / `(size)` / `(rotation)` / `(color)` / `(alpha)`，然后 `rect_r_d(dash)` 与综合的 `rect_r_s(solid)` |
+| `2d-circle` | 矩阵 | `circle(radius)` / `(stroke)` / `(color)` / `(alpha)`，然后 `circle_d(dash)` 与综合的 `circle_s(solid)` |
+| `2d-ellipse` | 矩阵 | `ellipse(radii)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `ellipse_d(dash)` 与综合的 `ellipse_s(solid)` |
+| `2d-arc` | 矩阵 | `arc(sweep)` / `(startAngle)` / `(radius)` / `(stroke)` / `(color)` / `(alpha)`，然后 `arc_d(dash)` |
+| `2d-annulus` | 矩阵 | `annulus(inner)` / `(outer)` / `(stroke)` / `(color)` / `(alpha)`，然后 `annulus_d(dash)` 与综合的 `annulus_s(solid)` |
+| `2d-capsule` | 矩阵 | `capsule(length)` / `(radius)` / `(rotation)` / `(color)` / `(alpha)`，然后 `capsule_d(dash)` 与综合的 `capsule_s(solid)` |
+| `2d-polygon` | 矩阵 | `polygon(sides)` / `(circumradius)` / `(rotation)` / `(color)` / `(alpha)`，然后 `polygon_d(dash)` 与综合的 `polygon_s(solid)` |
+| `2d-triangle` | 矩阵 | `triangle(vertices)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `triangle_d(dash)` 与综合的 `triangle_s(solid)` |
+| `2d-rhombus` | 矩阵 | `rhombus(diagonals)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `rhombus_d(dash)` 与综合的 `rhombus_s(solid)` |
+| `2d-sector` | 矩阵 | `sector(sweep)` / `(startAngle)` / `(radius)` / `(color)` / `(alpha)`，然后 `sector_d(dash)` 与综合的 `sector_s(solid)` |
+| `2d-segment` | 矩阵 | `segment(sweep)` / `(startAngle)` / `(radius)` / `(color)` / `(alpha)`，然后 `segment_d(dash)` 与综合的 `segment_s(solid)` |
+| `2d-lines` | 矩阵 | `line(width)`/`(alpha)`/`(grad)`、`line_d(dash)`、`strip`/`strip_d`、`loop`/`loop_d` 的接头与虚线 |
+| `2d-curves` | 矩阵 | construction 带（7 种构造 + 控制点：直、平滑、平手柄、断裂、单侧、y 曲线、闭合）与 `curve(width)` / `(shape)` / `(transform)` / `(tolerance)` / `(closed)` / `curve_d(dash)` 列，布局与 3D curve 页对齐 |
 | `2d-markers` | 矩阵 | cross、方点 / 圆点、axes 长度 |
-| `2d-arrows` | 矩阵 | 实心 / line 两种箭头，按 width、head length、head angle、direction、joint、dash 成对比较 |
-| `2d-outlines` | 矩阵 | 六个图元的描边形态，每行一个 `strokeWidth` |
-| `2d-fill` | 矩阵 | 旋转、sweep、边数、capsule 长度作为行参数 |
+| `2d-arrows` | 矩阵 | `arrow` / `arrow_s` / `arrow_d` / `arrow_s_d`：width、head length、head angle、direction、joint 与 dash |
 | `2d-spaces` | 矩阵 | `world2d` / `screen` 对照，以及 `widthMode` / `sizeMode` |
 | `2d-grid` | 矩阵 | width、cells、spacing、skew、outer、rotation、color 各一列，参数表与 3D grid 对齐 |
 
 矩阵页的列标题与行标签由 `examples/shared/2d-labels.ts` 的 `LABELS_2D` 提供，`examples/registry.ts` 直接读同一张表生成
-侧栏列，所以页面和侧栏不会出现对方没有的列。标签是 `world-plane` 文本、`pixelSize: 1`，即一个字体
+侧栏列，所以页面和侧栏不会出现对方没有的列。列标题以 API 为主、单行显示 `rect(width)` / `rect_d(dash)` / `rect_s(solid)`，与 3D 页一致。
+为了容纳 `polygon(circumradius)` 这类长标题，shape 页的列距取
+`250`、列标题字号取 `20`（`LABELS_2D` 的 `spacing` / `titleFont`），字号 22 的默认值留给
+其它矩阵页。
+行标签与 3D 页面一致：右对齐放在形状**左侧**（`anchor: "center-right"`），形状位于列的右半部，
+形状中心固定在行中心。`table2D` 因此暴露 `shapeX(column)` 给场景（形状中心）和内部标签条
+（每列左半部），列标题仍居中在形状上方。样本长度单位内的标签文本用 `×` / `/` 压缩，以适配
+左侧标签条的宽度。标签是 `world-plane` 文本、`pixelSize: 1`，即一个字体
 像素等于一个 `world2d` 单位；`demo-engine.ts` 在 2D 页把传给文本渲染器的 `viewProjection` 换成
 `world2dProjection`，标签因此与图元同处一套坐标，随拖拽和缩放一起移动（3D 页仍用 3D 相机投影）。
 每一页的 `view2d` 也由同一张表推出，新增列或行不会把内容挤到 fit 范围外。
@@ -88,6 +129,8 @@
 - 形状：一个 instanced quad + 每实例 SDF 参数，fragment 求有符号距离并用 `fwidth` 做 1 像素
   抗锯齿；描边就是 `abs(d) - strokeWidth / 2`。`arc` 的距离是环带与 `startAngle`/`sweep` 扇形
   求 `max`，所以描边只覆盖扫过的弧段，不再整圆。
+- 虚线不新增管线：同一份 SDF fragment 多读一个 `dash` 实例属性，按 `perimeter_length()`
+  返回的弧长参数 `fract` 切段；`perimeter_length()` 对每种形状各写一条周长参数化函数。
 - 混绘：2D 在全部 3D 图元之后、text 之前绘制；不写深度并 pin 到近平面，因此是无条件覆盖
   3D 的 overlay。2D 页的 `world-plane` 标签也走 2D 相机矩阵（`demo-engine.ts`），与图元同一套
   坐标；`screen` 标题仍是固定像素，不受 pan / zoom 影响。
@@ -95,7 +138,7 @@
   - 设备运行在 WebGPU **compatibility mode**，整型 varying 必须写
     `@interpolate(flat, either)`，默认的 `first` 采样会被拒绝。
   - 顶点属性只有 16 个槽位，因此形状实例把 `rotation + boundingRadius` 合并为 `vec2`，
-    `sides` 编码进 `flags` 高 8 位。
+    `sides` 编码进 `flags` 高 8 位；`dash` 占第 15 个槽位（`@location(14)`）。
 
 ## 已验证
 
@@ -135,8 +178,8 @@
 - `ellipse` 使用 iq 的近似 SDF，长轴端点附近误差在 1 像素以内，不是精确距离场。
 - `polygon` 用"最近边中点方向上的边线距离"，顶点外侧会略微内缩（视觉上顶点略钝），与 bevy
   的三角化 mesh 轮廓有亚像素差异。
-- `arc` 的描边按 `startAngle` / `sweep` 裁剪，但 `fill: true` 仍退化为约 1 像素宽的曲线
-  （弧没有内部）；描边才是它的正常用法。
+- `arc` 的描边按 `startAngle` / `sweep` 裁剪；它没有内部，所以只有 `arc` / `arc_d`，没有 `arc_s`。
+- `ellipse` 的虚线用 Simpson 积分近似弧长，虚线间距与真实弧长有约 1% 的偏差。
 - `triangle` 的 `rotation` 围绕质心旋转；bevy 的 `Triangle2d` 是绝对顶点，旋转中心由
   `Transform` 决定。
 - 没有 bevy 的 `Sprite`、`Mesh2d`、材质、纹理、tilemap、2D 光照等；这一层是 debug 绘制，
@@ -152,8 +195,10 @@
 bun test tests/camera-2d.test.ts tests/frame-draw-list-2d.test.ts \
   tests/line2d.gpu.test.ts tests/shape2d.gpu.test.ts tests/scenes-2d.test.ts
 bun run dev -- --host 127.0.0.1 --port 5174
-# gallery: ?scene=2d-gizmos / ?scene=2d-shapes / ?scene=2d-lines / ?scene=2d-curves
-#          ?scene=2d-markers / ?scene=2d-arrows / ?scene=2d-outlines / ?scene=2d-fill / ?scene=2d-spaces / ?scene=2d-grid
+# gallery: ?scene=2d-index / ?scene=2d-rect / ?scene=2d-rounded-rect / ?scene=2d-circle
+#          ?scene=2d-ellipse / ?scene=2d-arc / ?scene=2d-annulus / ?scene=2d-capsule / ?scene=2d-polygon
+#          ?scene=2d-triangle / ?scene=2d-rhombus / ?scene=2d-sector / ?scene=2d-segment
+#          ?scene=2d-lines / ?scene=2d-curves / ?scene=2d-markers / ?scene=2d-arrows / ?scene=2d-spaces / ?scene=2d-grid
 ```
 
 2D 页面在 gallery 里是独立的 `2D Graphics` 分组（与 `3D Graphics`、`Text` 并列）。2D 无限网格

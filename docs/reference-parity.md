@@ -24,9 +24,11 @@ are not pixel-identical. See the README's Text section for the three placement s
 screen-space pages.
 The 2D pages are likewise not reference ports: the addon has no 2D API, so they follow bevy's
 `2d_gizmos` and `2d_shapes` examples and use the 2D layer documented in [2d-parity.md](2d-parity.md).
-They are now classified like the 3D scenes rather than as two collages: `2d-gizmos` and `2d-shapes`
-stay as overviews, and seven matrix pages (`2d-lines`, `2d-curves`, `2d-markers`, `2d-outlines`,
-`2d-fill`, `2d-spaces`, `2d-grid`) give each API family a column-by-row table with world-space labels.
+They are now classified like the 3D scenes rather than as two collages: `2d-index` stays an
+overview, each shape primitive owns a page (`2d-rect`, `2d-rounded-rect`, `2d-circle`, `2d-ellipse`,
+`2d-arc`, `2d-annulus`, `2d-capsule`, `2d-polygon`, `2d-triangle`, `2d-rhombus`, `2d-sector`,
+`2d-segment`), and `2d-lines`, `2d-curves`, `2d-markers`, `2d-arrows`, `2d-spaces`, `2d-grid` give
+each API family a column-by-row table with world-space labels.
 `demo.gd` is absent from the manifest, and text rendering is not a reference
 port. The current 17 entries
 render geometry, but that is not proof of scene or visual equivalence. GPU scene

@@ -129,10 +129,12 @@ const frame = debug.beginFrame();
 frame.d2.line([0, 0], [120, 40], { width: 2, color: [1, 0, 0, 1] });
 frame.d2.lineStrip([[0, 0], [40, 80], [90, 10]], { width: 4, joint: "round" });
 frame.d2.grid([0, 0], [8, 5], [40, 40], { color: [0.4, 0.4, 0.5, 1] });
-frame.d2.rect([0, 0], [80, 40], { fill: false, strokeWidth: 2 });
-frame.d2.roundedRect([0, -60], [120, 40], 12, { color: [1, 0.7, 0.3, 1] });
-frame.d2.circle([0, 120], 60, { color: [0, 0.5, 1, 1] });
-frame.d2.arc([0, 120], 80, { fill: false, strokeWidth: 3, startAngle: 0, sweep: Math.PI / 2 });
+frame.d2.rect([0, 0], [80, 40], { strokeWidth: 2 });
+frame.d2.rect_s([160, 0], [80, 40], { color: [0.9, 0.9, 1, 1] });
+frame.d2.rect_d([320, 0], [80, 40], [12, 6, 0], { strokeWidth: 2 });
+frame.d2.rect_r_s([0, -60], [120, 40], 12, { color: [1, 0.7, 0.3, 1] });
+frame.d2.circle_s([0, 120], 60, { color: [0, 0.5, 1, 1] });
+frame.d2.arc([0, 120], 80, { strokeWidth: 3, startAngle: 0, sweep: Math.PI / 2 });
 const commands = debug.finishFrame(frame);
 // The third argument is the 2D camera; omit it and the last one stays in effect.
 renderer.prepare(commands, { viewProjection, view }, { pan: [0, 0], zoom: 1 });
@@ -152,13 +154,26 @@ gallery); `world2d` needs no such step because its projection already reads the 
 coordinate in that sense, not a top-left one — the top-left, +y-down space is the reference UI space,
 and here it is `screen`, the same one `TextSpace "screen"` already uses.
 
-- Strokes: `line`, `ray`, `lineStrip`/`polyline`, `grid`, `point`; screen-pixel or world widths,
-dashes with the same phase accumulation as the 3D paths, and round/bevel/miter joints.
-- Shapes: `rect`, `roundedRect`, `circle`, `ellipse`, `arc`, `annulus`, `capsule`, `polygon`,
+- Strokes: `line`, `ray`, `lineStrip`/`polyline`, `lineLoop`, `grid`, `point`; every stroke has a
+`_d` twin (`line_d`, `ray_d`, `lineStrip_d`, `polyline_d`, `lineLoop_d`, `grid_d`) that takes the
+same `[visible, gap, phase]` triple and phase accumulation as the 3D dashed paths. Screen-pixel or
+world widths, and round/bevel/miter joints.
+- Arrows: `arrow` / `arrow_s` / `arrow_d` / `arrow_s_d` — the open V head by default, a filled head
+for `_s`, and the same two forms dashed for `_d`, with `headLength` / `headAngle` options.
+- Curves: `curve(curve, options)` / `curve_d(curve, dash, options)` sample a cubic control polygon
+(`Curve2D`, the 2D twin of `Curve3D`) into a strip, with `tolerance`, `transform.center/rotation/scale`
+and `closed` the same way the 3D page uses them. The 2D Curve page mirrors the 3D one: a
+construction band below the matrix draws every control point (pink anchors, amber handles) for the
+seven reference curve shapes.
+- Shapes: `rect`, `rect_r`, `circle`, `ellipse`, `arc`, `annulus`, `capsule`, `polygon`,
 `triangle`, `rhombus`, `sector`, `segment`. Each is one instanced quad evaluated as a signed
 distance field in the fragment stage, so nothing is triangulated on the CPU and an outline
-width stays a pixel count at any zoom. `fill: false` plus `strokeWidth` turns any of them into
-an outline; an `arc`'s outline is clipped to its `startAngle`/`sweep` wedge.
+width stays a pixel count at any zoom. Every primitive follows the 3D naming: `<shape>` strokes
+the outline, `<shape>_s` fills it and `<shape>_d` dashes the outline along its perimeter,
+taking the same `[visible, gap, phase]` triple as the line layer. `arc` has no interior, so it
+has no `_s` variant, and `Shape2DOptions` no longer carries `fill` — the method name decides.
+Dashes are cut from the shape's perimeter parameter, a closed form for every primitive except
+the ellipse (Simpson-integrated arc length), so they stay continuous across corners.
 - The layer is an overlay: it draws after every 3D primitive, pins itself to the near plane and
 does not write depth. Screen-space text remains the last thing drawn.
 - `InfiniteGrid2D` renders the reference's 2D grid as a full-viewport shader quad: decimal LOD levels,
@@ -167,9 +182,11 @@ does not write depth. Screen-space text remains the last thing drawn.
   the gallery's grid panel, and draws as the 2D layer's background.
 - The 2D camera is independent of the 3D one (`mode: "3d" | "2d"` in the gallery config); the
 `2d-*` pages fit their declared `view2d` extent, drag or hold WASD to pan, hold shift to sprint, and scroll to zoom. The gallery
-classifies the 2D layer like the 3D scenes: `2d-gizmos` and `2d-shapes` are overviews, while
-`2d-lines`, `2d-curves`, `2d-markers`, `2d-arrows`, `2d-outlines`, `2d-fill`, `2d-spaces` and `2d-grid` are
-column-by-row matrices whose column titles and sample labels are `world2d` text, so they pan
+classifies the 2D layer like the 3D scenes: `2d-index` is the API index, the twelve shape pages
+(`2d-rect`, `2d-rounded-rect`, `2d-circle`, `2d-ellipse`, `2d-arc`, `2d-annulus`, `2d-capsule`,
+`2d-polygon`, `2d-triangle`, `2d-rhombus`, `2d-sector`, `2d-segment`) each own one primitive, and
+`2d-lines`, `2d-curves`, `2d-markers`, `2d-arrows`, `2d-spaces`, `2d-grid` cover the stroke API
+families. Every matrix page's column titles and sample labels are `world2d` text, so they pan
 and zoom with the geometry they annotate.
 
 ## Text
