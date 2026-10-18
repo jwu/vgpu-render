@@ -113,6 +113,7 @@ export function fpsMoveSpeed(keys: ReadonlySet<string>): number {
  * One frame of WASD pan on a 2D page, in `world2d` units: `W`/`S` move along +Y/-Y, `A`/`D` along
  * -X/+X. The step is authored in CSS pixels per second and divided by the zoom (physical pixels
  * per world unit), so a held key moves the view at a constant on-screen rate at any zoom.
+ * Holding shift multiplies the step, the same sprint the FPS camera uses.
  */
 export function camera2DKeyPan(
   keys: ReadonlySet<string>,
@@ -125,7 +126,8 @@ export function camera2DKeyPan(
   if (forward === 0 && right === 0) return [0, 0];
   // Normalising keeps a diagonal press from moving sqrt(2) times faster than a single axis.
   const length = Math.hypot(forward, right);
-  const worldPerSecond = (CAMERA_2D_KEY_PAN_SPEED * pixelRatio) / Math.max(zoom, 1e-6);
+  const sprint = keys.has(FPS_SPRINT_KEY) ? CAMERA_2D_SPRINT_SCALE : 1;
+  const worldPerSecond = (CAMERA_2D_KEY_PAN_SPEED * sprint * pixelRatio) / Math.max(zoom, 1e-6);
   const step = (worldPerSecond * Math.max(delta, 0)) / length;
   return [right * step, forward * step];
 }
@@ -172,6 +174,8 @@ const CAMERA_2D_FIT_MARGIN = 0.94;
  * held key moves the camera at the same on-screen rate however far the page is zoomed in.
  */
 const CAMERA_2D_KEY_PAN_SPEED = 360;
+/** How much faster WASD pans a 2D page while shift is held. */
+const CAMERA_2D_SPRINT_SCALE = 3;
 
 /**
  * Stand-in view matrix for a 2D page. `world-plane` and `world-billboard` text read it, and a 2D

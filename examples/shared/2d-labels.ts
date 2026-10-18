@@ -27,7 +27,7 @@ export const SAMPLE_LABEL_FONT = 19;
 export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   "2d-lines": {
     title: "2D Lines",
-    note: "line · width, alpha, gradient, dash · open strip and closed loop, solid and dashed · drag or WASD to pan, scroll to zoom",
+    note: "line · width, alpha, gradient, dash · open strip and closed loop, solid and dashed · drag or WASD to pan · shift sprints · scroll to zoom",
     spacing: 175,
     columns: [
       { title: "line(width)", samples: ["w: 2", "w: 6", "w: 12", "w: 24"] },

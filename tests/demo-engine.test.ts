@@ -41,6 +41,13 @@ describe("2D keyboard pan", () => {
     expect(a[0]).toBeLessThan(0);
   });
 
+  it("sprints while shift is held", () => {
+    const normal = camera2DKeyPan(new Set(["w"]), 1, 0.5, 1);
+    const sprint = camera2DKeyPan(new Set(["w", "shift"]), 1, 0.5, 1);
+    expect(sprint[1]).toBeCloseTo(normal[1] * 3, 12);
+    expect(camera2DKeyPan(new Set(["shift"]), 1, 0.5, 1)).toEqual([0, 0]);
+  });
+
   it("normalises diagonals and scales with zoom, time and pixel ratio", () => {
     const single = camera2DKeyPan(new Set(["w"]), 1, 0.5, 1);
     const diagonal = camera2DKeyPan(new Set(["w", "d"]), 1, 0.5, 1);
