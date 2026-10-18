@@ -63,7 +63,7 @@
 | --- | --- | --- |
 | `2d-gizmos` | 总览拼贴 | bevy `2d_gizmos` 的 line / ray / grid / strip / rect / roundedRect / circle / ellipse / arc / cross / arrow / curve |
 | `2d-shapes` | 图元总览 | `2d_shapes` 的十二个图元，填充行与描边行 |
-| `2d-lines` | 矩阵 | 线宽、透明度、渐变、虚线、strip joint、ray 方向 |
+| `2d-lines` | 矩阵 | 线宽、透明度、渐变、虚线、strip joint、loop joint（闭合路径） |
 | `2d-curves` | 矩阵 | arc 的 sweep / startAngle、short / long arc between、采样曲线与渐变曲线 |
 | `2d-markers` | 矩阵 | cross、方点 / 圆点、arrow 角度与 tip 长度、axes 长度 |
 | `2d-outlines` | 矩阵 | 六个图元的描边形态，每行一个 `strokeWidth` |

@@ -175,8 +175,8 @@ export const SCENE_EXAMPLES: readonly SceneExample[] = [
   },
   page2D(
     "2d-lines",
-    "Line and ray variants: width, alpha, gradient, dash, strip joints and ray directions.",
-    "A matrix page in the shape of the 3D reference scenes, not another collage. Column titles and sample labels are world2d text, so they pan and zoom with the strokes they annotate. Every sample is one `frame.d2` call: the width and alpha columns come from the same triple bevy's gizmo config uses, the gradient uses `colorEnd`, and the joint column rebuilds the wedge from the three path points.",
+    "Line variants: width, alpha, gradient, dash, and open strip versus closed loop joints.",
+    "A matrix page in the shape of the 3D reference scenes, not another collage. Column titles and sample labels are world2d text, so they pan and zoom with the strokes they annotate. Every sample is one `frame.d2` call: the width and alpha columns come from the same triple bevy's gizmo config uses, the gradient uses `colorEnd`, and the two joint columns rebuild the wedge from the three path points — the strip stays open, the loop closes the path so the wrap-around corner is visible.",
   ),
   page2D(
     "2d-curves",

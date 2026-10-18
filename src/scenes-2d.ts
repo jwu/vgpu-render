@@ -68,14 +68,14 @@ const SAMPLE_LABEL_FONT = 17;
 export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   "2d-lines": {
     title: "2D Lines",
-    note: "line · ray · width, alpha, gradient, dash · drag to pan, scroll to zoom",
+    note: "line · width, alpha, gradient, dash · open strip and closed loop joints · drag to pan, scroll to zoom",
     columns: [
       { title: "line(width)", samples: ["w: 2", "w: 6", "w: 12", "w: 24"] },
       { title: "line(alpha)", samples: ["a: .25", "a: .50", "a: .75", "a: 1.0"] },
       { title: "line(gradient)", samples: ["action→ring", "cool→warm", "accent→cool", "warm→action"] },
       { title: "line(dash)", samples: ["24 / 8", "12 / 12", "6 / 18", "2 / 12"] },
       { title: "linestrip(joint)", samples: ["none", "round", "bevel", "miter"] },
-      { title: "ray", samples: ["-30°", "-10°", "10°", "30°"] },
+      { title: "lineloop(joint)", samples: ["none", "round", "bevel", "miter"] },
     ],
   },
   "2d-curves": {
@@ -314,7 +314,7 @@ function drawAxes(d2: FrameRecorder2D, origin: Vec2, length: number, width: numb
 // ---------------------------------------------------------------------------
 // Matrix pages.
 
-/** line, ray, width, alpha, gradient, dash and strip joints. */
+/** line, width, alpha, gradient, dash, open strip joints and closed loop joints. */
 function lines2D(recorder: FrameRecorder): void {
   pageHeading(recorder, "2d-lines");
   const { d2, columnX, rowY, rows } = table2D(recorder, "2d-lines");
@@ -333,7 +333,6 @@ function lines2D(recorder: FrameRecorder): void {
     [2, 12, 0],
   ];
   const joints: readonly LineJoint[] = ["none", "round", "bevel", "miter"];
-  const rayAngles = [-0.52, -0.17, 0.17, 0.52] as const;
   for (let row = 0; row < rows; row++) {
     const y = rowY(row);
     const start = columnX(0) - 62;
@@ -357,9 +356,19 @@ function lines2D(recorder: FrameRecorder): void {
       ],
       { width: 11, joint: joints[row]!, color: RING },
     );
-    const origin: Vec2 = [columnX(5) - 48, y];
-    const angle = rayAngles[row]!;
-    d2.ray(origin, [Math.cos(angle) * 84, Math.sin(angle) * 84], { width: 6, color: WARM });
+    // Closed path: the last point joins the first and the corner joints wrap around, so every
+    // corner shows the same wedge treatment as the open strip beside it.
+    const loopX = columnX(5);
+    d2.lineStrip(
+      [
+        [loopX - 58, y + 30],
+        [loopX + 58, y + 30],
+        [loopX + 58, y - 30],
+        [loopX - 58, y - 30],
+      ],
+      { width: 11, joint: joints[row]!, color: WARM },
+      true,
+    );
   }
 }
 
