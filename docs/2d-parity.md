@@ -101,7 +101,7 @@
 | 测试 | 覆盖 |
 | --- | --- |
 | `tests/camera-2d.test.ts` | 两种空间的矩阵、`world2dToScreen` ↔ `screenToWorld2d` 互逆、零尺寸视口、非法 zoom |
-| `tests/frame-recorder-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal |
+| `tests/frame-draw-list-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal |
 | `tests/line2d.gpu.test.ts` | 像素宽度、点定位、zoom、dash、round joint、2D 覆盖 3D |
 | `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/弧裁剪/screen 空间/AA |
 | `tests/scenes-2d.test.ts` | 九个页面只产生 2D 命令与标签、矩阵页列/行标签与侧栏一致、标签落在 fit 范围内、`2d-spaces` 两个空间都出现、形状集合覆盖、时间动画、3D 场景不受影响 |
@@ -147,7 +147,7 @@
 ## 本地验证
 
 ```bash
-bun test tests/camera-2d.test.ts tests/frame-recorder-2d.test.ts \
+bun test tests/camera-2d.test.ts tests/frame-draw-list-2d.test.ts \
   tests/line2d.gpu.test.ts tests/shape2d.gpu.test.ts tests/scenes-2d.test.ts
 bun run dev -- --host 127.0.0.1 --port 5174
 # gallery: ?scene=2d-gizmos / ?scene=2d-shapes / ?scene=2d-lines / ?scene=2d-curves

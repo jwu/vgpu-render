@@ -14,7 +14,7 @@ The gallery also ships a second family, used only by the `text-font-query` page:
 
 | Artefact | Consumer | Produced by |
 | --- | --- | --- |
-| `src/assets/vgpu-sans-faces.ts` | `loadFontFaces`, which registers eight faces under `vgpu-render-sans` | `bun scripts/build-font-faces.ts` |
+| `gallery/assets/vgpu-sans-faces.ts` | `loadFontFaces`, which registers eight faces under `vgpu-render-sans` | `bun scripts/build-font-faces.ts` |
 
 That one is **not** part of the library entry point — `demo-engine.ts` imports it, `tsconfig.build.json`
 excludes it — because a multi-weight family costs ~350 KiB of base64 and only one gallery page needs it.

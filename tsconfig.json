@@ -11,8 +11,9 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./gallery/*"],
+      "@examples/*": ["./examples/*"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "examples", "gallery", "tests"]
 }

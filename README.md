@@ -30,23 +30,23 @@ dependencies of this package.
 
 ## Usage
 
-The public API uses an explicit frame recorder:
+The public API uses an explicit frame draw list:
 
 ```ts
-const recorder = debug.beginFrame();
-recorder.point([0, 0, 0], { color: [1, 0, 0, 1], size: 8 });
-recorder.line([0, 0, 0], [1, 0, 0], { color: [0, 1, 0, 1], width: 2 });
-recorder.arrow([0, 0, 0], [1, 1, 0], { color: [0, 0.5, 1, 1] });
-recorder.lineStrip([[0, 0, 0], [1, 0, 1], [2, 0, 0]], { width: 4, joint: "round" }, false);
+const drawList = debug.beginFrame();
+drawList.point([0, 0, 0], { color: [1, 0, 0, 1], size: 8 });
+drawList.line([0, 0, 0], [1, 0, 0], { color: [0, 1, 0, 1], width: 2 });
+drawList.arrow([0, 0, 0], [1, 1, 0], { color: [0, 0.5, 1, 1] });
+drawList.lineStrip([[0, 0, 0], [1, 0, 1], [2, 0, 0]], { width: 4, joint: "round" }, false);
 // Per-vertex normals select the reference `*_n` shading: each segment uses its start
 // vertex's normal and the joints between them blend the two normals.
-recorder.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { width: 4, joint: "round", normals: [[0, 1, 0], [0, 1, 0], [0, 1, 0]] }, false);
-recorder.grid([0, 0, 0], [4, 4], [0.5, 0.5], { color: [0.4, 0.4, 0.5, 1] });
-recorder.curve(cubicBezier, { color: [1, 1, 1, 1], tolerance: 0.08 });
-recorder.mesh(sphere(0.5), { solid: true, color: [0.2, 0.6, 1, 0.8] });
-recorder.text([0, 1, 0], "world label", { fontSize: 32, pixelSize: 0.01, color: [1, 0.8, 0.2, 1] });
-recorder.text([24, 24, 0], "screen HUD", { space: "screen", anchor: "top-left", fontSize: 16 });
-const commands = debug.finishFrame(recorder);
+drawList.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { width: 4, joint: "round", normals: [[0, 1, 0], [0, 1, 0], [0, 1, 0]] }, false);
+drawList.grid([0, 0, 0], [4, 4], [0.5, 0.5], { color: [0.4, 0.4, 0.5, 1] });
+drawList.curve(cubicBezier, { color: [1, 1, 1, 1], tolerance: 0.08 });
+drawList.mesh(sphere(0.5), { solid: true, color: [0.2, 0.6, 1, 0.8] });
+drawList.text([0, 1, 0], "world label", { fontSize: 32, pixelSize: 0.01, color: [1, 0.8, 0.2, 1] });
+drawList.text([24, 24, 0], "screen HUD", { space: "screen", anchor: "top-left", fontSize: 16 });
+const commands = debug.finishFrame(drawList);
 
 // `view` is the world-to-view matrix; normal-aware strokes read it like the reference view matrix.
 renderer.prepare(commands, { viewProjection, view });
@@ -108,7 +108,7 @@ alphas, which the addon does not expose.
 ## Pipeline
 
 ```text
-FrameRecorder -> FrameCommand[] -> GpuDebugDraw3D
+FrameDrawList -> FrameCommand[] -> GpuDebugDraw3D
   points    -> instanced billboards
   lines     -> screen-space or world-space quads, dash + normal aware
   triangles -> transient solid meshes
@@ -147,7 +147,7 @@ Two coordinate spaces share one pixel-based pipeline:
 
 `world2d` mirrors the reference 2D camera: the origin is the centre of the target, `+y` points up and
 `zoom` is canvas pixels per world unit. Both spaces are in **target pixels**, like the text `screen`
-space, so a HiDPI caller scales `screen` content itself (`src/screen-scale.ts` does that for the
+space, so a HiDPI caller scales `screen` content itself (`gallery/screen-scale.ts` does that for the
 gallery); `world2d` needs no such step because its projection already reads the target size. `2d_shapes`' `X_EXTENT = 1000` is a pixel-scale world
 coordinate in that sense, not a top-left one — the top-left, +y-down space is the reference UI space,
 and here it is `screen`, the same one `TextSpace "screen"` already uses.
@@ -174,7 +174,7 @@ and zoom with the geometry they annotate.
 
 ## Text
 
-`recorder.text(position, text, options)` draws one block per call. `text` is a string or a list
+`drawList.text(position, text, options)` draws one block per call. `text` is a string or a list
 of spans, the equivalent of a text root entity plus its child span entities.
 
 Three placement spaces share one pipeline and are selected per block:
@@ -188,7 +188,7 @@ Three placement spaces share one pipeline and are selected per block:
 The `screen` space is in **target pixels** — the same units as the pass's viewport — because the
 library has no DOM access and must not guess a display density. A caller on a HiDPI display owns the
 conversion: the gallery authors its pages in CSS pixels and multiplies every screen-space command by
-`devicePixelRatio` before handing the frame over (`src/screen-scale.ts`). A block placed at
+`devicePixelRatio` before handing the frame over (`gallery/screen-scale.ts`). A block placed at
 `[24, 24]` with `fontSize: 18` in CSS pixels then draws at `[48, 48]` and 36 target pixels on a 2×
 display, which is what keeps a label the same physical size on every screen.
 
@@ -237,7 +237,7 @@ one synthesised step. `loadFontFaces(family, faces)` is the way out: it register
 of `family` with its own `weight` descriptor, so `weight: 200` through `900` select genuinely different
 faces. The gallery does exactly that for the `text-font-query` page, which draws with eight instances
 of a variable font built by `bun scripts/build-font-faces.ts` (see
-`src/assets/fonts/README.md`). That is gallery-only payload: the library's own entry point does not
+`gallery/assets/`). That is gallery-only payload: the library's own entry point does not
 carry it.
 
 A custom glyph source receives the resolved face — `{ family, weight, style, width }` — instead of a
@@ -428,8 +428,8 @@ const renderer = new GpuDebugDraw3D(gpu, {
   },
 });
 
-recorder.text([0, 0, 0], "read me", { source: "sharp" });
-recorder.text([0, -1, 0], "and me", { source: "cheap" });
+drawList.text([0, 0, 0], "read me", { source: "sharp" });
+drawList.text([0, -1, 0], "and me", { source: "cheap" });
 ```
 
 Blocks that name nothing use the first source registered, and `defaultTextStyle` can set one for the
@@ -507,7 +507,7 @@ gallery to a single glyph source (`auto`, `bitmap`, `bitmap4x`, `sdf`, `sdf4x`, 
 - `InfiniteGrid3D` shader-driven ground grid ported from the reference grid addon
   (decimal LOD layers, screen-space width, edge/grazing/center/far fades).
 - Orbit/pan/zoom camera controls in the gallery, tuned to the reference
-  `entities/free_camera.gd` and layered on a velocity model (`src/demo-camera.ts`): a drag is
+  `entities/free_camera.gd` and layered on a velocity model (`gallery/demo-camera.ts`): a drag is
   an angular velocity (0.25°/px) or a linear velocity (`distance`/FOV in perspective,
   `orthographicHeight` in orthographic), a wheel notch is a scalar velocity in log₂ space
   (1.08× per notch), and a released drag keeps its velocity and glides — the exact integral of
@@ -538,7 +538,7 @@ const debug = new DebugDraw3D({
 });
 ```
 
-`src/demo-config.ts` contains independently validated camera/view configuration
+`gallery/demo-config.ts` contains independently validated camera/view configuration
 and injected storage helpers. Gallery controls support grid, opacity, animation,
 width multiplier, projection, background, camera preset and reset; camera
 interaction is persisted. The sidebar groups them into three collapsible
@@ -557,11 +557,11 @@ deterministic preset without localStorage: `/?compare=1&scene=circle`. Orthograp
 changes the orthographic extent.
 
 The gallery UI is built with **Base UI + shadcn (base-lyra preset) + Tailwind v4**
-in `src/components/`, and the imperative WebGPU side lives in `src/demo-engine.ts`.
+in `gallery/components/`, and the imperative WebGPU side lives in `gallery/demo-engine.ts`.
 React only renders chrome; the render loop, camera, and persistence stay outside
 React and are read through `useSyncExternalStore`
-(`src/demo-hooks.ts`). `src/demo.tsx` mounts the shell, `src/index.css` holds the base-lyra
-theme tokens, and `src/demo.css` keeps the three-column layout, compare mode
+(`gallery/demo-hooks.ts`). `gallery/demo.tsx` mounts the shell, `gallery/index.css` holds the base-lyra
+theme tokens, and `gallery/demo.css` keeps the three-column layout, compare mode
 and code highlighting.
 
 Runtime comparison viewers (see `docs/visual-comparison.md` and `docs/text-reference.md`):

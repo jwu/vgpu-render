@@ -36,7 +36,7 @@ import { compute, draw, sampler, storage, texture, type Compute, type Draw, type
 import { prepareShader } from "@vgpu/wgsl/prepare";
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
-import type { TextCommand } from "./frame-recorder.js";
+import type { TextCommand } from "./frame-draw-list.js";
 import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
 import { DISTANCE_CHANNELS, DEFAULT_ATLAS_SIZE, buildMipChain, dirtyAtLevel, downsampleDistancePage, downsamplePage, extractRegion, GlyphAtlas, type GlyphEncoding } from "./text-atlas.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";

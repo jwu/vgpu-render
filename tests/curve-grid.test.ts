@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { sampleCurve, type Curve3D } from "../src/curve.js";
 import { gridLines } from "../src/geometry-generators.js";
-import { FrameRecorder } from "../src/frame-recorder.js";
+import { FrameDrawList } from "../src/frame-draw-list.js";
 
 const curve: Curve3D = {
   points: [
@@ -54,27 +54,27 @@ test("gridLines outer modes keep boundary lines instead of dropping them", () =>
 });
 
 test("arrow head parameters change generated geometry", () => {
-  const short = new FrameRecorder();
+  const short = new FrameDrawList();
   short.arrow([0, 0, 0], [1, 0, 0], { headLength: 0.1, headAngle: Math.PI / 9 });
-  const wide = new FrameRecorder();
+  const wide = new FrameDrawList();
   wide.arrow([0, 0, 0], [1, 0, 0], { headLength: 0.4, headAngle: Math.PI / 3 });
   expect(short.lines[1]!.end).not.toEqual(wide.lines[1]!.end);
 });
-test("recorder expands curve and grid into transient commands", () => {
-  const recorder = new FrameRecorder();
-  recorder.curve(curve, { color: [1, 1, 1, 1], width: 2, tolerance: 0.16 });
-  recorder.grid([0, 0, 0], [2, 2], [0.5, 0.5], { color: [0, 1, 0, 1] });
-  const commands = recorder.commands();
+test("drawList expands curve and grid into transient commands", () => {
+  const drawList = new FrameDrawList();
+  drawList.curve(curve, { color: [1, 1, 1, 1], width: 2, tolerance: 0.16 });
+  drawList.grid([0, 0, 0], [2, 2], [0.5, 0.5], { color: [0, 1, 0, 1] });
+  const commands = drawList.commands();
   const gridCount = 3 + 3;
   expect(commands.filter((command) => command.kind === "line").length).toBeGreaterThan(gridCount);
 });
 
-test("recorder emits solid triangles for mesh and triangle commands", () => {
-  const recorder = new FrameRecorder();
-  recorder.triangle([0, 0, 0], [1, 0, 0], [0, 1, 0], { color: [1, 0, 0, 1] });
-  recorder.mesh({ triangles: [[[0, 0, 0], [1, 0, 0], [1, 1, 0]]], segments: [[[0, 0, 0], [1, 1, 0]]] }, { solid: true, color: [0, 0, 1, 1] });
-  recorder.mesh({ triangles: [[[0, 0, 0], [1, 0, 0], [1, 1, 0]]], segments: [[[0, 0, 0], [1, 1, 0]]] }, { color: [0, 1, 0, 1] });
-  const commands = recorder.commands();
+test("drawList emits solid triangles for mesh and triangle commands", () => {
+  const drawList = new FrameDrawList();
+  drawList.triangle([0, 0, 0], [1, 0, 0], [0, 1, 0], { color: [1, 0, 0, 1] });
+  drawList.mesh({ triangles: [[[0, 0, 0], [1, 0, 0], [1, 1, 0]]], segments: [[[0, 0, 0], [1, 1, 0]]] }, { solid: true, color: [0, 0, 1, 1] });
+  drawList.mesh({ triangles: [[[0, 0, 0], [1, 0, 0], [1, 1, 0]]], segments: [[[0, 0, 0], [1, 1, 0]]] }, { color: [0, 1, 0, 1] });
+  const commands = drawList.commands();
   expect(commands.filter((command) => command.kind === "triangle").length).toBe(2);
   expect(commands.filter((command) => command.kind === "line").length).toBe(1);
 });

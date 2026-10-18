@@ -1,5 +1,1 @@
-declare module "*.css";
-declare module "*.ts?raw" {
-  const source: string;
-  export default source;
-}
+/// <reference types="vite/client" />

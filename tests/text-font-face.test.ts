@@ -1,5 +1,5 @@
 /**
- * Font-face selection: weight, style and width from the recorder down to the atlas key.
+ * Font-face selection: weight, style and width from the drawList down to the atlas key.
  *
  * bevy's `font-query` example demonstrates these three axes on a variable font. Canvas2D can only
  * express part of that — see `canvasFontString` — so the tests below pin the parts that survive the
@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { FrameRecorder } from "../src/frame-recorder.js";
+import { FrameDrawList } from "../src/frame-draw-list.js";
 import { GlyphAtlas } from "../src/text-atlas.js";
 import { canvasFontString } from "../src/text-font.js";
 import {
@@ -138,9 +138,9 @@ describe("GlyphAtlas face keys", () => {
   });
 });
 
-describe("recorder text face options", () => {
+describe("drawList text face options", () => {
   test("defaults to weight 400, style normal and width normal", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     frame.text([0, 0, 0], "A");
     const [command] = frame.texts;
     expect(command!.weight).toBe(400);
@@ -150,7 +150,7 @@ describe("recorder text face options", () => {
   });
 
   test("carries the block's face into its spans and lets a span override one axis", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     frame.text([0, 0, 0], [{ text: "A" }, { text: "B", weight: 900, style: "italic", width: "condensed" }], {
       weight: 600,
       width: "semi-condensed",
@@ -163,14 +163,14 @@ describe("recorder text face options", () => {
     ]);
   });
 
-  test("takes the face from the recorder defaults when the block names none", () => {
-    const frame = new FrameRecorder({ text: { weight: 300, style: "italic", width: "expanded" } });
+  test("takes the face from the drawList defaults when the block names none", () => {
+    const frame = new FrameDrawList({ text: { weight: 300, style: "italic", width: "expanded" } });
     frame.text([0, 0, 0], "A");
     expect(frame.texts[0]).toMatchObject({ weight: 300, style: "italic", width: "expanded" });
   });
 
   test("rejects a weight outside bevy's 1..1000 range", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     expect(() => frame.text([0, 0, 0], "A", { weight: 0 })).toThrow("between 1 and 1000");
     expect(() => frame.text([0, 0, 0], "A", { weight: 1001 })).toThrow("between 1 and 1000");
     expect(() => frame.text([0, 0, 0], "A", { weight: Number.NaN })).toThrow("between 1 and 1000");
@@ -178,9 +178,9 @@ describe("recorder text face options", () => {
   });
 
   test("rejects an unknown style or width", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     expect(() => frame.text([0, 0, 0], "A", { style: "oblique" as never })).toThrow("style must be one of normal, italic");
     expect(() => frame.text([0, 0, 0], "A", { width: "200%" as never })).toThrow("width must be one of");
-    expect(() => new FrameRecorder({ text: { width: "narrow" as never } })).toThrow("default text width");
+    expect(() => new FrameDrawList({ text: { width: "narrow" as never } })).toThrow("default text width");
   });
 });

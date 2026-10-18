@@ -24,7 +24,7 @@ import {
   sphereWire,
   type ShapeWire,
 } from "../src/geometry-generators.js";
-import type { CircleBasis } from "../src/layout-3d.js";
+import type { CircleBasis } from "../examples/shared/layout-3d.js";
 
 const ORIGIN = [0, 0, 0] as const;
 const IDENTITY_BASIS: CircleBasis = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] };

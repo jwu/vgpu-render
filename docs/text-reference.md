@@ -114,7 +114,7 @@ bun scripts/compare-text-reference.ts [case ...]
 | 5 | 断行的空格归上一行 | 空格是上一行的 trailing whitespace，不会被带到下一行行首 | `linebreak-character` 最大偏差 12.37 px → 0.37 px |
 | 6 | letterSpacing 也加在最后一个字符之后 | parley 把它加进每个 cluster 的 advance | `letterspacing-2` 行宽 208 → 210；负值的用例 166 → 165 |
 
-改动落在 `src/text-layout.ts`（布局）、`src/frame-recorder.ts`（新增 `lineHeightScale`，因为 bevy 的
+改动落在 `src/text-layout.ts`（布局）、`src/frame-draw-list.ts`（新增 `lineHeightScale`，因为 bevy 的
 `LineHeight::RelativeToFont(v)` 需要倍率形式才能表达）、`src/gpu-text-3d.ts`（把相对行高一路传到布局）。
 同时纠正了 `text-layout.ts` 里一句与实测相反的注释：行盒不是从 block 默认字号解析的，而是从
 **行内最大字号**。
@@ -127,7 +127,7 @@ bun scripts/compare-text-reference.ts [case ...]
 - **block 宽度可能差 1 px。** 两侧的 advance 累加走不同浮点路径，`ceil` 落在边界两侧时会分岔：
   12 px 用例我们报 109、bevy 报 108，而 36 px 用例两边同为 325（说明 bevy 自己也在边界上）。
 - **颜色约定不同。** bevy 的 `TextColor(Color::srgb(..))` 是 sRGB-authored；本仓库的图元与文字颜色
-  沿用 Godot 的约定**原样线性传递**（见 `src/color-space.ts`）。对照页因此在传给 recorder 之前把
+  沿用 Godot 的约定**原样线性传递**（见 `src/color-space.ts`）。对照页因此在传给 draw list 之前把
   sRGB 值解码成线性，否则彩色 span 会比 bevy 亮一大截（`spans-mixed` 墨量差 18.9% → 4.9%）。
   **这是用库时要注意的点**：要「sRGB 里看起来像 `#8cd5ff`」的效果，得自己解码成线性值。
 - **编码不在对照范围内。** bevy 只有 coverage 一种字形编码。本仓库的 `sdf` / `msdf` / outline

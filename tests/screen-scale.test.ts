@@ -8,11 +8,11 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { FrameRecorder } from "../src/frame-recorder.js";
-import { scaleScreenCommands } from "../src/screen-scale.js";
+import { FrameDrawList } from "../src/frame-draw-list.js";
+import { scaleScreenCommands } from "../gallery/screen-scale.js";
 
-function screenFrame(): FrameRecorder {
-  const frame = new FrameRecorder();
+function screenFrame(): FrameDrawList {
+  const frame = new FrameDrawList();
   frame.text([10, 20, 7], [{ text: "A" }, { text: "B", fontSize: 10 }], {
     space: "screen",
     fontSize: 18,
@@ -51,7 +51,7 @@ describe("scaleScreenCommands", () => {
   });
 
   test("scales 2D positions, pixel widths and dashes", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     frame.d2.point([5, 6], { space: "screen", size: 3, sizeMode: "screen" });
     frame.d2.point([5, 6], { space: "screen", size: 3, sizeMode: "world" });
     frame.d2.line([0, 0], [10, 20], { space: "screen", width: 2, widthMode: "screen", dash: [4, 2, 1] });
@@ -71,7 +71,7 @@ describe("scaleScreenCommands", () => {
   });
 
   test("scales every pixel length a 2D screen shape carries", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     frame.d2.rect([1, 2], [4, 6], { space: "screen", fill: false, strokeWidth: 3 });
     const [command] = scaleScreenCommands(frame.commands(), 2);
     if (command?.kind !== "shape2d") throw new Error("expected a shape2d command");

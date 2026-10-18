@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { frame, init, target } from "vgpu/node";
-import { FrameRecorder, type LineOptions, type Vec3 } from "../src/frame-recorder.js";
+import { FrameDrawList, type LineOptions, type Vec3 } from "../src/frame-draw-list.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
 
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -42,9 +42,9 @@ async function renderPath(
   path: readonly Vec3[],
   options: LineOptions = {},
 ): Promise<Uint8Array> {
-  const recorder = new FrameRecorder();
-  recorder.lineStrip(path, { joint, width: STROKE, color: [1, 1, 1, 1], ...options });
-  renderer.prepare(recorder.commands(), { viewProjection: identity, view: identity });
+  const drawList = new FrameDrawList();
+  drawList.lineStrip(path, { joint, width: STROKE, color: [1, 1, 1, 1], ...options });
+  renderer.prepare(drawList.commands(), { viewProjection: identity, view: identity });
   frame(gpu, (f) => {
     renderer.updateIndirect(f);
     f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));

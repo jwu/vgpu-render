@@ -1,7 +1,7 @@
 export * from "./debug-draw-3d.js";
 export * from "./camera-2d.js";
-export * from "./frame-recorder.js";
-export * from "./frame-recorder-2d.js";
+export * from "./frame-draw-list.js";
+export * from "./frame-draw-list-2d.js";
 export * from "./color-space.js";
 export * from "./curve.js";
 export * from "./geometry-generators.js";
@@ -11,7 +11,6 @@ export * from "./gpu-text-3d.js";
 export * from "./infinite-grid-3d.js";
 export * from "./infinite-grid-2d.js";
 export * from "./mesh-batch-3d.js";
-export * from "./scenes-3d.js";
 export * from "./text-atlas.js";
 export * from "./text-font.js";
 export * from "./text-layout.js";
@@ -19,3 +18,5 @@ export * from "./text-sdf.js";
 export * from "./text-msdf.js";
 export * from "./text-msdf-font.js";
 export * from "./text-msdf-baked.js";
+
+export type { CircleBasis } from "./vector-math.js";

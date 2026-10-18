@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { frame, init, target } from "vgpu/node";
-import { FrameRecorder, type LineOptions, type Vec3 } from "../src/frame-recorder.js";
+import { FrameDrawList, type LineOptions, type Vec3 } from "../src/frame-draw-list.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
 
 /**
@@ -33,11 +33,11 @@ async function render(
   gpu: InitGpu,
   renderer: GpuDebugDraw3D,
   output: RenderTarget,
-  draw: (recorder: FrameRecorder) => void,
+  draw: (drawList: FrameDrawList) => void,
 ): Promise<Uint8Array> {
-  const recorder = new FrameRecorder();
-  draw(recorder);
-  renderer.prepare(recorder.commands(), { viewProjection: identity, view: identity });
+  const drawList = new FrameDrawList();
+  draw(drawList);
+  renderer.prepare(drawList.commands(), { viewProjection: identity, view: identity });
   frame(gpu, (f) => {
     renderer.updateIndirect(f);
     f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
@@ -53,8 +53,8 @@ test("a stroke whose normal points away keeps only the 20% fade floor", async ()
   const output = target(gpu, { size: [SIZE, SIZE], depth: true });
   try {
     const line = (options: LineOptions): Promise<Uint8Array> =>
-      render(gpu, renderer, output, (recorder) => {
-        recorder.line([-0.4, 0.5, 0], [0.4, 0.5, 0], { color: white, width: STROKE, ...options });
+      render(gpu, renderer, output, (drawList) => {
+        drawList.line([-0.4, 0.5, 0], [0.4, 0.5, 0], { color: white, width: STROKE, ...options });
       });
 
     const facing = pixelAt(await line({ normal: [0, -1, 0] }), 0, 0.5);
@@ -88,8 +88,8 @@ test("normal-aware joints blend both path normals across the wedge", async () =>
     const tip = { x: 0.9 * HALF, y: 0.5 - 0.9 * HALF };
     const corner = async (normals?: readonly Vec3[]): Promise<readonly [number, number, number]> =>
       pixelAt(
-        await render(gpu, renderer, output, (recorder) => {
-          recorder.lineStrip(path, { joint: "miter", width: STROKE, color: white, ...(normals === undefined ? {} : { normals }) }, false);
+        await render(gpu, renderer, output, (drawList) => {
+          drawList.lineStrip(path, { joint: "miter", width: STROKE, color: white, ...(normals === undefined ? {} : { normals }) }, false);
         }),
         tip.x,
         tip.y,

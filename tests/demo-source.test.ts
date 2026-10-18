@@ -1,74 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { sourceForExample, tokenizeSource } from "../src/demo-source.js";
+import { sourceForExample, tokenizeSource } from "../gallery/demo-source.js";
 
-const SCENE_SOURCE = `// header comment
-function apiMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const labels = ["line", "ray"];
-  recorder.line("line", [0, 0, 0], [1, 1, 1], { width: 2, joint: "round" });
-}
-
-function circleMatrix(recorder: FrameRecorder, context: SceneContext): void {
-  const flat = circleBasis([0, 1, 0], 0);
-}
-
-function shapeScene(recorder: FrameRecorder): void {
-  const count = 12;
-}
+const SAMPLE = `// note
+const color = 12;
+const name = "line";
+const flag = true;
+drawList.line();
 `;
 
 describe("sourceForExample", () => {
-  it("extracts only the scene function the example runs", () => {
-    const source = sourceForExample("circle", SCENE_SOURCE);
-    expect(source.startsWith("function circleMatrix(")).toBe(true);
-    expect(source).toContain("circleBasis");
-    expect(source).not.toContain("apiMatrix");
-    expect(source).not.toContain("shapeScene");
+  it("returns the page module unchanged except for surrounding whitespace", () => {
+    expect(sourceForExample("\n  const x = 1;\n")).toBe("const x = 1;");
   });
 
-  it("maps solid shapes to the shared shapeScene function", () => {
-    for (const id of ["sphere", "cone", "cylinder", "capsule"]) {
-      expect(sourceForExample(id, SCENE_SOURCE).startsWith("function shapeScene(")).toBe(true);
-    }
+  it("keeps the comments that explain the page", () => {
+    expect(sourceForExample("// note\nexport function draw(): void {}\n")).toContain("// note");
   });
 
-  it("extracts an exported block, which is the shape the screen-space text pages have", () => {
-    // `text-scenes.ts` exports its pages so the dispatcher can reach them, so the block starts with
-    // `export function` rather than `function`; both shapes have to be recognised.
-    const exported = `
-export function textScaleScene(recorder: FrameRecorder): void {
-  const sizes = [8, 12, 18];
-}
-
-export function textScene(id: string, recorder: FrameRecorder): void {
-  textScaleScene(recorder);
-}
-`;
-    const extracted = sourceForExample("text-scale", exported);
-    expect(extracted.startsWith("export function textScaleScene(")).toBe(true);
-    expect(extracted).toContain("const sizes");
-    expect(extracted).not.toContain("textScene(");
-  });
-
-  it("falls back to the matrix function for unknown ids", () => {
-    expect(sourceForExample("does-not-exist", SCENE_SOURCE).startsWith("function apiMatrix(")).toBe(true);
-  });
-
-  it("returns an empty string when the function is absent", () => {
-    expect(sourceForExample("circle", "// no functions here\n")).toBe("");
+  it("returns an empty string for a page without a source", () => {
+    expect(sourceForExample("   ")).toBe("");
   });
 });
 
 describe("tokenizeSource", () => {
   it("round-trips the original text exactly", () => {
-    const tokens = tokenizeSource(SCENE_SOURCE);
-    expect(tokens.map((token) => token.text).join("")).toBe(SCENE_SOURCE);
+    const tokens = tokenizeSource(SAMPLE);
+    expect(tokens.map((token) => token.text).join("")).toBe(SAMPLE);
   });
 
   it("classifies comments, strings, numbers, keywords and properties", () => {
-    const tokens = tokenizeSource(`// note\nconst color = 12;\nconst name = "line";\nconst flag = true;\nrecorder.line();`);
-    const kinds = new Map(tokens.map((token) => [token.text, token.kind]));
+    const kinds = new Map(tokenizeSource(SAMPLE).map((token) => [token.text, token.kind]));
     expect(kinds.get("// note")).toBe("comment");
-    expect(kinds.get(`"line"`)).toBe("string");
+    expect(kinds.get('"line"')).toBe("string");
     expect(kinds.get("12")).toBe("number");
     expect(kinds.get("const")).toBe("keyword");
     expect(kinds.get("true")).toBe("boolean");

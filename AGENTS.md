@@ -9,7 +9,7 @@
 - **构建与开发服务器：** Vite。
 - **测试：** Vitest，包括纯逻辑测试和真实 GPU 渲染测试。
 - **渲染：** WebGPU，通过 `vgpu` 和 WGSL 实现 3D debug-draw/gizmo 层。
-- **Gallery UI：** React 19 + Base UI + shadcn（`base-lyra` preset）+ Tailwind v4；主题 token 在 `src/index.css`，`components.json` 记录 preset 配置。
+- **Gallery UI：** React 19 + Base UI + shadcn（`base-lyra` preset）+ Tailwind v4；主题 token 在 `gallery/index.css`，`components.json` 记录 preset 配置。
 - **类型检查：** TypeScript `strict` 模式，启用 `exactOptionalPropertyTypes` 和 `verbatimModuleSyntax`。
 - **参考实现：** `godot-debug-draw` 与 `godot-infinite-grid`；参考源码位于 `~/src/` 的对应上游仓库，视觉对比基线记录在 `docs/`。
 
@@ -17,25 +17,33 @@
 
 ### 入口
 
+`src/` 是主引擎，库入口只导出这里的公共 API；`examples/` 是 gallery 示例层；`gallery/` 是浏览器壳层。
+
 ```text
-src/index.ts                 ← 公共导出
-src/frame-recorder.ts        ← 帧命令与录制 API
+src/index.ts                 ← 公共导出（只含引擎，不导出示例）
+src/frame-draw-list.ts        ← 帧命令与录制 API
 src/debug-draw-3d.ts         ← 高层 DebugDraw3D 生命周期与图层过滤
 src/gpu-debug-draw-3d.ts     ← WebGPU 实例化渲染与 WGSL 管线
-src/scenes-3d.ts             ← 3D 参考示例场景的 TypeScript 移植
-src/scenes-2d.ts             ← 2D 相机空间示例场景
-src/scene-examples.ts        ← gallery 示例登记表（标题、描述、列与行标签）
-src/source-scrub.ts          ← 对外产物（gallery 预览、npm dist）的品牌词清洗规则
-src/text-reference.ts        ← dev-only 文本对照页（不导出、不进库构建）
-src/demo.tsx                ← 浏览器 gallery 入口（React 挂载点）
-src/demo-engine.ts           ← 命令式 WebGPU 引擎（渲染循环、相机、持久化）
-src/demo-hooks.ts            ← React 与引擎之间的订阅桥接
-src/demo-source.ts           ← 代码预览取函数与高亮分词（纯逻辑）
-src/components/              ← Base UI + shadcn 壳层与控件
-src/demo-config.ts           ← gallery 与截图对比配置
-src/index.css                ← base-lyra 主题 token
-src/demo.css                 ← 三段式布局、compare 模式、代码高亮
 src/infinite-grid-3d.ts      ← 无限网格渲染
+src/vector-math.ts           ← 引擎与示例共用的向量/圆基底工具
+src/text-reference.ts        ← dev-only 文本对照页（不导出、不进库构建）
+
+examples/runtime.ts          ← 示例分发（buildScene：2D → 3D → text）
+examples/registry.ts         ← 侧栏登记表（只固定页面顺序）
+examples/shared/             ← 共享布局、标签、几何、绘制 helper 与 meta helper
+examples/<slug>/scene.ts     ← 单页场景实现
+examples/<slug>/meta.ts      ← 单页侧栏元数据
+
+gallery/demo.tsx             ← 浏览器 gallery 入口（React 挂载点）
+gallery/demo-engine.ts       ← 命令式 WebGPU 引擎（渲染循环、相机、持久化）
+gallery/demo-hooks.ts        ← React 与引擎之间的订阅桥接
+gallery/demo-source.ts       ← 代码预览分词（纯逻辑）
+gallery/components/          ← Base UI + shadcn 壳层与控件
+gallery/demo-config.ts       ← gallery 与截图对比配置
+gallery/index.css            ← base-lyra 主题 token
+gallery/demo.css             ← 三段式布局、compare 模式、代码高亮
+gallery/assets/              ← gallery 专用字体资源
+scripts/source-scrub.ts      ← 对外产物（gallery 预览、npm dist）的品牌词清洗规则
 ```
 
 ### 常用命令
@@ -60,7 +68,9 @@ bun run build
 
 ```text
 vgpu-render/
-  ├── src/                         # 库源码、渲染器、demo 与场景移植
+  ├── src/                         # 主引擎：库源码、渲染器、dev 工具
+  ├── examples/                    # 示例层：每页 scene/meta、registry、shared
+  ├── gallery/                     # 浏览器 gallery 壳层：React、引擎驱动、样式、资源
   ├── tests/                       # 单元测试、场景测试与真实 GPU 测试
   ├── scripts/                     # 截图捕获、dist 品牌词清洗等开发脚本
   ├── docs/                        # parity 状态与视觉对比说明
@@ -78,7 +88,7 @@ vgpu-render/
 
 - 动手前先阅读与任务相关的源码、测试和文档；涉及视觉 parity 时先阅读 `docs/visual-comparison.md` 与 `docs/reference-parity.md`。
 - 先明确修改的行为和验证方式，再进行小范围编辑。
-- 优先沿用现有的 `FrameRecorder -> FrameCommand[] -> GpuDebugDraw3D` 数据流，不要绕过录制层直接在 demo 中构造渲染状态。
+- 优先沿用现有的 `FrameDrawList -> FrameCommand[] -> GpuDebugDraw3D` 数据流，不要绕过录制层直接在 demo 中构造渲染状态。
 - 新增或修改图元参数时，同时检查：录制命令、GPU instance 数据、WGSL shader、场景调用和相关测试是否仍然一致。
 - 当前项目是 **partial parity**，不是 Godot 的完整或像素级移植。GPU smoke test 只能证明能够渲染，不能单独证明视觉等价。
 - 视觉基线应记录捕获条件，包括分辨率、DPR、浏览器/GPU、相机、投影、时间和参考场景版本。
@@ -90,6 +100,9 @@ vgpu-render/
 - TypeScript 使用现有的严格类型风格；避免 `any`、非必要的类型断言和绕过类型系统的实现。
 - 新增公共 API 时补充类型定义、README/API 示例或对应测试；不要只修改 demo 而不更新库层契约。
 - 本地模块导入遵循现有 ESM 约定，使用 `.js` 扩展名。
+- 依赖方向固定：`src/` 不得导入 `examples/` 或 `gallery/`；`examples/` 只依赖 `src/` 与 `examples/shared/`；`gallery/` 可以依赖两者。引擎需要的向量/几何工具应下沉到 `src/`，不能反过来从示例布局模块借用。
+- 新增示例页时同时添加 `examples/<slug>/scene.ts` 与 `examples/<slug>/meta.ts`，在 `examples/runtime.ts` 分发、在 `examples/registry.ts` 固定侧栏顺序。页面入口统一为 `draw(drawList: FrameDrawList, context: SceneContext)`，`SceneContext` 固定从 `examples/shared/scene-context.ts` 导入；页面只导出 `draw`（测试直接引用的 `CIRCLE_REFERENCE` / `LINE_REFERENCE` 等除外），不要恢复集中式场景大文件。
+- 示例源码预览由 `import.meta.glob` 按页读取 `examples/*/scene.ts`，路径与 Vite 的 `?raw` 清洗规则在 `gallery/demo-hooks.ts`、`vite.config.ts` 中保持一致。
 - WGSL 修改必须同步检查对应的 instance attribute、CPU 端 buffer 定义和渲染测试；注意 WebGPU 对布局、顶点数、透明度、深度和坐标空间的要求。
 - 渲染逻辑优先使用实例化和现有几何管线；不要在 CPU 上展开本项目明确设计为实例化的点或线图元。
 - 注释只解释不明显的渲染算法、坐标变换或兼容性约束；代码注释使用英文，面向人的 Markdown 文档使用简洁中文。
@@ -100,8 +113,8 @@ vgpu-render/
 
 ### 逻辑和类型验证
 
-- `bun run typecheck`：验证 `src/` 与 `tests/` 的类型契约。
-- `bun test`：运行 Vitest 测试，包括 frame recorder、几何生成器、场景参数和 GPU 测试。
+- `bun run typecheck`：验证 `src/`、`examples/`、`gallery/` 与 `tests/` 的类型契约。
+- `bun test`：运行 Vitest 测试，包括 frame draw list、几何生成器、场景参数和 GPU 测试。
 - 修改纯函数、几何生成器、场景布局或命令归一化逻辑时，优先补充针对性单测。
 
 ### 真实 GPU 验证

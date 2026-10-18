@@ -19,7 +19,7 @@ import { prepareShader } from "@vgpu/wgsl/prepare";
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
 import { DEFAULT_CAMERA_2D, projection2D, type Camera2D, type Space2D, type Vec2 } from "./camera-2d.js";
-import type { FrameCommand2D, Joint2DCommand, Line2DCommand, Point2DCommand, Shape2DCommand, Shape2DKind } from "./frame-recorder-2d.js";
+import type { FrameCommand2D, Joint2DCommand, Line2DCommand, Point2DCommand, Shape2DCommand, Shape2DKind } from "./frame-draw-list-2d.js";
 import { identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
 import { shape2dShader } from "./shape2d-shader.js";
 

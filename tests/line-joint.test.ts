@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
-import { FrameRecorder, type Vec3 } from "../src/frame-recorder.js";
+import { FrameDrawList, type Vec3 } from "../src/frame-draw-list.js";
 
 test("open strips join interior vertices only", () => {
-  const frame = new FrameRecorder();
+  const frame = new FrameDrawList();
   frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0], [2, 1, 0]], { joint: "bevel" });
   expect(frame.lines).toHaveLength(3);
   expect(frame.joints).toHaveLength(2);
@@ -13,7 +13,7 @@ test("open strips join interior vertices only", () => {
 });
 
 test("loops join every vertex including the seam", () => {
-  const frame = new FrameRecorder();
+  const frame = new FrameDrawList();
   frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], { joint: "round" }, true);
   expect(frame.lines).toHaveLength(4);
   expect(frame.joints).toHaveLength(4);
@@ -26,18 +26,18 @@ test("loops join every vertex including the seam", () => {
 });
 
 test("joint none and degenerate vertices emit no joint", () => {
-  const none = new FrameRecorder();
+  const none = new FrameDrawList();
   none.lineStrip([[0, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "none" });
   expect(none.joints).toHaveLength(0);
 
   // Both neighbouring vertices collapse onto the repeated point, so `emit_joint` skips them.
-  const degenerate = new FrameRecorder();
+  const degenerate = new FrameDrawList();
   degenerate.lineStrip([[0, 0, 0], [1, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "round" });
   expect(degenerate.joints).toHaveLength(0);
 });
 
 test("dashed joints carry the accumulated path distance in the dash phase", () => {
-  const frame = new FrameRecorder();
+  const frame = new FrameDrawList();
   frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { joint: "miter", dash: [0.2, 0.3, 0.05] });
   // The joined vertex sits at arc length 1.0, which joins the dash offset already folded
   // into the commands of the segments that meet it.
@@ -46,7 +46,7 @@ test("dashed joints carry the accumulated path distance in the dash phase", () =
 });
 
 test("joints inherit the resolved line style and layer filtering", () => {
-  const frame = new FrameRecorder({ line: { color: [0.1, 0.2, 0.3, 1], width: 6, widthMode: "world", layer: 4 } });
+  const frame = new FrameDrawList({ line: { color: [0.1, 0.2, 0.3, 1], width: 6, widthMode: "world", layer: 4 } });
   frame.lineStrip([[0, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "round" });
   const joint = frame.joints[0]!;
   expect(joint.color).toEqual([0.1, 0.2, 0.3, 1]);
@@ -54,14 +54,14 @@ test("joints inherit the resolved line style and layer filtering", () => {
   expect(joint.widthMode).toBe("world");
   expect(joint.layer).toBe(4);
 
-  const layered = new FrameRecorder();
+  const layered = new FrameDrawList();
   layered.lineStrip([[0, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "round", layer: 2 });
   expect(layered.commands(1).some((command) => command.kind === "joint")).toBe(false);
   expect(layered.commands(2).some((command) => command.kind === "joint")).toBe(true);
 });
 
 test("normal-aware loops shade each segment from its start vertex and blend at the seam", () => {
-  const frame = new FrameRecorder();
+  const frame = new FrameDrawList();
   const normals: Vec3[] = [[1, 0, 0], [0, 1, 0], [0, 0, 1], [0, -1, 0]];
   frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], { joint: "round", normals }, true);
   // `_emit_normal_line_loop`: segment i uses normals[i], including the closing segment.
@@ -76,7 +76,7 @@ test("normal-aware loops shade each segment from its start vertex and blend at t
 });
 
 test("plain joints carry no normals even when segments do", () => {
-  const frame = new FrameRecorder();
+  const frame = new FrameDrawList();
   frame.lineStrip([[0, 0, 0], [1, 0, 0], [1, 1, 0]], { normals: [[1, 0, 0], [0, 1, 0]] });
   expect(frame.lines.map((line) => line.normal)).toEqual([[1, 0, 0], [0, 1, 0]]);
   expect(frame.joints).toHaveLength(0);

@@ -1,12 +1,12 @@
 import {
-  FrameRecorder,
-  resolveFrameRecorderDefaults,
+  FrameDrawList,
+  resolveFrameDrawListDefaults,
   type FrameCommand,
-  type FrameRecorderDefaults,
+  type FrameDrawListDefaults,
   type LayerMask,
   type LineDefaults,
   type PointDefaults,
-} from "./frame-recorder.js";
+} from "./frame-draw-list.js";
 
 export type DebugDrawOptions = {
   defaultVisibleLayers?: LayerMask;
@@ -18,8 +18,8 @@ export type DebugDrawOptions = {
 
 export class DebugDraw3D {
   readonly #visibleLayers: LayerMask;
-  readonly #defaults: FrameRecorderDefaults;
-  #active: FrameRecorder | undefined;
+  readonly #defaults: FrameDrawListDefaults;
+  #active: FrameDrawList | undefined;
 
   constructor(options: DebugDrawOptions = {}) {
     const visibleLayers = options.defaultVisibleLayers ?? 0xffff_ffff;
@@ -32,24 +32,24 @@ export class DebugDraw3D {
       ...(options.defaultLineStyle === undefined ? {} : { line: { ...options.defaultLineStyle } }),
     };
     // Validate eagerly so invalid defaults fail at construction, not on the first frame.
-    resolveFrameRecorderDefaults(this.#defaults);
+    resolveFrameDrawListDefaults(this.#defaults);
   }
 
-  beginFrame(): FrameRecorder {
+  beginFrame(): FrameDrawList {
     if (this.#active !== undefined) {
       throw new Error("a debug draw frame is already active");
     }
-    const recorder = new FrameRecorder(this.#defaults);
-    this.#active = recorder;
-    return recorder;
+    const drawList = new FrameDrawList(this.#defaults);
+    this.#active = drawList;
+    return drawList;
   }
 
-  finishFrame(recorder: FrameRecorder): readonly FrameCommand[] {
-    if (this.#active !== recorder) {
-      throw new Error("recorder does not belong to this debug draw instance");
+  finishFrame(drawList: FrameDrawList): readonly FrameCommand[] {
+    if (this.#active !== drawList) {
+      throw new Error("drawList does not belong to this debug draw instance");
     }
-    const commands = recorder.commands(this.#visibleLayers);
-    recorder.seal();
+    const commands = drawList.commands(this.#visibleLayers);
+    drawList.seal();
     this.#active = undefined;
     return commands;
   }

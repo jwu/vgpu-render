@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { FIRA_MONO_MEDIUM_SUBSET_BASE64, FIRA_MONO_MEDIUM_SUBSET_TTF_BASE64 } from "../src/assets/fira-mono-medium-subset.js";
-import { VGPU_SANS_FACES, VGPU_SANS_WEIGHTS } from "../src/assets/vgpu-sans-faces.js";
+import { VGPU_SANS_FACES, VGPU_SANS_WEIGHTS } from "../gallery/assets/vgpu-sans-faces.js";
 import { decodeBase64Bytes, decodeEmbeddedFont, decodeEmbeddedTrueTypeFont } from "../src/text-font.js";
 
 const SOURCE = new URL("../src/assets/fonts/fira-mono-medium-subset.woff2", import.meta.url);

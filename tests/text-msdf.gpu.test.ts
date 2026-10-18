@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { frame, init, target } from "vgpu/node";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import type { FrameRecorder } from "../src/frame-recorder.js";
+import type { FrameDrawList } from "../src/frame-draw-list.js";
 import { OutlineGlyphRasterizer } from "../src/text-msdf-font.js";
 
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -16,15 +16,15 @@ function litCount(pixels: Uint8Array): number {
   return lit;
 }
 
-async function render(build: (recorder: FrameRecorder) => void, font: OutlineGlyphRasterizer): Promise<Uint8Array> {
+async function render(build: (drawList: FrameDrawList) => void, font: OutlineGlyphRasterizer): Promise<Uint8Array> {
   const gpu = await init();
   try {
     const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
     const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: font } } });
     const debug = new DebugDraw3D();
-    const recorder = debug.beginFrame();
-    build(recorder);
-    renderer.prepare(debug.finishFrame(recorder), { viewProjection: identity, view: identity });
+    const drawList = debug.beginFrame();
+    build(drawList);
+    renderer.prepare(debug.finishFrame(drawList), { viewProjection: identity, view: identity });
     frame(gpu, (f) => {
       renderer.updateIndirect(f);
       f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
@@ -36,10 +36,10 @@ async function render(build: (recorder: FrameRecorder) => void, font: OutlineGly
 }
 
 test("renders bundled TrueType outlines through the msdf path", async () => {
-  const pixels = await render((recorder) => {
+  const pixels = await render((drawList) => {
     // A 20 px "M" at 0.1 units/px is 2 world units, about 64 px on this target — magnified well past
     // the size it was encoded at. The anchor and position keep the block on screen.
-    recorder.text([-0.55, 1.2, 0.5], "M", { fontSize: 20, pixelSize: 0.1, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
+    drawList.text([-0.55, 1.2, 0.5], "M", { fontSize: 20, pixelSize: 0.1, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
   }, new OutlineGlyphRasterizer());
   const lit = litCount(pixels);
   expect(lit).toBeGreaterThan(600);
@@ -48,8 +48,8 @@ test("renders bundled TrueType outlines through the msdf path", async () => {
 });
 
 test("an msdf block still draws nothing when it is empty", async () => {
-  const pixels = await render((recorder) => {
-    recorder.text([0, 0, 0.5], "", { fontSize: 20, pixelSize: 0.1, space: "world-billboard" });
+  const pixels = await render((drawList) => {
+    drawList.text([0, 0, 0.5], "", { fontSize: 20, pixelSize: 0.1, space: "world-billboard" });
   }, new OutlineGlyphRasterizer());
   expect(litCount(pixels)).toBe(0);
 });

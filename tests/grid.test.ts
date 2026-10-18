@@ -5,7 +5,6 @@ import {
   minLodCellSize,
   resolveGridOptions,
   type GridCameraState,
-  type InfiniteGridOptions,
 } from "../src/infinite-grid-3d.js";
 import { grid2dLodPowers, resolveGrid2DOptions } from "../src/infinite-grid-2d.js";
 

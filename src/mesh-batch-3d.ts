@@ -2,7 +2,7 @@ import { draw, geometry, type Draw, type FramePass, type Gpu } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 import { DEFAULT_DEPTH_BIAS } from "./gpu-debug-draw-3d.js";
 import type { MeshData } from "./geometry-generators.js";
-import type { Color } from "./frame-recorder.js";
+import type { Color } from "./frame-draw-list.js";
 
 /** Mirrors the reference mesh/rect shaders: `depth_draw_always` plus the same depth bias. */
 const SHADER = prepareShader(`

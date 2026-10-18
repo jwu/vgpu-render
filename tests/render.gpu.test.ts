@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import { FrameRecorder, type FrameCommand } from "../src/frame-recorder.js";
-import { buildScene } from "../src/scenes-3d.js";
+import { FrameDrawList, type FrameCommand } from "../src/frame-draw-list.js";
+import { buildScene } from "../examples/runtime.js";
 
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -115,9 +115,9 @@ test("a renderer without text sources draws geometry-only example scenes", async
     // `buildScene` now emits the reference `Label3D`-equivalent blocks. A caller that never asked for
     // text must still be able to draw the scene, so those commands are skipped rather than thrown on.
     const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4096, triangles: 64 });
-    const recorder = new FrameRecorder();
-    buildScene("line", recorder, 0);
-    const commands = recorder.commands();
+    const drawList = new FrameDrawList();
+    buildScene("line", drawList, 0);
+    const commands = drawList.commands();
     expect(commands.some((command) => command.kind === "text")).toBe(true);
     renderer.prepare(commands, { viewProjection: identity, view: identity });
     frame(gpu, (f) => f.pass({ target: output, clear: [0, 0, 0, 1] }, (p) => renderer.draw(p)));

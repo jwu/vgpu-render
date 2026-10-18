@@ -15,8 +15,8 @@ import {
   viewMatrix,
   worldUnitsPerPixel,
   type CameraBasis,
-} from "../src/demo-camera.js";
-import type { Vec3 } from "../src/frame-recorder.js";
+} from "../gallery/demo-camera.js";
+import type { Vec3 } from "../src/frame-draw-list.js";
 
 const near = (a: readonly number[], b: readonly number[], epsilon = 1e-6): boolean =>
   a.length === b.length && a.every((value, index) => Math.abs(value - b[index]!) <= epsilon);

@@ -107,14 +107,14 @@ const renderer = new GpuDebugDraw3D(gpu, {
 });
 
 const debug = new DebugDraw3D();
-const recorder = debug.beginFrame();
+const drawList = debug.beginFrame();
 const spans = reference.spans ?? [{ text: reference.text ?? "" }];
-// Cases author colours the way bevy's `TextColor` takes them: sRGB. The recorder's own colour
+// Cases author colours the way bevy's `TextColor` takes them: sRGB. The drawList's own colour
 // convention is the reference primitives' one — passed through as authored, i.e. linear — so a
 // colour that has to match a `Color::srgb` is decoded here rather than at the API boundary.
 const decode = (rgba: readonly number[]): readonly [number, number, number, number] =>
   linearGridColor([rgba[0]!, rgba[1]!, rgba[2]!, rgba[3]!], rgba[3]!);
-recorder.text(
+drawList.text(
   [reference.position[0], reference.position[1], 0],
   spans.map((span) => ({
     text: span.text,
@@ -138,7 +138,7 @@ recorder.text(
     source: "bitmap",
   },
 );
-const commands = debug.finishFrame(recorder);
+const commands = debug.finishFrame(drawList);
 
 renderer.prepare(commands, { viewProjection: IDENTITY, view: IDENTITY });
 frame(gpu, (f) => {

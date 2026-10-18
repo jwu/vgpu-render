@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { backgroundToHex, camera2DKeyPan, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../src/demo-engine.js";
-import { orbitBasis, orbitEye } from "../src/demo-camera.js";
-import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, SCENE_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../src/demo-config.js";
+import { backgroundToHex, camera2DKeyPan, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../gallery/demo-engine.js";
+import { orbitBasis, orbitEye } from "../gallery/demo-camera.js";
+import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, SCENE_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../gallery/demo-config.js";
 
 describe("hexToRgb", () => {
   it("parses six-digit hex with and without a leading hash", () => {

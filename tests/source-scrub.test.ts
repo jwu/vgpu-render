@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeSource } from "../src/source-scrub.js";
+import { sanitizeSource } from "../scripts/source-scrub.js";
 
 describe("sanitizeSource", () => {
   it("replaces brand mentions inside line and block comments", () => {
@@ -8,7 +8,7 @@ describe("sanitizeSource", () => {
   });
 
   it("leaves code and string literals untouched", () => {
-    const source = `recorder.text("bevy", { space: "screen" });`;
+    const source = `drawList.text("bevy", { space: "screen" });`;
     expect(sanitizeSource(source)).toBe(source);
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { DebugDraw3D, FrameRecorder, type LineCommand, type PointCommand } from "../src/index.js";
+import { DebugDraw3D, FrameDrawList, type LineCommand, type PointCommand } from "../src/index.js";
 import {
   applyDisplayConfig,
   cloneDemoConfig,
@@ -16,11 +16,11 @@ import {
   SCREENSHOT_DEMO_CONFIG,
   serializeDemoConfig,
   type ConfigStorage,
-} from "../src/demo-config.js";
+} from "../gallery/demo-config.js";
 
-describe("FrameRecorder default styles", () => {
+describe("FrameDrawList default styles", () => {
   test("keeps built-in defaults when no style defaults are given", () => {
-    const frame = new FrameRecorder();
+    const frame = new FrameDrawList();
     frame.line([0, 0, 0], [1, 0, 0]);
     frame.point([0, 0, 0]);
     expect(frame.lines[0]!.color).toEqual([1, 1, 1, 1]);
@@ -32,7 +32,7 @@ describe("FrameRecorder default styles", () => {
   });
 
   test("applies default line style when options omit fields", () => {
-    const frame = new FrameRecorder({
+    const frame = new FrameDrawList({
       line: { color: [1, 0, 0, 1], width: 4, widthMode: "world", joint: "round", layer: 2 },
     });
     frame.line([0, 0, 0], [1, 0, 0]);
@@ -45,8 +45,8 @@ describe("FrameRecorder default styles", () => {
     expect(line.layer).toBe(2);
   });
 
-  test("explicit line options override recorder defaults", () => {
-    const frame = new FrameRecorder({ line: { color: [1, 0, 0, 1], width: 4, layer: 2 } });
+  test("explicit line options override drawList defaults", () => {
+    const frame = new FrameDrawList({ line: { color: [1, 0, 0, 1], width: 4, layer: 2 } });
     frame.line([0, 0, 0], [1, 0, 0], { color: [0, 1, 0, 1], width: 9, layer: 8 });
     const line = frame.lines[0]!;
     expect(line.color).toEqual([0, 1, 0, 1]);
@@ -56,7 +56,7 @@ describe("FrameRecorder default styles", () => {
   });
 
   test("colorEnd prefers explicit color and default colorEnd in order", () => {
-    const frame = new FrameRecorder({ line: { color: [1, 0, 0, 1], colorEnd: [0, 0, 1, 1] } });
+    const frame = new FrameDrawList({ line: { color: [1, 0, 0, 1], colorEnd: [0, 0, 1, 1] } });
     frame.line([0, 0, 0], [1, 0, 0]);
     expect(frame.lines[0]!.colorEnd).toEqual([0, 0, 1, 1]);
     frame.line([0, 0, 0], [2, 0, 0], { color: [0, 1, 0, 1] });
@@ -66,7 +66,7 @@ describe("FrameRecorder default styles", () => {
   });
 
   test("applies default point style and lets options override it", () => {
-    const frame = new FrameRecorder({ point: { color: [0, 0, 1, 1], size: 6, sizeMode: "world", layer: 4 } });
+    const frame = new FrameDrawList({ point: { color: [0, 0, 1, 1], size: 6, sizeMode: "world", layer: 4 } });
     frame.point([0, 0, 0]);
     expect(frame.points[0]!.color).toEqual([0, 0, 1, 1]);
     expect(frame.points[0]!.size).toBe(6);
@@ -78,7 +78,7 @@ describe("FrameRecorder default styles", () => {
   });
 
   test("line joints inherit the resolved line style", () => {
-    const frame = new FrameRecorder({ line: { color: [0.5, 0.5, 0.5, 1], width: 3, layer: 8 } });
+    const frame = new FrameDrawList({ line: { color: [0.5, 0.5, 0.5, 1], width: 3, layer: 8 } });
     frame.lineStrip([[0, 0, 0], [1, 0, 0], [2, 0, 0]], { joint: "round" });
     expect(frame.points).toHaveLength(0);
     expect(frame.joints).toHaveLength(1);
@@ -93,7 +93,7 @@ describe("FrameRecorder default styles", () => {
   });
 
   test("applies line defaults to derived primitives", () => {
-    const frame = new FrameRecorder({ line: { color: [0.2, 0.4, 0.6, 1], width: 3 } });
+    const frame = new FrameDrawList({ line: { color: [0.2, 0.4, 0.6, 1], width: 3 } });
     frame.ray([0, 0, 0], [1, 0, 0]);
     frame.grid([0, 0, 0], [2, 2], [0.5, 0.5]);
     expect(frame.lines.length).toBeGreaterThan(0);
@@ -104,27 +104,27 @@ describe("FrameRecorder default styles", () => {
   });
 
   test("rejects invalid style defaults at construction", () => {
-    expect(() => new FrameRecorder({ line: { width: 0 } })).toThrow(/greater than zero/);
-    expect(() => new FrameRecorder({ line: { width: Number.NaN } })).toThrow(/finite/);
-    expect(() => new FrameRecorder({ point: { size: -1 } })).toThrow(/greater than zero/);
-    expect(() => new FrameRecorder({ line: { layer: -1 } })).toThrow(/non-negative/);
-    expect(() => new FrameRecorder({ line: { color: [1, 1, 1] as unknown as [number, number, number, number] } })).toThrow(/four values/);
-    expect(() => new FrameRecorder({ line: { color: [1, 1, 1, Number.NaN] } })).toThrow(/finite/);
-    expect(() => new FrameRecorder({ line: { widthMode: "screenish" as unknown as "screen" } })).toThrow(/screen/);
-    expect(() => new FrameRecorder({ line: { joint: "zig" as unknown as "round" } })).toThrow(/joint/);
-    expect(() => new FrameRecorder({ line: { normal: [0, 0] as unknown as [number, number, number] } })).toThrow(/three values/);
+    expect(() => new FrameDrawList({ line: { width: 0 } })).toThrow(/greater than zero/);
+    expect(() => new FrameDrawList({ line: { width: Number.NaN } })).toThrow(/finite/);
+    expect(() => new FrameDrawList({ point: { size: -1 } })).toThrow(/greater than zero/);
+    expect(() => new FrameDrawList({ line: { layer: -1 } })).toThrow(/non-negative/);
+    expect(() => new FrameDrawList({ line: { color: [1, 1, 1] as unknown as [number, number, number, number] } })).toThrow(/four values/);
+    expect(() => new FrameDrawList({ line: { color: [1, 1, 1, Number.NaN] } })).toThrow(/finite/);
+    expect(() => new FrameDrawList({ line: { widthMode: "screenish" as unknown as "screen" } })).toThrow(/screen/);
+    expect(() => new FrameDrawList({ line: { joint: "zig" as unknown as "round" } })).toThrow(/joint/);
+    expect(() => new FrameDrawList({ line: { normal: [0, 0] as unknown as [number, number, number] } })).toThrow(/three values/);
   });
 
   test("layer filtering still applies to defaulted commands", () => {
-    const frame = new FrameRecorder({ line: { layer: 2 }, point: { layer: 2 } });
+    const frame = new FrameDrawList({ line: { layer: 2 }, point: { layer: 2 } });
     frame.line([0, 0, 0], [1, 0, 0]);
     frame.point([0, 0, 0]);
     expect(frame.commands(1)).toHaveLength(0);
     expect(frame.commands(2)).toHaveLength(2);
   });
 
-  test("sealed recorders reject defaulted commands too", () => {
-    const frame = new FrameRecorder({ line: { color: [1, 1, 1, 1] } });
+  test("sealed drawLists reject defaulted commands too", () => {
+    const frame = new FrameDrawList({ line: { color: [1, 1, 1, 1] } });
     frame.seal();
     expect(() => frame.line([0, 0, 0], [1, 0, 0])).toThrow("sealed");
   });

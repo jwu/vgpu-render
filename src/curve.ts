@@ -1,4 +1,4 @@
-import type { Vec3 } from "./frame-recorder.js";
+import type { Vec3 } from "./frame-draw-list.js";
 
 export type CurvePoint = { readonly position: Vec3; readonly in?: Vec3; readonly out?: Vec3 };
 export type Curve3D = { readonly points: readonly CurvePoint[]; readonly closed?: boolean };

@@ -1,8 +1,8 @@
 import { expect, test } from "vitest";
 import { frame, init, target } from "vgpu/node";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import type { FrameCommand } from "../src/frame-recorder.js";
-import type { Shape2DCommand } from "../src/frame-recorder-2d.js";
+import type { FrameCommand } from "../src/frame-draw-list.js";
+import type { Shape2DCommand } from "../src/frame-draw-list-2d.js";
 import type { Camera2D } from "../src/camera-2d.js";
 
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);

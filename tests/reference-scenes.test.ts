@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { FrameRecorder, type JointCommand, type LineCommand, type TextCommand, type TriangleCommand, type Vec3 } from "../src/frame-recorder.js";
-import { buildScene, CIRCLE_REFERENCE, LINE_REFERENCE } from "../src/scenes-3d.js";
-import { SCENE_LABELS } from "../src/labels-3d.js";
+import { FrameDrawList, type JointCommand, type LineCommand, type TextCommand, type TriangleCommand, type Vec3 } from "../src/frame-draw-list.js";
+import { buildScene } from "../examples/runtime.js";
+import { CIRCLE_REFERENCE } from "../examples/circle/scene.js";
+import { LINE_REFERENCE } from "../examples/line/scene.js";
+import { SCENE_LABELS } from "../examples/shared/labels-3d.js";
 
 function commandsFor(id: string): readonly (LineCommand | JointCommand | TriangleCommand | { kind: "point" })[] {
-  const recorder = new FrameRecorder();
-  buildScene(id, recorder, 0);
-  return recorder.commands() as never;
+  const drawList = new FrameDrawList();
+  buildScene(id, drawList, 0);
+  return drawList.commands() as never;
 }
 
 function linesOf(id: string): LineCommand[] {
@@ -222,9 +224,9 @@ describe("Scene labels", () => {
   const labelled = ["index", "line", "arrow", "axes", "grid", "rect", "box", "circle", "arc", "curve", "sphere", "cone", "cylinder", "capsule", "world_space_width"];
 
   function textsOf(id: string): readonly TextCommand[] {
-    const recorder = new FrameRecorder();
-    buildScene(id, recorder, 0);
-    return recorder.texts;
+    const drawList = new FrameDrawList();
+    buildScene(id, drawList, 0);
+    return drawList.texts;
   }
 
   test("every 3D example lays its labels flat on the ground plane", () => {

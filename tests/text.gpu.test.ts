@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { frame, init, target } from "vgpu/node";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import type { FrameRecorder } from "../src/frame-recorder.js";
+import type { FrameDrawList } from "../src/frame-draw-list.js";
 import type { GlyphEncoding } from "../src/text-atlas.js";
 import { SyntheticFont } from "./support/synthetic-font.js";
 
@@ -42,7 +42,7 @@ function softCount(pixels: Uint8Array): number {
 }
 
 async function render(
-  build: (recorder: FrameRecorder) => void,
+  build: (drawList: FrameDrawList) => void,
   view: Float32Array = identity,
   encoding: GlyphEncoding = "bitmap",
   rasterScale = 1,
@@ -58,9 +58,9 @@ async function render(
       },
     });
     const debug = new DebugDraw3D();
-    const recorder = debug.beginFrame();
-    build(recorder);
-    renderer.prepare(debug.finishFrame(recorder), { viewProjection: view, view });
+    const drawList = debug.beginFrame();
+    build(drawList);
+    renderer.prepare(debug.finishFrame(drawList), { viewProjection: view, view });
     frame(gpu, (f) => {
       renderer.updateIndirect(f);
       f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
@@ -72,8 +72,8 @@ async function render(
 }
 
 test("screen text lands at its top-left pixel position in the span colour", async () => {
-  const pixels = await render((recorder) => {
-    recorder.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [1, 0, 0, 1] });
+  const pixels = await render((drawList) => {
+    drawList.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [1, 0, 0, 1] });
   });
   // A 16px synthetic glyph has an 8×8 ink box that starts at its anchor: x 8..16, y 15..23.
   expect(channel(pixels, 12, 18, 0)).toBeGreaterThan(200);
@@ -84,9 +84,9 @@ test("screen text lands at its top-left pixel position in the span colour", asyn
 });
 
 test("world-plane text projects through the camera and flips its local y", async () => {
-  const pixels = await render((recorder) => {
+  const pixels = await render((drawList) => {
     // 20px glyphs at 0.025 world units per pixel are 0.5 world units tall.
-    recorder.text([0, 0, 0.5], "A", { fontSize: 20, pixelSize: 0.025, space: "world-plane", anchor: "top-left", color: [0, 1, 0, 1] });
+    drawList.text([0, 0, 0.5], "A", { fontSize: 20, pixelSize: 0.025, space: "world-plane", anchor: "top-left", color: [0, 1, 0, 1] });
   });
   // Ink centre lands on NDC (0.125, -0.3425) at 128×64, i.e. pixel (72, 43).
   expect(channel(pixels, 72, 42, 1)).toBeGreaterThan(200);
@@ -97,11 +97,11 @@ test("a world-plane block lies flat when rotated onto the ground plane", async (
   // A top-down camera: world +X is screen right, world -Z is screen up, world +Y is towards the eye.
   const topDown = new Float32Array([1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
   const options = { fontSize: 20, pixelSize: 0.025, anchor: "top-left", color: [0, 1, 0, 1] } as const;
-  const flat = await render((recorder) => {
+  const flat = await render((drawList) => {
     // The reference `Label3D` rotation: the block lies on XZ and reads from above.
-    recorder.text([0, 0, 0], "A", { ...options, rotation: [-Math.PI / 2, 0, 0] });
+    drawList.text([0, 0, 0], "A", { ...options, rotation: [-Math.PI / 2, 0, 0] });
   }, topDown);
-  const upright = await render((recorder) => recorder.text([0, 0, 0], "A", options), topDown);
+  const upright = await render((drawList) => drawList.text([0, 0, 0], "A", options), topDown);
   expect(litCount(flat)).toBeGreaterThan(0);
   // Unrotated, the block still faces +Z and is edge-on to a camera looking straight down.
   expect(litCount(upright)).toBeLessThan(litCount(flat) / 4);
@@ -109,18 +109,18 @@ test("a world-plane block lies flat when rotated onto the ground plane", async (
 
 test("a billboard keeps facing the camera where the fixed plane goes edge-on", async () => {
   const options = { fontSize: 20, pixelSize: 0.025, anchor: "top-left", color: [0, 1, 0, 1] } as const;
-  const billboard = await render((recorder) => recorder.text([0, 0, 0.5], "A", { ...options, space: "world-billboard" }), yawed);
-  const plane = await render((recorder) => recorder.text([0, 0, 0.5], "A", { ...options, space: "world-plane" }), yawed);
+  const billboard = await render((drawList) => drawList.text([0, 0, 0.5], "A", { ...options, space: "world-billboard" }), yawed);
+  const plane = await render((drawList) => drawList.text([0, 0, 0.5], "A", { ...options, space: "world-plane" }), yawed);
   expect(litCount(billboard)).toBeGreaterThan(0);
   // Edge-on, the plane collapses to a sliver while the billboard keeps its full width.
   expect(litCount(billboard)).toBeGreaterThan(litCount(plane) * 2);
 });
 
 test("world text is occluded by geometry drawn in front of it", async () => {
-  const pixels = await render((recorder) => {
-    recorder.text([0, 0, 0.6], "A", { fontSize: 20, pixelSize: 0.025, space: "world-plane", anchor: "top-left", color: [0, 1, 0, 1] });
-    recorder.triangle([-1, -1, 0.2], [1, -1, 0.2], [1, 1, 0.2], { color: [0, 0, 1, 1] });
-    recorder.triangle([-1, -1, 0.2], [1, 1, 0.2], [-1, 1, 0.2], { color: [0, 0, 1, 1] });
+  const pixels = await render((drawList) => {
+    drawList.text([0, 0, 0.6], "A", { fontSize: 20, pixelSize: 0.025, space: "world-plane", anchor: "top-left", color: [0, 1, 0, 1] });
+    drawList.triangle([-1, -1, 0.2], [1, -1, 0.2], [1, 1, 0.2], { color: [0, 0, 1, 1] });
+    drawList.triangle([-1, -1, 0.2], [1, 1, 0.2], [-1, 1, 0.2], { color: [0, 0, 1, 1] });
   });
   // The closer opaque quad won the depth test and the glyph was rejected.
   expect(channel(pixels, 72, 42, 2)).toBeGreaterThan(200);
@@ -128,10 +128,10 @@ test("world text is occluded by geometry drawn in front of it", async () => {
 });
 
 test("distant text still resolves through the mip chain", async () => {
-  const pixels = await render((recorder) => {
+  const pixels = await render((drawList) => {
     // 20 px glyphs at 0.01 units/px are 0.2 world units, roughly 6 px tall on this target: small
     // enough that minification has to select a mip level rather than texel-sample level 0.
-    recorder.text([-0.6, 0, 0.5], "MMMM", { fontSize: 20, pixelSize: 0.01, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
+    drawList.text([-0.6, 0, 0.5], "MMMM", { fontSize: 20, pixelSize: 0.01, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
   });
   const lit = litCount(pixels);
   expect(lit).toBeGreaterThan(4);
@@ -145,8 +145,8 @@ test("a minified distance field keeps its ink opaque through the mip chain", asy
   // it needs, the interior of the blob is saturated ink and has to stay opaque: the reference answer is
   // the block's coverage, and that is one.
   const pixels = await render(
-    (recorder) => {
-      recorder.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
+    (drawList) => {
+      drawList.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
     },
     identity,
     "sdf",
@@ -160,8 +160,8 @@ test("a minified distance field keeps its ink opaque through the mip chain", asy
 test("an outline rings a distance-field glyph in its own colour", async () => {
   const draw = (outlineWidth: number, outlineColor?: readonly [number, number, number, number]) =>
     render(
-      (recorder) => {
-        recorder.text([8, 8, 0], "A", {
+      (drawList) => {
+        drawList.text([8, 8, 0], "A", {
           fontSize: 16,
           space: "screen",
           anchor: "top-left",
@@ -189,8 +189,8 @@ test("an outline rings a distance-field glyph in its own colour", async () => {
 test("a bitmap glyph is outlined by sampling its mask in eight directions", async () => {
   const draw = (outlineWidth: number) =>
     render(
-      (recorder) => {
-        recorder.text([8, 8, 0], "A", {
+      (drawList) => {
+        drawList.text([8, 8, 0], "A", {
           fontSize: 16,
           space: "screen",
           anchor: "top-left",
@@ -213,8 +213,8 @@ test("a bitmap glyph is outlined by sampling its mask in eight directions", asyn
 });
 
 test("a one-to-one distance field keeps as soft a rim as the coverage mask", async () => {
-  const build = (recorder: FrameRecorder): void => {
-    recorder.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
+  const build = (drawList: FrameDrawList): void => {
+    drawList.text([8, 8, 0], "A", { fontSize: 16, space: "screen", anchor: "top-left", color: [0, 1, 0, 1] });
   };
   const bitmap = await render(build, identity, "bitmap");
   const distance = await render(build, identity, "sdf");
@@ -224,11 +224,11 @@ test("a one-to-one distance field keeps as soft a rim as the coverage mask", asy
   expect(softCount(distance)).toBeGreaterThan(softCount(bitmap) * 0.8);
 });
 
-test("a magnified distance field keeps a tighter edge than the coverage mask", async () => {  const build = (recorder: FrameRecorder): void => {
+test("a magnified distance field keeps a tighter edge than the coverage mask", async () => {  const build = (drawList: FrameDrawList): void => {
     // 20 px glyphs at 0.1 units/px are 2 world units, about 64 px tall on this target — a 3x
     // magnification, which is where interpolating coverage smears and reconstructing a distance
     // does not.
-    recorder.text([-0.6, 0, 0.5], "A", { fontSize: 20, pixelSize: 0.1, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
+    drawList.text([-0.6, 0, 0.5], "A", { fontSize: 20, pixelSize: 0.1, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
   };
   const bitmap = await render(build, identity, "bitmap");
   const distance = await render(build, identity, "sdf");
@@ -238,8 +238,8 @@ test("a magnified distance field keeps a tighter edge than the coverage mask", a
 });
 
 test("an empty block draws nothing", async () => {
-  const pixels = await render((recorder) => {
-    recorder.text([0, 0, 0.5], "", { fontSize: 20, pixelSize: 0.025, space: "world-plane" });
+  const pixels = await render((drawList) => {
+    drawList.text([0, 0, 0.5], "", { fontSize: 20, pixelSize: 0.025, space: "world-plane" });
   });
   expect(litCount(pixels)).toBe(0);
 });
@@ -253,9 +253,9 @@ async function renderWithAtlas(pages: number, text: string, onFull: "throw" | "s
     // characters cannot fit one page.
     const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont("bitmap") }, atlasSize: 64, pages, onFull } });
     const debug = new DebugDraw3D();
-    const recorder = debug.beginFrame();
-    recorder.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
-    renderer.prepare(debug.finishFrame(recorder), { viewProjection: identity, view: identity });
+    const drawList = debug.beginFrame();
+    drawList.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
+    renderer.prepare(debug.finishFrame(drawList), { viewProjection: identity, view: identity });
     frame(gpu, (f) => {
       renderer.updateIndirect(f);
       f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
@@ -289,9 +289,9 @@ test("keeps drawing after a page is recycled between frames", async () => {
     const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: new SyntheticFont("bitmap") }, atlasSize: 64, pages: 1 } });
     const debug = new DebugDraw3D();
     const draw = async (text: string): Promise<Uint8Array> => {
-      const recorder = debug.beginFrame();
-      recorder.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
-      renderer.prepare(debug.finishFrame(recorder), { viewProjection: identity, view: identity });
+      const drawList = debug.beginFrame();
+      drawList.text([0, 0, 0], text, { space: "screen", anchor: "top-left", fontSize: 16, bounds: [WIDTH, HEIGHT] });
+      renderer.prepare(debug.finishFrame(drawList), { viewProjection: identity, view: identity });
       frame(gpu, (f) => {
         renderer.updateIndirect(f);
         f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));

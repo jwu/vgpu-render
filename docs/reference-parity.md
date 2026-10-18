@@ -15,8 +15,8 @@ markers, the Sphere/Cone/Cylinder/Capsule wireframes and the normal-aware line a
 joint shading are ported, while AA is still incomplete.
 Text rendering is vgpu's own capability rather than part of the port: the labels in the reference
 examples are `Label3D` nodes owned by those scenes, not output of the addon. The port redraws them
-anyway, because they are part of what an example looks like: `src/labels-3d.ts` carries the
-reference column/row strings and `src/scenes-3d.ts` places them at the reference coordinates, on
+anyway, because they are part of what an example looks like: `examples/shared/labels-3d.ts` carries the
+reference column/row strings and `examples/<slug>/scene.ts` places them at the reference coordinates, on
 the ground plane (`rotation: [-PI/2, 0, 0]`) at the reference `font_size`/`pixel_size`, so the
 gallery and its sidebar finally agree with the reference text. The fonts differ, so glyph shapes
 are not pixel-identical. See the README's Text section for the three placement spaces, the
@@ -34,7 +34,7 @@ tests are smoke tests, not full visual regression baselines.
 
 ## Example scenes
 
-Each scene is produced by `src/scenes-3d.ts`. `circle`, `line`,
+Each scene is dispatched by `examples/runtime.ts` and implemented in its own `examples/<slug>/scene.ts`. `circle`, `line`,
 `sphere`, `cone`, `cylinder` and `capsule` are faithful ports of the reference
 sources: real column/row coordinates, colors, widths, the rotation-tunnel basis,
 cumulative-arc-length dashes, and the reference wireframe topology (latitude rings and
@@ -114,7 +114,7 @@ so `_n(joint)` columns shade like the segments they join. The reference passes t
 two normals packed into two floats (octahedral, 8 bits each); this port sends them
 as two `vec3` instance attributes instead of paying the quantisation, which is the
 only difference from the reference encoding.
-- **Arrow head geometry**: head length and angle are now wired into `FrameRecorder.arrow()` and the scene matrix.
+- **Arrow head geometry**: head length and angle are now wired into `FrameDrawList.arrow()` and the scene matrix.
 - **Grid outer edges**: `grid()` now supports `none`, `x`, `z`, and `xz` boundary modes.
 - **Normal-aware shading**: `*_n` lines and joints apply the reference back-face fade
   (`normal_fade`: full brightness until the surface normal is more than
@@ -139,5 +139,5 @@ only difference from the reference encoding.
   while this port subdivides with a fixed step count, so vertex counts differ even though the
   shape matches.
 
-Anything flagged `implemented: false` in `src/scene-examples.ts` is shown with a
+Anything flagged `implemented: false` in `examples/registry.ts` is shown with a
 `·` marker in the gallery.

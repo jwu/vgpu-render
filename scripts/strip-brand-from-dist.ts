@@ -3,12 +3,12 @@
  *
  * `dist/` ships to npm, so the JSDoc that documents "the reference addon" or names the upstream
  * projects must not travel with it. The modules keep those comments for development; this script
- * rewrites them in place after `tsc`, touching only comments (see `src/source-scrub.ts`).
+ * rewrites them in place after `tsc`, touching only comments (see `scripts/source-scrub.ts`).
  */
 
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { sanitizeSource } from "../src/source-scrub.js";
+import { sanitizeSource } from "./source-scrub.js";
 
 const DIST = resolve(import.meta.dir, "..", "dist");
 const TARGETS = /\.(?:js|d\.ts)$/;

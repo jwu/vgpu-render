@@ -23,7 +23,7 @@ import { frame, init, target } from "vgpu/node";
 import { parse, type Path } from "opentype.js";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import type { FrameRecorder } from "../src/frame-recorder.js";
+import type { FrameDrawList } from "../src/frame-draw-list.js";
 import { decodeEmbeddedTrueTypeFont, type GlyphRasterizer } from "../src/text-font.js";
 import type { TextMeasurer } from "../src/text-layout.js";
 import { BakedMsdfRasterizer } from "../src/text-msdf-baked.js";
@@ -125,7 +125,7 @@ function geometricInk(): number {
   return total;
 }
 
-async function onTarget(build: (recorder: FrameRecorder) => void, source: GlyphRasterizer & TextMeasurer, mipLevels?: number): Promise<Uint8Array> {
+async function onTarget(build: (drawList: FrameDrawList) => void, source: GlyphRasterizer & TextMeasurer, mipLevels?: number): Promise<Uint8Array> {
   const gpu = await init();
   try {
     const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
@@ -137,9 +137,9 @@ async function onTarget(build: (recorder: FrameRecorder) => void, source: GlyphR
       },
     });
     const debug = new DebugDraw3D();
-    const recorder = debug.beginFrame();
-    build(recorder);
-    renderer.prepare(debug.finishFrame(recorder), { viewProjection: IDENTITY, view: IDENTITY });
+    const drawList = debug.beginFrame();
+    build(drawList);
+    renderer.prepare(debug.finishFrame(drawList), { viewProjection: IDENTITY, view: IDENTITY });
     frame(gpu, (f) => {
       renderer.updateIndirect(f);
       f.pass({ target: output, clear: [BACKGROUND / 255, BACKGROUND / 255, BACKGROUND / 255, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));
@@ -154,12 +154,12 @@ const channel = (pixels: Uint8Array, x: number, y: number): number => pixels[(y 
 
 // 1. Calibration: opaque rectangles at known alpha, so `coverage -> value` is measured, not assumed.
 const ALPHAS = [1, 0.75, 0.5, 0.25];
-const calibrated = await onTarget((recorder) => {
+const calibrated = await onTarget((drawList) => {
   ALPHAS.forEach((alpha, index) => {
     const x0 = -0.95 + index * 0.475;
     const x1 = x0 + 0.4;
-    recorder.triangle([x0, -0.6, 0], [x1, -0.6, 0], [x1, 0.6, 0], { color: [1, 1, 1, alpha] });
-    recorder.triangle([x0, -0.6, 0], [x1, 0.6, 0], [x0, 0.6, 0], { color: [1, 1, 1, alpha] });
+    drawList.triangle([x0, -0.6, 0], [x1, -0.6, 0], [x1, 0.6, 0], { color: [1, 1, 1, alpha] });
+    drawList.triangle([x0, -0.6, 0], [x1, 0.6, 0], [x0, 0.6, 0], { color: [1, 1, 1, alpha] });
   });
 }, new OutlineGlyphRasterizer());
 console.log(`calibration, background ${BACKGROUND}/255 (measured vs linear expectation):`);
@@ -186,11 +186,11 @@ const truth = geometricInk();
 console.log(`\n"${SAMPLE}" at ${FONT_SIZE}px, geometric ink ${truth.toFixed(1)} px, calibration error <= ${calibrationError.toFixed(1)}/255`);
 console.log(`each source draws the same string on a clean ${WIDTH}x${HEIGHT} target`);
 for (const [name, source] of sources) {
-  const withMip = await onTarget((recorder) => {
-    recorder.text([4, 8, 0], SAMPLE, { fontSize: FONT_SIZE, space: "screen", anchor: "top-left", color: [1, 1, 1, 1] });
+  const withMip = await onTarget((drawList) => {
+    drawList.text([4, 8, 0], SAMPLE, { fontSize: FONT_SIZE, space: "screen", anchor: "top-left", color: [1, 1, 1, 1] });
   }, source);
-  const withoutMip = await onTarget((recorder) => {
-    recorder.text([4, 8, 0], SAMPLE, { fontSize: FONT_SIZE, space: "screen", anchor: "top-left", color: [1, 1, 1, 1] });
+  const withoutMip = await onTarget((drawList) => {
+    drawList.text([4, 8, 0], SAMPLE, { fontSize: FONT_SIZE, space: "screen", anchor: "top-left", color: [1, 1, 1, 1] });
   }, source, 1);
   const inkOf = (pixels: Uint8Array): number => {
     let ink = 0;

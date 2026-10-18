@@ -2,7 +2,6 @@ import { expect, test } from "vitest";
 import { frame, init, target } from "vgpu/node";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import type { FrameRecorder } from "../src/frame-recorder.js";
 import { BAKED_MSDF_PAGE_GZIP_BASE64 } from "../src/assets/fira-mono-msdf-atlas.js";
 import type { TextFontSource } from "../src/gpu-text-3d.js";
 import { decodeBase64Bytes } from "../src/text-font.js";
@@ -27,9 +26,9 @@ async function renderM(font: TextFontSource): Promise<Uint8Array> {
     const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
     const renderer = new GpuDebugDraw3D(gpu, { text: { sources: { default: font } } });
     const debug = new DebugDraw3D();
-    const recorder = debug.beginFrame();
-    recorder.text([-0.55, 1.2, 0.5], "M", { fontSize: 20, pixelSize: 0.1, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
-    renderer.prepare(debug.finishFrame(recorder), { viewProjection: identity, view: identity });
+    const drawList = debug.beginFrame();
+    drawList.text([-0.55, 1.2, 0.5], "M", { fontSize: 20, pixelSize: 0.1, space: "world-billboard", anchor: "top-left", color: [0, 1, 0, 1] });
+    renderer.prepare(debug.finishFrame(drawList), { viewProjection: identity, view: identity });
     frame(gpu, (f) => {
       renderer.updateIndirect(f);
       f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (pass) => renderer.draw(pass));

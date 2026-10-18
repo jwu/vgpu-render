@@ -18,7 +18,7 @@ import { homedir, tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
-const TARGET = resolve(ROOT, "src/assets/vgpu-sans-faces.ts");
+const TARGET = resolve(ROOT, "gallery/assets/vgpu-sans-faces.ts");
 const SOURCE = process.env.MONA_SANS_SOURCE
   ?? resolve(homedir(), "src/bevy@bevyengine/assets/fonts/MonaSans-VariableFont.ttf");
 
@@ -85,7 +85,7 @@ const source = `/**
  * family is what makes eight distinct weights drawable at all (see \`loadFontFaces\`).
  *
  * Source: Mona Sans (SIL OFL 1.1, reserved name "Mona"), instanced and renamed to
- * "${"vgpu-render Sans"}". The licence is next to the debug font in \`src/assets/fonts/\`.
+ * "${"vgpu-render Sans"}". The licence sits beside the generated faces in \`gallery/assets/\`.
  */
 
 /** One instanced face: the weight it was built at, and its WOFF2 container. */

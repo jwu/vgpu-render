@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import { SCENE_EXAMPLES } from "../src/scene-examples.js";
-import { buildScene } from "../src/scenes-3d.js";
+import { SCENE_EXAMPLES } from "../examples/registry.js";
+import { buildScene } from "../examples/runtime.js";
 import { SyntheticFont } from "./support/synthetic-font.js";
 
 // A unit-scale projection would clip the text scenes away: the source/size matrix spans about 20 world
@@ -15,9 +15,9 @@ const wideCamera = new Float32Array([SCALE, 0, 0, 0, 0, SCALE, 0, 0, 0, 0, 1, 0,
 
 function commandsFor(id: string, time = 0): number {
   const debug = new DebugDraw3D();
-  const recorder = debug.beginFrame();
-  buildScene(id, recorder, time);
-  return debug.finishFrame(recorder).length;
+  const drawList = debug.beginFrame();
+  buildScene(id, drawList, time);
+  return debug.finishFrame(drawList).length;
 }
 
 test("every Godot example builds transient commands", () => {
@@ -62,9 +62,9 @@ test("real GPU renders every Godot example without errors", async () => {
     });
     for (const example of SCENE_EXAMPLES) {
       const debug = new DebugDraw3D();
-      const recorder = debug.beginFrame();
-      buildScene(example.id, recorder, 0.6);
-      const commands = debug.finishFrame(recorder);
+      const drawList = debug.beginFrame();
+      buildScene(example.id, drawList, 0.6);
+      const commands = debug.finishFrame(drawList);
       renderer.prepare(commands, { viewProjection: wideCamera, view: identity });
       frame(gpu, (f) => {
         renderer.updateIndirect(f);

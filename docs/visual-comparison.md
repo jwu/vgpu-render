@@ -264,7 +264,7 @@ normal-aware 淡出后就已过期、当时只回写了六个场景，本轮一�
 
 本轮改动：
 
-- `FrameRecorder`：`LineOptions.normals`（逐顶点法向；`lineStrip` 按**段起点**法向发射，与
+- `FrameDrawList`：`LineOptions.normals`（逐顶点法向；`lineStrip` 按**段起点**法向发射，与
   `_emit_normal_line_strip` / `_emit_normal_line_loop` 一致，闭合环要每顶点一个、开放 strip
   每段一个）；`JointCommand.previousNormal` / `nextNormal`（对应
   `_emit_normal_joint(previous, center, next, previous_normal, next_normal, ...)`）。
@@ -322,7 +322,7 @@ capsule 直接拼 `cylinder + 2 个完整球`，会画出参考里不存在的�
   `lines` = 参考的 `draw_line_list`），并逐行移植 ring key 去重、`_get_cone_base_rotation`、
   `_get_capsule_side_outline_points`（`arc = ceil(segments / 2)`）、segment/axis 下限与
   `radius <= 0` / `height <= 0` / `half_height <= 0` 的早退规则。
-- 场景层改为 `recorder.lineStrip(loop, options, true)` + `recorder.line(a, b, options)`，
+- 场景层改为 `drawList.lineStrip(loop, options, true)` + `drawList.line(a, b, options)`，
   所以每个环是真正的闭合路径：接头（joint）与跨环累计的 dash 相位与参考一致，不再逐边重启 dash。
 - `side_segment_count` 真正独立：`cone(side segments)` / `cylinder(side segments)` 保持 base 分段
   16 并只变化侧线数量；`capsule(side segments)` 只变化轮廓数量。
@@ -509,7 +509,7 @@ bun scripts/capture-vgpu.ts circle line
 | ~~P1~~ | ~~3D 列/行标签未对齐~~ | **已修复（第十一轮）**：标签文本、列标题/行标签坐标、字号（20/28 px）、`pixel_size`（0.004）、`modulate` 与平躺朝向（`rotation.x = -PI/2`）均按参考 `examples/*.gd` 的 `_create_labels` 移植；字体仍不同，不声称字形等价 |
 | P1 | AA 不同 | 未统一 MSAA/边缘模式 |
 | P2 | `demo.gd` 未纳入 | 清单 15 个场景，源目录有 16 个（含 `demo.gd`） |
-| P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `recorder.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
+| P2 | grid 渲染语义 | 布局（列 x / 行 z）已精确；但线段走库 `drawList.grid`，与参考 `_emit_grid_lines` 的 skew/outer 在几何上已对齐，rotation 的 basis 组合方式仍为欧拉角近似 |
 
 ## 第十一轮：3D 列/行标签
 
@@ -518,10 +518,10 @@ bun scripts/capture-vgpu.ts circle line
 `_get_sample_label_position(column, row)`。这些节点不是 addon 输出，但属于参考场景的呈现，
 所以 vgpu 用自己的文字渲染在同一批坐标上重画：
 
-- 文本：`src/labels-3d.ts` 逐场景转录 `_get_column_label` / `_get_sample_label`，包括格式
+- 文本：`examples/shared/labels-3d.ts` 逐场景转录 `_get_column_label` / `_get_sample_label`，包括格式
   （`w = 1.0`、`ROUND`、`s:0.93  r:-22°  h:216°`）与 curve 的 construction band 标题。
-  侧栏 `src/scene-examples.ts` 从同一张表派生，两处不会再漂移。
-- 位置：`src/scenes-3d.ts` 的 `SCENE_LABEL_SPECS` 按参考的 x 包围盒（`_get_*_x_bounds`）
+  侧栏 `examples/registry.ts` 从同一张表派生，两处不会再漂移。
+- 位置：`examples/shared/draw-3d.ts` 的 `SCENE_LABEL_SPECS` 按参考的 x 包围盒（`_get_*_x_bounds`）
   把行标签右端放在样本左侧 `SAMPLE_LABEL_GAP = 0.12` 处，列标题按 bounds 中点居中；
   `LABEL_Y = <scene>_Y + 0.01`，`index` / `world_space_width` 用它们自己的 0.08 / 18 px / 24 px。
 - 朝向：`world-plane` 新增 `rotation` 选项（基向量走实例 world 矩阵），示例用
@@ -618,13 +618,13 @@ Godot 实机画面逐项比对。这个姿态只走 URL：面板的「视角预�
 `斜 45°`（+X/+Z 对角上方）与 `正 45°`（+Z 轴上，俯角同为 45°），三者共用 gallery 的距离/FOV/裁剪面，
 只改角度。对比模式固定在截图预设，URL 不会覆盖它的相机。
 
-截图前等待 `document.documentElement.dataset.renderReady === "true"`，设置 1920×1080/DPR=1。截图预设来自 `src/demo-config.ts`，不读取本地持久配置；对比模式禁用鼠标修改相机。正交仅作为显式 `&projection=orthographic` 诊断选项，不是默认 Godot 基线。
+截图前等待 `document.documentElement.dataset.renderReady === "true"`，设置 1920×1080/DPR=1。截图预设来自 `gallery/demo-config.ts`，不读取本地持久配置；对比模式禁用鼠标修改相机。正交仅作为显式 `&projection=orthographic` 诊断选项，不是默认 Godot 基线。
 
 ## 后续修复次序
 
 1. ~~实现 round/bevel/miter 的真实接头几何~~ 已完成（第六轮）；~~sphere/capsule/cone/cylinder 线框拓扑~~ 已完成（第八轮）；~~normal-aware 线与接头的逐顶点法向~~ 已完成（第九轮）；~~平面图元逐顶点法向与 index/wsw 列基向量~~ 已完成（第十轮）。下一步是 AA 与 3D 标签，以及 world-space 宽度的 3D 侧向。
 2. 统一 dash 周期与屏幕空间 dash shader，消除剩余覆盖差。
 3. ~~单独对齐 infinite grid shader（颜色、距离层级、淡出）。~~ 已完成，含色彩空间（线性 target + sRGB present）。
-4. 把 box/实体图元的 width/dash/normal 参数真正传递到 `FrameRecorder`。
+4. 把 box/实体图元的 width/dash/normal 参数真正传递到 `FrameDrawList`。
 5. 增加 3D 列/行标签，补齐 `demo.gd`，再扩展到其他场景。
 6. 只有对应样例与像素测试验证完，才提高 implementation status。

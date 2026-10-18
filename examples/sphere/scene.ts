@@ -1,0 +1,11 @@
+/**
+ * `sphere`: sphere wire and solid meshes across width, radius, segment, axis, dash, joint and normal rows.
+ */
+
+import type { FrameDrawList } from "../../src/frame-draw-list.js";
+import type { SceneContext } from "../shared/scene-context.js";
+import { shapeScene } from "../shared/shapes-3d.js";
+
+export function draw(drawList: FrameDrawList, context: SceneContext): void {
+  shapeScene(drawList, "sphere", context);
+}
