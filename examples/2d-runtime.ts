@@ -12,6 +12,7 @@ import { draw as shapes } from "./2d-shapes/scene.js";
 import { draw as lines } from "./2d-lines/scene.js";
 import { draw as curves } from "./2d-curves/scene.js";
 import { draw as markers } from "./2d-markers/scene.js";
+import { draw as arrows } from "./2d-arrows/scene.js";
 import { draw as outlines } from "./2d-outlines/scene.js";
 import { draw as fill } from "./2d-fill/scene.js";
 import { draw as spaces } from "./2d-spaces/scene.js";
@@ -23,6 +24,7 @@ const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: SceneCon
   "2d-lines": lines,
   "2d-curves": curves,
   "2d-markers": markers,
+  "2d-arrows": arrows,
   "2d-outlines": outlines,
   "2d-fill": fill,
   "2d-spaces": spaces,

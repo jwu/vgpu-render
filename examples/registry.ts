@@ -32,6 +32,7 @@ import { meta as page24 } from "./2d-shapes/meta.js";
 import { meta as page25 } from "./2d-lines/meta.js";
 import { meta as page26 } from "./2d-curves/meta.js";
 import { meta as page27 } from "./2d-markers/meta.js";
+import { meta as page2dArrows } from "./2d-arrows/meta.js";
 import { meta as page28 } from "./2d-outlines/meta.js";
 import { meta as page29 } from "./2d-fill/meta.js";
 import { meta as page30 } from "./2d-spaces/meta.js";
@@ -68,6 +69,7 @@ export const SCENE_EXAMPLES: readonly SceneExample[] = [
   page25,
   page26,
   page27,
+  page2dArrows,
   page28,
   page29,
   page30,

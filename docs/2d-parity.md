@@ -65,13 +65,14 @@
 | `2d-shapes` | 图元总览 | `2d_shapes` 的十二个图元，填充行与描边行 |
 | `2d-lines` | 矩阵 | 线宽、透明度、渐变、虚线、strip / loop 的实线与虚线接头 |
 | `2d-curves` | 矩阵 | arc 的 sweep / startAngle、short / long arc between、采样曲线与渐变曲线 |
-| `2d-markers` | 矩阵 | cross、方点 / 圆点、arrow 角度与 tip 长度、axes 长度 |
+| `2d-markers` | 矩阵 | cross、方点 / 圆点、axes 长度 |
+| `2d-arrows` | 矩阵 | 实心 / line 两种箭头，按 width、head length、head angle、direction、joint、dash 成对比较 |
 | `2d-outlines` | 矩阵 | 六个图元的描边形态，每行一个 `strokeWidth` |
 | `2d-fill` | 矩阵 | 旋转、sweep、边数、capsule 长度作为行参数 |
 | `2d-spaces` | 矩阵 | `world2d` / `screen` 对照，以及 `widthMode` / `sizeMode` |
 | `2d-grid` | 矩阵 | grid 的 cell 数作为列、线宽作为行，四列覆盖同一尺度 |
 
-矩阵页的列标题与行标签由 `scenes-2d.ts` 的 `LABELS_2D` 提供，`scene-examples.ts` 直接读同一张表生成
+矩阵页的列标题与行标签由 `examples/shared/2d-labels.ts` 的 `LABELS_2D` 提供，`examples/registry.ts` 直接读同一张表生成
 侧栏列，所以页面和侧栏不会出现对方没有的列。标签是 `world-plane` 文本、`pixelSize: 1`，即一个字体
 像素等于一个 `world2d` 单位；`demo-engine.ts` 在 2D 页把传给文本渲染器的 `viewProjection` 换成
 `world2dProjection`，标签因此与图元同处一套坐标，随拖拽和缩放一起移动（3D 页仍用 3D 相机投影）。
@@ -104,7 +105,7 @@
 | `tests/frame-draw-list-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal |
 | `tests/line2d.gpu.test.ts` | 像素宽度、点定位、zoom、dash、round joint、2D 覆盖 3D |
 | `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/弧裁剪/screen 空间/AA |
-| `tests/scenes-2d.test.ts` | 九个页面只产生 2D 命令与标签、矩阵页列/行标签与侧栏一致、标签落在 fit 范围内、`2d-spaces` 两个空间都出现、形状集合覆盖、时间动画、3D 场景不受影响 |
+| `tests/scenes-2d.test.ts` | 十个页面只产生 2D 命令与标签、矩阵页列/行标签与侧栏一致、标签落在 fit 范围内、`2d-spaces` 两个空间都出现、形状集合覆盖、时间动画、3D 场景不受影响 |
 | `tests/scenes.test.ts` | 所有示例（含 2D 页）在真实 GPU 上渲染无错误 |
 
 ## 2D 无限网格
@@ -151,7 +152,7 @@ bun test tests/camera-2d.test.ts tests/frame-draw-list-2d.test.ts \
   tests/line2d.gpu.test.ts tests/shape2d.gpu.test.ts tests/scenes-2d.test.ts
 bun run dev -- --host 127.0.0.1 --port 5174
 # gallery: ?scene=2d-gizmos / ?scene=2d-shapes / ?scene=2d-lines / ?scene=2d-curves
-#          ?scene=2d-markers / ?scene=2d-outlines / ?scene=2d-fill / ?scene=2d-spaces / ?scene=2d-grid
+#          ?scene=2d-markers / ?scene=2d-arrows / ?scene=2d-outlines / ?scene=2d-fill / ?scene=2d-spaces / ?scene=2d-grid
 ```
 
 2D 页面在 gallery 里是独立的 `2D Graphics` 分组（与 `3D Graphics`、`Text` 并列）。2D 无限网格

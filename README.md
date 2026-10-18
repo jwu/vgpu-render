@@ -168,7 +168,7 @@ does not write depth. Screen-space text remains the last thing drawn.
 - The 2D camera is independent of the 3D one (`mode: "3d" | "2d"` in the gallery config); the
 `2d-*` pages fit their declared `view2d` extent, drag or hold WASD to pan, and scroll to zoom. The gallery
 classifies the 2D layer like the 3D scenes: `2d-gizmos` and `2d-shapes` are overviews, while
-`2d-lines`, `2d-curves`, `2d-markers`, `2d-outlines`, `2d-fill`, `2d-spaces` and `2d-grid` are
+`2d-lines`, `2d-curves`, `2d-markers`, `2d-arrows`, `2d-outlines`, `2d-fill`, `2d-spaces` and `2d-grid` are
 column-by-row matrices whose column titles and sample labels are `world2d` text, so they pan
 and zoom with the geometry they annotate.
 
