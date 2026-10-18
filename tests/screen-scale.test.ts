@@ -54,8 +54,8 @@ describe("scaleScreenCommands", () => {
     const frame = new FrameDrawList();
     frame.d2.point([5, 6], { space: "screen", size: 3, sizeMode: "screen" });
     frame.d2.point([5, 6], { space: "screen", size: 3, sizeMode: "world" });
-    frame.d2.line([0, 0], [10, 20], { space: "screen", width: 2, widthMode: "screen", dash: [4, 2, 1] });
-    frame.d2.line([0, 0], [10, 20], { space: "screen", width: 2, widthMode: "world", dash: [4, 2, 1] });
+    frame.d2.line_d([0, 0], [10, 20], [4, 2, 1], { space: "screen", width: 2, widthMode: "screen" });
+    frame.d2.line_d([0, 0], [10, 20], [4, 2, 1], { space: "screen", width: 2, widthMode: "world" });
     frame.d2.line([0, 0], [10, 20], { space: "world2d", width: 2 });
 
     const commands = scaleScreenCommands(frame.commands(), 2);
@@ -72,7 +72,7 @@ describe("scaleScreenCommands", () => {
 
   test("scales every pixel length a 2D screen shape carries", () => {
     const frame = new FrameDrawList();
-    frame.d2.rect([1, 2], [4, 6], { space: "screen", fill: false, strokeWidth: 3 });
+    frame.d2.rect([1, 2], [4, 6], { space: "screen", strokeWidth: 3 });
     const [command] = scaleScreenCommands(frame.commands(), 2);
     if (command?.kind !== "shape2d") throw new Error("expected a shape2d command");
     expect(command.center).toEqual([2, 4]);

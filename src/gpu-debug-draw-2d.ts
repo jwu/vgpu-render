@@ -84,6 +84,8 @@ type ShapeCollection2D = InstanceCollection<{
   color: "float32x4";
   /** bit0: filled; bits 8..15: polygon vertex count. */
   flags: "uint32";
+  /** (visible, gap, phase) of a dashed outline; gap 0 disables it. */
+  dash: "float32x3";
 }>;
 
 /** Must match the `SHAPE_*` constants in `shape2d-shader.ts`. */
@@ -113,6 +115,11 @@ function sameVec2(a: Vec2, b: Vec2): boolean {
 }
 function sameColor(a: readonly [number, number, number, number], b: readonly [number, number, number, number]): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+/** Dash patterns are optional, so both sides being absent is also a match. */
+function sameDash(a: readonly [number, number, number] | undefined, b: readonly [number, number, number] | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 function samePoint2D(a: Point2DCommand, b: Point2DCommand): boolean {
   return sameVec2(a.position, b.position) && sameColor(a.color, b.color) && a.size === b.size && a.sizeMode === b.sizeMode && a.round === b.round;
@@ -159,6 +166,7 @@ function sameShape2D(a: Shape2DCommand, b: Shape2DCommand): boolean {
     a.startAngle === b.startAngle &&
     a.sweep === b.sweep &&
     a.sides === b.sides &&
+    sameDash(a.dash, b.dash) &&
     sameColor(a.color, b.color)
   );
 }
@@ -245,7 +253,7 @@ class SpaceBucket2D {
     this.#points = instances({ capacity: capacities.points, attributes: { point: "float32x3", color: "float32x4", size: "float32", flags: "uint32" } });
     this.#lines = instances({ capacity: capacities.lines, attributes: { start: "float32x3", end: "float32x3", color: "float32x4", colorEnd: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", normal: "float32x3", joint: "uint32" } });
     this.#joints = instances({ capacity: capacities.joints, attributes: { previous: "float32x3", center: "float32x3", next: "float32x3", color: "float32x4", width: "float32", flags: "uint32", dash: "float32x3", joint: "uint32", previousNormal: "float32x3", nextNormal: "float32x3" } });
-    this.#shapes = instances({ capacity: capacities.shapes, attributes: { shape: "uint32", center: "float32x3", size: "float32x2", vertexB: "float32x2", vertexC: "float32x2", params: "float32x4", rotationRadius: "float32x2", color: "float32x4", flags: "uint32" } });
+    this.#shapes = instances({ capacity: capacities.shapes, attributes: { shape: "uint32", center: "float32x3", size: "float32x2", vertexB: "float32x2", vertexC: "float32x2", params: "float32x4", rotationRadius: "float32x2", color: "float32x4", flags: "uint32", dash: "float32x3" } });
     this.#pointBridge = instanceGeometry(gpu, this.#points, { mesh: zeroGeometry(gpu) });
     this.#lineBridge = instanceGeometry(gpu, this.#lines, { mesh: zeroGeometry(gpu) });
     this.#jointBridge = instanceGeometry(gpu, this.#joints, { mesh: jointGeometry(gpu, options.jointVertexCount) });
@@ -457,11 +465,12 @@ class SpaceBucket2D {
       rotationRadius: [command.rotation, boundingRadius(command)],
       color: command.color,
       flags: (command.filled ? 1 : 0) | (command.sides << 8),
+      dash: command.dash ?? [0, 0, 0],
     });
   }
 
   #addShapeId(index: number): InstanceId {
-    const id = this.#shapes.add({ shape: 0, center: [0, 0, 0], size: [0, 0], vertexB: [0, 0], vertexC: [0, 0], params: [0, 0, 0, 0], rotationRadius: [0, 0], color: [0, 0, 0, 0], flags: 0 });
+    const id = this.#shapes.add({ shape: 0, center: [0, 0, 0], size: [0, 0], vertexB: [0, 0], vertexC: [0, 0], params: [0, 0, 0, 0], rotationRadius: [0, 0], color: [0, 0, 0, 0], flags: 0, dash: [0, 0, 0] });
     world(this.#shapes, id);
     this.#shapeIds[index] = id;
     return id;

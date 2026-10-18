@@ -5,6 +5,6 @@ import { page2D } from "../shared/meta.js";
 
 export const meta: SceneExample = page2D(
     "2d-curves",
-    "Arc sweep, start angle, short and long arcs between points, and sampled curves.",
-    "`short_arc_2d_between` and `long_arc_2d_between` are not separate calls in this layer: the page computes the sweep from the two directions and draws one `arc`, which is what makes the pair comparable. The curve columns sample a sine into a strip; the gradient column interpolates the segment colours itself, because a strip's `colorEnd` repeats per segment.",
+    "Cubic curve sampling with a construction band that shows every control point, then width, shape, transform, tolerance, closed and dash columns.",
+    "`curve` samples a cubic control polygon into a `lineStrip`, the 2D twin of the 3D curve page. The construction band under the matrix draws the reference control points — pink anchors, amber handles and their edges — for the straight, smooth, flat-handle, broken, one-sided, y and closed curves. `curve(tolerance)` trades polygon density against smoothness, `curve(closed)` pairs an open curve with three closed variants, and dashes reuse the same accumulated phase as every other 2D stroke.",
   );

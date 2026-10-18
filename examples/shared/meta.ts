@@ -58,6 +58,13 @@ export const column = (label: string, samples: readonly string[]): ExampleColumn
 
 export const jointNote = "Round, bevel and miter joins are rebuilt in the vertex stage from the reference joint shaders.";
 
+/**
+ * Every 2D shape page is a matrix of one parameter per column and one sample per row, so they
+ * share a single note explaining both the layout and the SDF rendering model.
+ */
+export const shape2DNote =
+  "One column per parameter, one sample per row, the same layout as the 3D matrix pages. Each shape is one instanced quad evaluated as a signed distance field, so a stroke width stays a pixel count at any zoom and nothing is triangulated on the CPU.";
+
 /** A gallery page's columns come from the same table the 3D scene draws its labels from. */
 export const columnsOf = (id: string): readonly ExampleColumn[] =>
   (SCENE_LABELS[id]?.columns ?? []).map((entry) => column(entry.title, entry.samples));

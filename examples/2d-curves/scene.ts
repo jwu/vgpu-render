@@ -1,136 +1,182 @@
 /**
- * `2d-curves`: arc sweep and start angle, short and long arcs between points, sampled curves.
+ * `2d-curves`: the 2D twin of the 3D curve page — a construction band that shows the control
+ * points of every curve shape, then a matrix over width / shape / transform / tolerance / closed
+ * and dashes.
  */
 
 import type { Color, FrameDrawList } from "../../src/frame-draw-list.js";
+import type { FrameDrawList2D } from "../../src/frame-draw-list-2d.js";
 import type { SceneContext } from "../shared/scene-context.js";
-import type { FrameDrawList2D, Shape2DOptions } from "../../src/frame-draw-list-2d.js";
 import type { Vec2 } from "../../src/camera-2d.js";
-import { COLUMN_SPACING } from "../shared/2d-labels.js";
-import { ACCENT, ACTION, COOL, RING, WARM, pageHeading, table2D } from "../shared/2d-page.js";
+import type { Curve2D, CurvePoint2D, CurveTransform2D } from "../../src/curve.js";
+import { placeCurvePoint2D } from "../../src/curve.js";
+import { ACCENT, ACTION, COOL, FILL, HINT, RING, WARM, pageHeading, table2D } from "../shared/2d-page.js";
 
-const TAU = Math.PI * 2;
+/** Control points are authored in the 3D curve page's units and scaled up to `world2d`. */
+const UNIT = 100;
 
-function mixColor(from: Color, to: Color, t: number): Color {
-  return [
-    from[0] + (to[0] - from[0]) * t,
-    from[1] + (to[1] - from[1]) * t,
-    from[2] + (to[2] - from[2]) * t,
-    from[3] + (to[3] - from[3]) * t,
-  ];
+const p = (x: number, y: number): Vec2 => [x * UNIT, y * UNIT];
+
+function node(x: number, y: number, inHandle?: Vec2, outHandle?: Vec2): CurvePoint2D {
+  return {
+    position: p(x, y),
+    ...(inHandle === undefined ? {} : { in: inHandle }),
+    ...(outHandle === undefined ? {} : { out: outHandle }),
+  };
 }
 
+/** The reference `_create_*_curve` constructors, flattened onto the XY plane. */
+const straightCurve = (): Curve2D => ({
+  points: [node(-0.5, 0.18), node(0, -0.18), node(0.5, 0.18)],
+});
+
+const smoothSymmetricCurve = (shapeScale = 1): Curve2D => ({
+  points: [
+    node(-0.55, 0.2 * shapeScale, undefined, p(0.28, -0.35 * shapeScale)),
+    node(0, -0.2 * shapeScale, p(-0.28, 0.35 * shapeScale), p(0.28, -0.35 * shapeScale)),
+    node(0.55, 0.2 * shapeScale, p(-0.28, 0.35 * shapeScale)),
+  ],
+});
+
+const flatHandleCurve = (): Curve2D => ({
+  points: [node(-0.55, 0, undefined, p(0.32, 0)), node(0.55, 0, p(-0.32, 0))],
+});
+
+const brokenCornerCurve = (): Curve2D => ({
+  points: [
+    node(-0.55, 0.18, undefined, p(0.28, -0.08)),
+    node(0, -0.24, p(-0.18, 0.34), p(0.12, 0.34)),
+    node(0.55, 0.18, p(-0.28, -0.08)),
+  ],
+});
+
+const oneSidedCurve = (): Curve2D => ({
+  points: [
+    node(-0.55, 0.18, undefined, p(0.38, -0.48)),
+    node(0, -0.16),
+    node(0.55, 0.18, p(-0.38, -0.48)),
+  ],
+});
+
+const yCurve = (): Curve2D => ({
+  points: [
+    node(-0.55, -0.18, undefined, p(0.28, 0.36)),
+    node(0, 0.22, p(-0.28, -0.34), p(0.28, -0.34)),
+    node(0.55, -0.18, p(-0.28, 0.36)),
+  ],
+});
+
+const closedCurve = (shapeScale: number): Curve2D => {
+  const xRadius = 0.45 * shapeScale;
+  const yRadius = 0.35 * shapeScale;
+  const xHandle = 0.28 * shapeScale;
+  const yHandle = 0.24 * shapeScale;
+  return {
+    closed: true,
+    points: [
+      node(-xRadius, 0, p(0, yHandle), p(0, -yHandle)),
+      node(0, -yRadius, p(-xHandle, 0), p(xHandle, 0)),
+      node(xRadius, 0, p(0, -yHandle), p(0, yHandle)),
+      node(0, yRadius, p(xHandle, 0), p(-xHandle, 0)),
+    ],
+  };
+};
+
+const SHAPE_VALUES = [0.25, 0.65, 1, 1.35] as const;
+const TOLERANCES = [1, 2, 4, 8] as const;
+const WIDTHS = [1, 2, 4, 8] as const;
+const ROTATIONS = [0, Math.PI / 12, Math.PI / 6, Math.PI / 4] as const;
+const DASHES = [[24, 8], [12, 12], [6, 18], [2, 12]] as const;
+const DASH_SPEED = 30;
+
+const BASE = smoothSymmetricCurve();
+const SHAPES = SHAPE_VALUES.map((value) => smoothSymmetricCurve(value));
+const CLOSED: readonly Curve2D[] = [smoothSymmetricCurve(), closedCurve(1), closedCurve(0.75), closedCurve(1.25)];
+const CONSTRUCTION: readonly { readonly curve: Curve2D; readonly title: string }[] = [
+  { curve: straightCurve(), title: "straight" },
+  { curve: smoothSymmetricCurve(), title: "smooth" },
+  { curve: flatHandleCurve(), title: "flat handles" },
+  { curve: brokenCornerCurve(), title: "broken" },
+  { curve: oneSidedCurve(), title: "one-sided" },
+  { curve: yCurve(), title: "y curve" },
+  { curve: closedCurve(1), title: "closed" },
+];
+
+const CONSTRUCTION_GAP = 200;
+
 /**
- * A stroke that fades from one colour to the other over its whole length. One `line` per segment
- * rather than a single `lineStrip`, because a strip's `color`/`colorEnd` repeats per segment.
+ * Reference `_draw_curve_control_points`: a pink anchor ring per control point, an amber ring and
+ * edge per handle. The 2D page draws them as pixel-sized points and one-pixel edges.
  */
-function gradientStrip(d2: FrameDrawList2D, points: readonly Vec2[], from: Color, to: Color, width: number): void {
-  const segments = points.length - 1;
-  for (let index = 0; index < segments; index++) {
-    d2.line(points[index]!, points[index + 1]!, {
-      width,
-      color: mixColor(from, to, index / segments),
-      colorEnd: mixColor(from, to, (index + 1) / segments),
-    });
+const ANCHOR_RING_RADIUS = 8;
+const HANDLE_RING_RADIUS = 5;
+const CONTROL_RING_WIDTH = 1.5;
+
+function drawControlPoints(d2: FrameDrawList2D, curve: Curve2D, transform: CurveTransform2D): void {
+  // Hollow rings like the 3D page's `_draw_curve_control_points`: the anchor is larger than the
+  // handle tips, and both are outlines rather than filled dots.
+  const ring = (center: Vec2, radius: number, color: Color): void => {
+    d2.circle(center, radius, { strokeWidth: CONTROL_RING_WIDTH, color });
+  };
+  for (const point of curve.points) {
+    // Anchors and handles are both placed from local control points; only the transform moves
+    // them, so the handle tip cannot pick up the centre twice.
+    const anchor = placeCurvePoint2D(point.position, transform);
+    const handle = (offset: Vec2): void => {
+      const local: Vec2 = [point.position[0] + offset[0], point.position[1] + offset[1]];
+      const tip = placeCurvePoint2D(local, transform);
+      d2.line(anchor, tip, { width: 1, color: ACTION });
+      ring(tip, HANDLE_RING_RADIUS, ACTION);
+    };
+    if (point.in !== undefined) handle(point.in);
+    if (point.out !== undefined) handle(point.out);
+    ring(anchor, ANCHOR_RING_RADIUS, ACCENT);
   }
-}
-
-function pointAt(center: Vec2, radius: number, angle: number): Vec2 {
-  return [center[0] + Math.cos(angle) * radius, center[1] + Math.sin(angle) * radius];
-}
-
-/**
- * bevy's `short_arc_2d_between` / `long_arc_2d_between`: an arc of the circle through `from`
- * around `center`, ending at the direction of `to`. The short form takes the sweep with the
- * smaller absolute angle, the long form the other one.
- */
-function arcBetween(
-  d2: FrameDrawList2D,
-  center: Vec2,
-  from: Vec2,
-  to: Vec2,
-  long: boolean,
-  options: Shape2DOptions,
-): void {
-  const start = Math.atan2(from[1] - center[1], from[0] - center[0]);
-  const radius = Math.hypot(from[0] - center[0], from[1] - center[1]);
-  const raw = Math.atan2(to[1] - center[1], to[0] - center[0]) - start;
-  const counterClockwise = ((raw % TAU) + TAU) % TAU;
-  const sweep = long
-    ? (counterClockwise <= Math.PI ? counterClockwise - TAU : counterClockwise)
-    : (counterClockwise <= Math.PI ? counterClockwise : counterClockwise - TAU);
-  d2.arc(center, radius, { ...options, startAngle: start, sweep });
 }
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
   pageHeading(drawList, "2d-curves");
-  const { d2, columnX, rowY, rows } = table2D(drawList, "2d-curves");
-  const sweeps = [Math.PI / 3, (Math.PI * 2) / 3, (Math.PI * 4) / 3, (Math.PI * 11) / 6] as const;
-  const starts = [0, Math.PI / 2, Math.PI, Math.PI * 1.5] as const;
-  const between = [
-    [20, 100],
-    [20, 150],
-    [20, 250],
-    [20, 340],
-  ] as const;
-  const waves = [1, 2, 3, 4] as const;
-  const gradients: readonly (readonly [Color, Color])[] = [
-    [ACTION, RING],
-    [COOL, WARM],
-    [ACCENT, COOL],
-    [WARM, ACTION],
-  ];
-  const deg = Math.PI / 180;
+  const { d2, shapeX, rowY, rows } = table2D(drawList, "2d-curves");
+  const dashPhase = context.time * DASH_SPEED;
+
   for (let row = 0; row < rows; row++) {
     const y = rowY(row);
-    d2.arc([columnX(0), y], 42, {
-      fill: false,
-      strokeWidth: 5,
-      startAngle: -Math.PI / 2,
-      sweep: sweeps[row]!,
-      color: RING,
+    d2.curve(BASE, { width: WIDTHS[row], color: RING, transform: { center: [shapeX(0), y] } });
+    d2.curve(SHAPES[row]!, { width: 2, color: FILL, transform: { center: [shapeX(1), y] } });
+    d2.curve(BASE, {
+      width: 2,
+      color: WARM,
+      transform: { center: [shapeX(2), y], rotation: ROTATIONS[row] },
     });
-    d2.arc([columnX(1), y], 42, {
-      fill: false,
-      strokeWidth: 5,
-      startAngle: starts[row]!,
-      sweep: Math.PI * 0.75,
+    d2.curve(BASE, {
+      width: 2,
+      color: COOL,
+      tolerance: TOLERANCES[row],
+      transform: { center: [shapeX(3), y] },
+    });
+    d2.curve(CLOSED[row]!, { width: 2, color: FILL, transform: { center: [shapeX(4), y] } });
+    const [visible, gap] = DASHES[row]!;
+    d2.curve_d(BASE, [visible, gap, dashPhase], {
+      width: 2,
       color: ACCENT,
+      transform: { center: [shapeX(5), y] },
     });
-    const [fromAngle, toAngle] = between[row]!;
-    const shortCenter: Vec2 = [columnX(2), y];
-    arcBetween(
-      d2,
-      shortCenter,
-      pointAt(shortCenter, 42, fromAngle * deg),
-      pointAt(shortCenter, 42, toAngle * deg),
-      false,
-      { fill: false, strokeWidth: 5, color: COOL },
-    );
-    const longCenter: Vec2 = [columnX(3), y];
-    arcBetween(
-      d2,
-      longCenter,
-      pointAt(longCenter, 38, fromAngle * deg),
-      pointAt(longCenter, 38, toAngle * deg),
-      true,
-      { fill: false, strokeWidth: 5, color: WARM },
-    );
-
-    const waveCount = waves[row]!;
-    const sine: Vec2[] = [];
-    for (let step = 0; step <= 72; step++) {
-      const t = step / 72;
-      sine.push([columnX(4) - 62 + t * 124, y + Math.sin(t * TAU * waveCount) * 30]);
-    }
-    d2.lineStrip(sine, { width: 4, color: ACTION });
-    const [gradientFrom, gradientTo] = gradients[row]!;
-    gradientStrip(
-      d2,
-      sine.map(([x, sy]) => [x + COLUMN_SPACING, sy] as Vec2),
-      gradientFrom,
-      gradientTo,
-      4,
-    );
   }
+
+  // Construction band under the matrix: every curve shape with its anchors and handles visible.
+  const bandY = rowY(rows - 1) - 100;
+  CONSTRUCTION.forEach((sample, index) => {
+    const center: Vec2 = [(index - (CONSTRUCTION.length - 1) / 2) * CONSTRUCTION_GAP, bandY];
+    const transform: CurveTransform2D = { center };
+    d2.curve(sample.curve, { width: 1.5, color: HINT, tolerance: 1, transform });
+    drawControlPoints(d2, sample.curve, transform);
+    drawList.text([center[0], bandY - 46, 0], sample.title, {
+      space: "world-plane",
+      pixelSize: 1,
+      fontSize: 16,
+      anchor: "top-center",
+      color: HINT,
+      depthTest: false,
+    });
+  });
 }

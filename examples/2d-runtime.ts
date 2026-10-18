@@ -7,26 +7,44 @@
 
 import type { FrameDrawList } from "../src/frame-draw-list.js";
 import { DEFAULT_VIEWPORT, type SceneContext, type Viewport2D } from "./shared/scene-context.js";
-import { draw as gizmos } from "./2d-gizmos/scene.js";
-import { draw as shapes } from "./2d-shapes/scene.js";
+import { draw as index } from "./2d-index/scene.js";
+import { draw as rect } from "./2d-rect/scene.js";
+import { draw as rectR } from "./2d-rounded-rect/scene.js";
+import { draw as circle } from "./2d-circle/scene.js";
+import { draw as ellipse } from "./2d-ellipse/scene.js";
+import { draw as arc } from "./2d-arc/scene.js";
+import { draw as annulus } from "./2d-annulus/scene.js";
+import { draw as capsule } from "./2d-capsule/scene.js";
+import { draw as polygon } from "./2d-polygon/scene.js";
+import { draw as triangle } from "./2d-triangle/scene.js";
+import { draw as rhombus } from "./2d-rhombus/scene.js";
+import { draw as sector } from "./2d-sector/scene.js";
+import { draw as segment } from "./2d-segment/scene.js";
 import { draw as lines } from "./2d-lines/scene.js";
 import { draw as curves } from "./2d-curves/scene.js";
 import { draw as markers } from "./2d-markers/scene.js";
 import { draw as arrows } from "./2d-arrows/scene.js";
-import { draw as outlines } from "./2d-outlines/scene.js";
-import { draw as fill } from "./2d-fill/scene.js";
 import { draw as spaces } from "./2d-spaces/scene.js";
 import { draw as grid } from "./2d-grid/scene.js";
 
 const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: SceneContext) => void>> = {
-  "2d-gizmos": gizmos,
-  "2d-shapes": shapes,
+  "2d-index": index,
+  "2d-rect": rect,
+  "2d-rounded-rect": rectR,
+  "2d-circle": circle,
+  "2d-ellipse": ellipse,
+  "2d-arc": arc,
+  "2d-annulus": annulus,
+  "2d-capsule": capsule,
+  "2d-polygon": polygon,
+  "2d-triangle": triangle,
+  "2d-rhombus": rhombus,
+  "2d-sector": sector,
+  "2d-segment": segment,
   "2d-lines": lines,
   "2d-curves": curves,
   "2d-markers": markers,
   "2d-arrows": arrows,
-  "2d-outlines": outlines,
-  "2d-fill": fill,
   "2d-spaces": spaces,
   "2d-grid": grid,
 };

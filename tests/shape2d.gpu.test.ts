@@ -24,6 +24,15 @@ function lit(pixels: Uint8Array, [x, y]: readonly [number, number]): boolean {
   return channel(pixels, x, y, 0) > 10 || channel(pixels, x, y, 1) > 10 || channel(pixels, x, y, 2) > 10;
 }
 
+/** How many canvas pixels carry any coverage. */
+function litCount(pixels: Uint8Array): number {
+  let count = 0;
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index]! > 10 || pixels[index + 1]! > 10 || pixels[index + 2]! > 10) count++;
+  }
+  return count;
+}
+
 /** Pixels on an anti-aliased SDF rim: lit, but nowhere near full intensity. */
 function softCount(pixels: Uint8Array): number {
   let count = 0;
@@ -154,6 +163,25 @@ test("real GPU renders the 2D shape primitives", async () => {
     expect(lit(arcs, pixel(0, -20))).toBe(false);
     expect(lit(arcs, pixel(0, 0))).toBe(false);
 
+    // Past half a turn an arc is drawn as the complement of the uncovered wedge. That complement
+    // test must stay purely angular: a radius term in it would clamp the far side to zero and
+    // paint the uncovered part of the ring.
+    const wideArc = await shot([
+      shape({
+        ...base,
+        shape: "arc",
+        center: [0, 0],
+        size: [20, 20],
+        thickness: 4,
+        filled: false,
+        startAngle: 0,
+        sweep: Math.PI * 1.2,
+      }),
+    ]);
+    // 108 degrees is inside the 216 degree sweep; 288 degrees is the uncovered wedge.
+    expect(lit(wideArc, pixel(-6, 19))).toBe(true);
+    expect(lit(wideArc, pixel(6, -19))).toBe(false);
+
     // Screen space starts at the top-left corner instead of the canvas centre.
     const screen = await shot([
       shape({ ...base, shape: "rect", center: [20, 15], size: [10, 5], space: "screen" }),
@@ -163,6 +191,53 @@ test("real GPU renders the 2D shape primitives", async () => {
     expect(lit(screen, [35, 15])).toBe(false);
     expect(lit(screen, [20, 25])).toBe(false);
     expect(lit(screen, [128, 64])).toBe(false);
+
+    renderer.destroy();
+  } finally {
+    gpu.dispose();
+  }
+});
+
+test("real GPU cuts every dashed outline into dashes", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    const shot = async (commands: readonly FrameCommand[]): Promise<Uint8Array> => {
+      renderer.prepare(commands, { viewProjection: identity, view: identity }, DEFAULT_CAMERA);
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
+      return output.color.read({ mipLevel: 0, region: "all" });
+    };
+
+    const cases: readonly Omit<Shape2DCommand, "kind">[] = [
+      { ...base, shape: "rect", center: [0, 0], size: [30, 20] },
+      { ...base, shape: "rounded-rect", center: [0, 0], size: [30, 20], cornerRadius: 8 },
+      { ...base, shape: "circle", center: [0, 0], size: [24, 24] },
+      { ...base, shape: "ellipse", center: [0, 0], size: [30, 18] },
+      { ...base, shape: "arc", center: [0, 0], size: [24, 24], startAngle: 0, sweep: Math.PI * 1.2 },
+      { ...base, shape: "annulus", center: [0, 0], size: [26, 14] },
+      { ...base, shape: "capsule", center: [0, 0], size: [14, 20] },
+      { ...base, shape: "polygon", center: [0, 0], size: [24, 24], sides: 6 },
+      { ...base, shape: "triangle", center: [0, 0], size: [0, 24], vertexB: [-20, -12], vertexC: [20, -12] },
+      { ...base, shape: "rhombus", center: [0, 0], size: [24, 16] },
+      { ...base, shape: "sector", center: [0, 0], size: [24, 24], startAngle: -Math.PI / 2, sweep: Math.PI * 1.2 },
+      { ...base, shape: "segment", center: [0, 0], size: [24, 24], startAngle: -Math.PI / 2, sweep: Math.PI * 1.2 },
+    ];
+
+    for (const spec of cases) {
+      const outline = { ...base, ...spec, filled: false, thickness: 4 };
+      const solid = await shot([shape(outline)]);
+      const dashed = await shot([shape({ ...outline, dash: [10, 10, 0] })]);
+      const solidPixels = litCount(solid);
+      const dashedPixels = litCount(dashed);
+      expect(solidPixels, `${spec.shape} drew nothing`).toBeGreaterThan(0);
+      expect(dashedPixels, `${spec.shape} has no visible dashes`).toBeGreaterThan(0);
+      // A 50% duty cycle leaves noticeably fewer lit pixels than the unbroken outline.
+      expect(dashedPixels, `${spec.shape} has no gaps`).toBeLessThan(solidPixels * 0.85);
+    }
 
     renderer.destroy();
   } finally {

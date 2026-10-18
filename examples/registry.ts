@@ -27,16 +27,25 @@ import { meta as page19 } from "./text-layout/meta.js";
 import { meta as page20 } from "./text-anchor/meta.js";
 import { meta as page21 } from "./text-cjk/meta.js";
 import { meta as page22 } from "./text-font-query/meta.js";
-import { meta as page23 } from "./2d-gizmos/meta.js";
-import { meta as page24 } from "./2d-shapes/meta.js";
-import { meta as page25 } from "./2d-lines/meta.js";
-import { meta as page26 } from "./2d-curves/meta.js";
-import { meta as page27 } from "./2d-markers/meta.js";
+import { meta as page23 } from "./2d-index/meta.js";
+import { meta as page2dRect } from "./2d-rect/meta.js";
+import { meta as page2dRoundedRect } from "./2d-rounded-rect/meta.js";
+import { meta as page2dCircle } from "./2d-circle/meta.js";
+import { meta as page2dEllipse } from "./2d-ellipse/meta.js";
+import { meta as page2dArc } from "./2d-arc/meta.js";
+import { meta as page2dAnnulus } from "./2d-annulus/meta.js";
+import { meta as page2dCapsule } from "./2d-capsule/meta.js";
+import { meta as page2dPolygon } from "./2d-polygon/meta.js";
+import { meta as page2dTriangle } from "./2d-triangle/meta.js";
+import { meta as page2dRhombus } from "./2d-rhombus/meta.js";
+import { meta as page2dSector } from "./2d-sector/meta.js";
+import { meta as page2dSegment } from "./2d-segment/meta.js";
+import { meta as page2dLines } from "./2d-lines/meta.js";
+import { meta as page2dCurves } from "./2d-curves/meta.js";
+import { meta as page2dMarkers } from "./2d-markers/meta.js";
 import { meta as page2dArrows } from "./2d-arrows/meta.js";
-import { meta as page28 } from "./2d-outlines/meta.js";
-import { meta as page29 } from "./2d-fill/meta.js";
-import { meta as page30 } from "./2d-spaces/meta.js";
-import { meta as page31 } from "./2d-grid/meta.js";
+import { meta as page2dSpaces } from "./2d-spaces/meta.js";
+import { meta as page2dGrid } from "./2d-grid/meta.js";
 
 export type { ExampleColumn, SceneExample } from "./shared/meta.js";
 
@@ -65,13 +74,22 @@ export const SCENE_EXAMPLES: readonly SceneExample[] = [
   page21,
   page22,
   page23,
-  page24,
-  page25,
-  page26,
-  page27,
+  page2dRect,
+  page2dRoundedRect,
+  page2dCircle,
+  page2dEllipse,
+  page2dArc,
+  page2dAnnulus,
+  page2dCapsule,
+  page2dPolygon,
+  page2dTriangle,
+  page2dRhombus,
+  page2dSector,
+  page2dSegment,
+  page2dLines,
+  page2dCurves,
+  page2dMarkers,
   page2dArrows,
-  page28,
-  page29,
-  page30,
-  page31,
+  page2dSpaces,
+  page2dGrid,
 ];

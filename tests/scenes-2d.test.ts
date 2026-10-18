@@ -8,6 +8,22 @@ import { SCENE_EXAMPLES } from "../examples/registry.js";
 const twoDimensional = SCENE_EXAMPLES.filter((example) => example.family === "2d");
 const matrixPages = Object.keys(LABELS_2D);
 
+/** Each shape page owns one primitive; the page must not drift into a neighbour's shape. */
+const SHAPE_PAGES = {
+  "2d-rect": "rect",
+  "2d-rounded-rect": "rounded-rect",
+  "2d-circle": "circle",
+  "2d-ellipse": "ellipse",
+  "2d-arc": "arc",
+  "2d-annulus": "annulus",
+  "2d-capsule": "capsule",
+  "2d-polygon": "polygon",
+  "2d-triangle": "triangle",
+  "2d-rhombus": "rhombus",
+  "2d-sector": "sector",
+  "2d-segment": "segment",
+} as const;
+
 const textOf = (drawList: FrameDrawList): readonly string[] =>
   drawList.commands().flatMap((command) =>
     command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : [],
@@ -15,11 +31,10 @@ const textOf = (drawList: FrameDrawList): readonly string[] =>
 
 describe("2D pages", () => {
   test("declare the 2D family and a view extent", () => {
-    expect(twoDimensional.map((example) => example.id)).toEqual([
-      "2d-gizmos",
-      "2d-shapes",
-      ...matrixPages,
-    ]);
+    expect(twoDimensional).toHaveLength(matrixPages.length + 1);
+    expect(new Set(twoDimensional.map((example) => example.id))).toEqual(
+      new Set(["2d-index", ...matrixPages]),
+    );
     for (const example of twoDimensional) {
       expect(example.view2d, `${example.id} needs a view2d extent`).toBeDefined();
       expect(example.view2d!.width).toBeGreaterThan(0);
@@ -62,7 +77,11 @@ describe("2D pages", () => {
       const drawList = new FrameDrawList();
       buildScene2D(id, drawList, 0);
       const drawn = textOf(drawList);
-      expect(drawn, `${id} dropped its heading`).toContain(labels.title);
+      // Shape pages carry no screen-space heading, matching the 3D matrix pages; their title lives
+      // in the gallery chrome instead of on the canvas.
+      if (!(id in SHAPE_PAGES)) {
+        expect(drawn, `${id} dropped its heading`).toContain(labels.title);
+      }
       for (const column of labels.columns) {
         expect(drawn, `${id} dropped the column title "${column.title}"`).toContain(column.title);
         for (const sample of column.samples) {
@@ -96,31 +115,37 @@ describe("2D pages", () => {
     }
   });
 
-  test("the shapes page covers every bevy primitive it claims", () => {
-    const drawList = new FrameDrawList();
-    buildScene("2d-shapes", drawList, 0);
-    const kinds = new Set(drawList.d2.shapes.map((shape) => shape.shape));
-    expect(kinds).toEqual(new Set([
-      "circle", "sector", "segment", "ellipse", "annulus", "capsule",
-      "rhombus", "rect", "polygon", "triangle",
-    ]));
-    // The two polyline primitives are strokes, not SDF shapes.
-    expect(drawList.d2.lines.length).toBeGreaterThan(0);
+  test("every shape page draws only its own primitive", () => {
+    for (const [id, kind] of Object.entries(SHAPE_PAGES)) {
+      const drawList = new FrameDrawList();
+      buildScene(id, drawList, 0);
+      const shapes = drawList.d2.shapes;
+      expect(new Set(shapes.map((shape) => shape.shape)), `${id} draws a foreign shape`).toEqual(
+        new Set([kind]),
+      );
+      // Each page pairs filled samples with stroked ones, so both branches of the SDF shader run.
+      // An arc encloses no interior, so its page is strokes only.
+      if (kind !== "arc") {
+        expect(shapes.some((shape) => shape.filled), `${id} has no filled sample`).toBe(true);
+      }
+      expect(shapes.some((shape) => !shape.filled), `${id} has no stroked sample`).toBe(true);
+    }
   });
 
-  test("the gizmos page uses strokes, joints, shapes and points", () => {
+  test("the index page covers every primitive family", () => {
     const drawList = new FrameDrawList();
-    buildScene("2d-gizmos", drawList, 0);
+    buildScene("2d-index", drawList, 0);
     const kinds = new Set(drawList.d2.shapes.map((shape) => shape.shape));
-    expect(kinds.has("rect")).toBe(true);
-    expect(kinds.has("rounded-rect")).toBe(true);
-    expect(kinds.has("circle")).toBe(true);
-    expect(kinds.has("ellipse")).toBe(true);
-    expect(kinds.has("arc")).toBe(true);
-    expect(kinds.has("triangle")).toBe(true);
+    const expected = ["rect", "rounded-rect", "circle", "ellipse", "arc", "annulus", "capsule", "polygon", "triangle", "rhombus", "sector", "segment"] as const;
+    for (const kind of expected) {
+      expect(kinds.has(kind), `index is missing ${kind}`).toBe(true);
+    }
     expect(drawList.d2.lines.length).toBeGreaterThan(0);
     expect(drawList.d2.joints.length).toBeGreaterThan(0);
     expect(drawList.d2.points.length).toBeGreaterThan(0);
+    // The index also names the dashed and solid trio forms.
+    expect(drawList.d2.shapes.some((shape) => shape.dash !== undefined)).toBe(true);
+    expect(drawList.d2.shapes.some((shape) => shape.filled)).toBe(true);
   });
 
   test("2d-lines animates the dash phase", () => {
@@ -130,6 +155,18 @@ describe("2D pages", () => {
     buildScene2D("2d-lines", moving, 0.5);
     const phases = (drawList: FrameDrawList): number[] =>
       drawList.d2.lines.flatMap((line) => (line.dash === undefined ? [] : [line.dash[2]]));
+    expect(phases(still).length).toBeGreaterThan(0);
+    expect(phases(moving)).not.toEqual(phases(still));
+    expect(phases(moving)[0]).toBeCloseTo(15);
+  });
+
+  test("2d-rect animates the dashed outlines", () => {
+    const still = new FrameDrawList();
+    buildScene2D("2d-rect", still, 0);
+    const moving = new FrameDrawList();
+    buildScene2D("2d-rect", moving, 0.5);
+    const phases = (drawList: FrameDrawList): number[] =>
+      drawList.d2.shapes.flatMap((shape) => (shape.dash === undefined ? [] : [shape.dash[2]]));
     expect(phases(still).length).toBeGreaterThan(0);
     expect(phases(moving)).not.toEqual(phases(still));
     expect(phases(moving)[0]).toBeCloseTo(15);
@@ -147,24 +184,23 @@ describe("2D pages", () => {
     const drawList = new FrameDrawList();
     expect(buildScene2D("circle", drawList, 0)).toBe(false);
     expect(drawList.commands()).toHaveLength(0);
-    expect(buildScene2D("2d-shapes", drawList, 0)).toBe(true);
+    expect(buildScene2D("2d-rect", drawList, 0)).toBe(true);
     expect(drawList.commands().length).toBeGreaterThan(0);
   });
 
-  test("is deterministic apart from the animated arrow and curve", () => {
+  test("is deterministic apart from the animated dash phases", () => {
     const first = new FrameDrawList();
-    buildScene("2d-shapes", first, 0);
+    buildScene("2d-rect", first, 0);
     const second = new FrameDrawList();
-    buildScene("2d-shapes", second, 3);
+    buildScene("2d-rect", second, 3);
     expect(second.d2.shapes.length).toBe(first.d2.shapes.length);
 
-    const animated = new FrameDrawList();
-    buildScene("2d-gizmos", animated, 3);
-    const still = new FrameDrawList();
-    buildScene("2d-gizmos", still, 0);
-    // The arrow head and the sine strip move, so the command count is the same but the
-    // geometry is not.
-    expect(animated.d2.lines.length).toBe(still.d2.lines.length);
-    expect(animated.d2.shapes).not.toEqual(still.d2.shapes);
+    // The index page is a static catalogue: only the pages with a travelling dash phase move.
+    const indexA = new FrameDrawList();
+    buildScene("2d-index", indexA, 0);
+    const indexB = new FrameDrawList();
+    buildScene("2d-index", indexB, 3);
+    expect(indexB.d2.shapes).toEqual(indexA.d2.shapes);
+    expect(indexB.d2.lines).toEqual(indexA.d2.lines);
   });
 });

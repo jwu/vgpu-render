@@ -55,7 +55,7 @@ describe("FrameDrawList2D", () => {
 
   test("accumulates dash distance across a strip and emits joined vertices", () => {
     const frame = new FrameDrawList();
-    frame.d2.lineStrip([[0, 0], [3, 0], [3, 4]], { dash: [0.5, 0.5, 0], joint: "round" });
+    frame.d2.lineStrip_d([[0, 0], [3, 0], [3, 4]], [0.5, 0.5, 0], { joint: "round" });
 
     expect(frame.d2.lines).toHaveLength(2);
     expect(frame.d2.lines[0]?.dash).toEqual([0.5, 0.5, 0]);
@@ -102,10 +102,10 @@ describe("FrameDrawList2D shapes", () => {
   test("maps each shape's arguments onto the command fields", () => {
     const frame = new FrameDrawList();
     frame.d2.rect([1, 2], [40, 20]);
-    frame.d2.roundedRect([1, 2], [40, 20], 6);
+    frame.d2.rect_r([1, 2], [40, 20], 6);
     frame.d2.circle([1, 2], 10);
     frame.d2.ellipse([1, 2], [10, 4]);
-    frame.d2.arc([1, 2], 10, { startAngle: 0.5, sweep: Math.PI / 2, fill: false, strokeWidth: 3 });
+    frame.d2.arc([1, 2], 10, { startAngle: 0.5, sweep: Math.PI / 2, strokeWidth: 3 });
     frame.d2.annulus([1, 2], 4, 10);
     frame.d2.capsule([1, 2], 5, 20);
     frame.d2.polygon([1, 2], 10, 6);
@@ -119,7 +119,7 @@ describe("FrameDrawList2D shapes", () => {
     ]);
     // Box half extents, radii and polygons all land in `size`; annulus is [outer, inner] and
     // capsule is [radius, halfLength].
-    expect(shapes[0]).toMatchObject({ size: [20, 10], center: [1, 2], filled: true, thickness: 1, space: "world2d", layer: 1 });
+    expect(shapes[0]).toMatchObject({ size: [20, 10], center: [1, 2], filled: false, thickness: 1, space: "world2d", layer: 1 });
     expect(shapes[1]).toMatchObject({ size: [20, 10], cornerRadius: 6 });
     expect(shapes[2]).toMatchObject({ size: [10, 10] });
     expect(shapes[3]).toMatchObject({ size: [10, 4] });
@@ -144,10 +144,16 @@ describe("FrameDrawList2D shapes", () => {
     expect(triangle?.vertexC).toEqual([-10, 20]);
   });
 
-  test("honours rotation, fill and space", () => {
+  test("maps the rect trio onto outline, solid and dashed commands", () => {
     const frame = new FrameDrawList();
-    frame.d2.rect([0, 0], [10, 4], { rotation: 1.25, fill: false, strokeWidth: 2.5, space: "screen", layer: 4 });
-    expect(frame.d2.shapes[0]).toMatchObject({ rotation: 1.25, filled: false, thickness: 2.5, space: "screen", layer: 4 });
+    frame.d2.rect([0, 0], [10, 4], { rotation: 1.25, strokeWidth: 2.5, space: "screen", layer: 4 });
+    frame.d2.rect_s([0, 0], [10, 4], { rotation: 1.25 });
+    frame.d2.rect_d([0, 0], [10, 4], [6, 3, 1], { strokeWidth: 2 });
+    const [outline, solid, dashed] = frame.d2.shapes;
+    expect(outline).toMatchObject({ shape: "rect", filled: false, thickness: 2.5, rotation: 1.25, space: "screen", layer: 4 });
+    expect(solid).toMatchObject({ shape: "rect", filled: true, thickness: 1, rotation: 1.25 });
+    expect(solid?.dash).toBeUndefined();
+    expect(dashed).toMatchObject({ shape: "rect", filled: false, thickness: 2, dash: [6, 3, 1] });
   });
 
   test("rejects degenerate shapes", () => {
@@ -155,13 +161,15 @@ describe("FrameDrawList2D shapes", () => {
     expect(() => frame.d2.rect([0, 0], [0, 10])).toThrow("greater than zero");
     expect(() => frame.d2.circle([0, 0], -1)).toThrow("greater than zero");
     expect(() => frame.d2.ellipse([0, 0], [10, 0])).toThrow("greater than zero");
-    expect(() => frame.d2.roundedRect([0, 0], [10, 10], -1)).toThrow("must not be negative");
+    expect(() => frame.d2.rect_r([0, 0], [10, 10], -1)).toThrow("must not be negative");
     expect(() => frame.d2.annulus([0, 0], 10, 10)).toThrow("smaller than outerRadius");
     expect(() => frame.d2.polygon([0, 0], 10, 2.5)).toThrow("integer of at least 3");
     expect(() => frame.d2.arc([0, 0], 10, { sweep: 0 })).toThrow("non-zero angle");
     expect(() => frame.d2.sector([0, 0], 10, { sweep: Math.PI * 3 })).toThrow("at most one full turn");
     expect(() => frame.d2.rect([0, 0], [10, 10], { strokeWidth: 0 })).toThrow("greater than zero");
     expect(() => frame.d2.rect([0, 0], [10, 10], { rotation: Number.NaN })).toThrow("must be finite");
+    expect(() => frame.d2.rect_d([0, 0], [10, 10], [0, 4, 0])).toThrow("dash visible");
+    expect(() => frame.d2.rect_d([0, 0], [10, 10], [6, 0, 0])).toThrow("dash gap");
   });
 
   test("filters shapes by layer mask and seals with the frame", () => {

@@ -81,8 +81,8 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     // Row 0: a line in both spaces. `screen` keeps its pixel width while the world line moves
     // with pan and zoom.
     if (row === 0) {
-      d2.line([worldX - 70, y], [worldX + 70, y], { width: 6, color: FILL });
-      d2.line([screenX - 70, sy], [screenX + 70, sy], { width: 6, color: FILL, space: "screen" });
+      d2.line([worldX - 46, y], [worldX + 46, y], { width: 6, color: FILL });
+      d2.line([screenX - 46, sy], [screenX + 46, sy], { width: 6, color: FILL, space: "screen" });
     }
     // Row 1: a point, sized in canvas pixels on both sides.
     if (row === 1) {
@@ -91,18 +91,18 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     }
     // Row 2: an outline, which strokes in pixels in both spaces.
     if (row === 2) {
-      d2.rect([worldX, y], [120, 68], { fill: false, strokeWidth: 4, color: COOL });
-      d2.rect([screenX, sy], [120, 68], { fill: false, strokeWidth: 4, color: COOL, space: "screen" });
+      d2.rect([worldX, y], [92, 60], { strokeWidth: 4, color: COOL });
+      d2.rect([screenX, sy], [92, 60], { strokeWidth: 4, color: COOL, space: "screen" });
     }
     // Row 3: the grid primitive in both spaces.
     if (row === 3) {
-      d2.grid([worldX, y], [4, 3], [30, 24], { width: 2, color: RING });
-      d2.grid([screenX, sy], [4, 3], [30, 24], { width: 2, color: RING, space: "screen" });
+      d2.grid([worldX, y], [3, 2], [24, 20], { width: 2, color: RING });
+      d2.grid([screenX, sy], [3, 2], [24, 20], { width: 2, color: RING, space: "screen" });
     }
     // The mode column: one nominal width under `screen` and `world`, then the two point size
     // modes. Only the `world` variants change with the camera zoom.
-    if (row === 0) d2.line([modeX - 70, y], [modeX + 70, y], { width: 14, color: ACTION });
-    if (row === 1) d2.line([modeX - 70, y], [modeX + 70, y], { width: 4, widthMode: "world", color: COOL });
+    if (row === 0) d2.line([modeX - 46, y], [modeX + 46, y], { width: 14, color: ACTION });
+    if (row === 1) d2.line([modeX - 46, y], [modeX + 46, y], { width: 4, widthMode: "world", color: COOL });
     if (row === 2) d2.point([modeX, y], { size: 14, color: ACTION });
     if (row === 3) d2.point([modeX, y], { size: 14, sizeMode: "world", color: COOL });
   }

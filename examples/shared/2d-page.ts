@@ -21,6 +21,11 @@ export const ACTION: Color = [0.98, 0.86, 0.42, 1];
 export const AXIS_X: Color = [1, 0, 0, 1];
 export const AXIS_Y: Color = [0, 1, 0, 1];
 
+/** The same RGB with a different alpha, for the opacity columns. */
+export function withAlpha(color: Color, alpha: number): Color {
+  return [color[0], color[1], color[2], alpha];
+}
+
 /** Page heading: a screen-space title and note, fixed to the top-left corner. */
 export function heading(drawList: FrameDrawList, title: string, note: string): void {
   drawList.text([24, 16, 0], title, { space: "screen", fontSize: 17, anchor: "top-left", color: TITLE });
@@ -36,7 +41,10 @@ export function pageHeading(drawList: FrameDrawList, id: string): void {
 export type Table2D = {
   readonly d2: FrameDrawList2D;
   readonly rows: number;
+  /** Column centre, kept for the column titles. */
   readonly columnX: (column: number) => number;
+  /** Centre of the shape area: shapes live in the right part of a column, labels to their left. */
+  readonly shapeX: (column: number) => number;
   readonly rowY: (row: number) => number;
 };
 
@@ -52,29 +60,33 @@ export function table2D(drawList: FrameDrawList, id: string): Table2D {
   const rows = tableRows(id);
   const spacing = labels.spacing ?? COLUMN_SPACING;
   const columnX = (column: number): number => (column - (columns - 1) / 2) * spacing;
+  // A column is split into a label strip on the left and the shape area on the right, the same
+  // arrangement the 3D scenes use (right-aligned row label, sample to its right).
+  const shapeX = (column: number): number => columnX(column) + spacing * 0.245;
+  const labelX = (column: number): number => columnX(column) - spacing * 0.1;
   const rowY = (row: number): number => ((rows - 1) / 2 - row) * ROW_SPACING;
   const titleY = (rows * ROW_SPACING) / 2 + 24;
   labels.columns.forEach((column, index) => {
-    drawList.text([columnX(index), titleY, 0], column.title, {
+    drawList.text([shapeX(index), titleY, 0], column.title, {
       space: "world-plane",
       pixelSize: 1,
-      fontSize: COLUMN_TITLE_FONT,
+      fontSize: labels.titleFont ?? COLUMN_TITLE_FONT,
       anchor: "bottom-center",
       color: TITLE,
       depthTest: false,
     });
     column.samples.forEach((sample, row) => {
-      drawList.text([columnX(index), rowY(row) - ROW_SPACING * 0.48, 0], sample, {
+      drawList.text([labelX(index), rowY(row), 0], sample, {
         space: "world-plane",
         pixelSize: 1,
         fontSize: SAMPLE_LABEL_FONT,
-        anchor: "top-center",
+        anchor: "center-right",
         color: HINT,
         depthTest: false,
       });
     });
   });
-  return { d2: drawList.d2, rows, columnX, rowY };
+  return { d2: drawList.d2, rows, columnX, shapeX, rowY };
 }
 
 /** Two crossing strokes, bevy's `cross_2d`. */

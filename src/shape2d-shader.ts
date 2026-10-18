@@ -60,6 +60,8 @@ struct In {
   @location(12) color: vec4f,
   /** bit0: filled; bits 8..15: polygon vertex count. */
   @location(13) flags: u32,
+  /** (visible, gap, phase) of a dashed outline in shape-space units; gap 0 disables it. */
+  @location(14) dash: vec3f,
 }
 
 struct Out {
@@ -76,6 +78,7 @@ struct Out {
   @location(7) rotation: f32,
   @location(8) @interpolate(flat, either) sides: u32,
   @location(9) @interpolate(flat, either) flags: u32,
+  @location(10) dash: vec3f,
 }
 
 fn rotate2(p: vec2f, angle: f32) -> vec2f {
@@ -172,12 +175,17 @@ fn sd_rhombus(p: vec2f, a: f32, b: f32) -> f32 {
 }
 
 /** Sector of at most half a turn: the intersection of the disc and the two edge half-planes. */
-fn sd_convex_sector(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
+/**
+ * Angular wedge of sweep radians from start: only the two bounding half-planes, no radius.
+ * Keeping the disc out of it matters for the complementary wedge below, where a radius term would
+ * clamp the opposite side to zero and leave the uncovered wedge of an arc or sector painted.
+ */
+fn sd_wedge(p: vec2f, start: f32, sweep: f32) -> f32 {
   let end = start + sweep;
   // Inward normals of the two straight edges, in the order the sweep turns.
   let startEdge = vec2f(sin(start), -cos(start));
   let endEdge = vec2f(-sin(end), cos(end));
-  return max(length(p) - radius, max(dot(p, startEdge), dot(p, endEdge)));
+  return max(dot(p, startEdge), dot(p, endEdge));
 }
 
 /**
@@ -187,9 +195,9 @@ fn sd_convex_sector(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
 fn sd_sector(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
   let disc = length(p) - radius;
   if (abs(sweep) >= TAU - EPSILON) { return disc; }
-  if (abs(sweep) <= PI) { return max(disc, sd_convex_sector(p, radius, start, sweep)); }
+  if (abs(sweep) <= PI) { return max(disc, sd_wedge(p, start, sweep)); }
   let complementSweep = select(TAU + sweep, TAU - sweep, sweep > 0.0);
-  let complement = sd_convex_sector(p, radius, start + sweep, complementSweep);
+  let complement = sd_wedge(p, start + sweep, complementSweep);
   return max(disc, -complement);
 }
 
@@ -225,6 +233,256 @@ fn shape_distance(shape: u32, p: vec2f, size: vec2f, vertexB: vec2f, vertexC: ve
     case SHAPE_SECTOR: { return sd_sector(p, size.x, startAngle, sweep); }
     case SHAPE_SEGMENT: { return sd_segment_shape(p, size.x, startAngle, sweep); }
     default: { return 1e6; }
+  }
+}
+
+/**
+ * Perimeter parameter of the point on a rectangle's outline nearest to the sample, measured
+ * anticlockwise from the (sx, sy) corner. The stroke only touches pixels within a pixel or two
+ * of the outline, so picking the closer of the two candidate edges there is exact.
+ */
+fn rect_perimeter(p: vec2f, halfSize: vec2f) -> f32 {
+  let sx = halfSize.x;
+  let sy = halfSize.y;
+  let q = clamp(p, -halfSize, halfSize);
+  let overX = abs(p.x) - sx;
+  let overY = abs(p.y) - sy;
+  if (overY >= overX) {
+    if (p.y >= 0.0) { return sx - q.x; }
+    return 2.0 * sx + 2.0 * sy + (sx + q.x);
+  }
+  if (p.x < 0.0) { return 2.0 * sx + (sy - q.y); }
+  return 4.0 * sx + 2.0 * sy + (q.y + sy);
+}
+
+/**
+ * Closed-outline length in shape-space units, or -1 for an open outline (an arc). A closed
+ * outline snaps its dash period to a whole number of periods, so the pattern meets itself at the
+ * perimeter start instead of jumping by P mod period.
+ */
+fn perimeter_total(shape: u32, size: vec2f, vertexB: vec2f, vertexC: vec2f, params: vec4f, sides: u32) -> f32 {
+  switch shape {
+    case SHAPE_RECT: { return 4.0 * (size.x + size.y); }
+    case SHAPE_ROUNDED_RECT: {
+      let corner = clamp(params.x, 0.0, min(size.x, size.y));
+      let inner = max(size - vec2f(corner), vec2f(0.0));
+      return 4.0 * (inner.x + inner.y) + 2.0 * PI * corner;
+    }
+    case SHAPE_CIRCLE: { return TAU * size.x; }
+    case SHAPE_ELLIPSE: { return ellipse_arc(TAU, size); }
+    case SHAPE_ARC: { return -1.0; }
+    case SHAPE_ANNULUS: { return TAU * (size.x + size.y); }
+    case SHAPE_CAPSULE: { return 2.0 * PI * size.x + 4.0 * size.y; }
+    case SHAPE_POLYGON: {
+      let count = max(sides, 3u);
+      return 2.0 * f32(count) * size.x * sin(PI / f32(count));
+    }
+    case SHAPE_TRIANGLE: {
+      return length(vertexB - size) + length(vertexC - vertexB) + length(size - vertexC);
+    }
+    case SHAPE_RHOMBUS: { return 4.0 * length(vec2f(0.0, size.y) - vec2f(size.x, 0.0)); }
+    case SHAPE_SECTOR: { return abs(params.w) * size.x + 2.0 * size.x; }
+    case SHAPE_SEGMENT: {
+      let sweepAbs = abs(params.w);
+      return sweepAbs * size.x + 2.0 * size.x * sin(sweepAbs * 0.5);
+    }
+    default: { return -1.0; }
+  }
+}
+
+/** Wraps an angle into [0, TAU). */
+fn wrap_tau(angle: f32) -> f32 {
+  let wrapped = angle % TAU;
+  return select(wrapped + TAU, wrapped, wrapped >= 0.0);
+}
+
+/** Distance from the sample to the segment a-b, and how far along that segment it sits. */
+fn nearest_edge(p: vec2f, a: vec2f, b: vec2f) -> vec2f {
+  let edge = b - a;
+  let along = clamp(dot(p - a, edge) / max(dot(edge, edge), EPSILON), 0.0, 1.0);
+  return vec2f(length(p - (a + edge * along)), along * length(edge));
+}
+
+/**
+ * Arc length of an ellipse from angle 0 to theta, Simpson-integrated in 12 steps. The ellipse
+ * has no elementary arc-length formula, so this is the one shape whose dash spacing is an
+ * approximation rather than a closed form.
+ */
+fn ellipse_arc(theta: f32, radii: vec2f) -> f32 {
+  let steps = 12u;
+  let h = theta / f32(steps);
+  var sum = 0.0;
+  for (var i = 0u; i <= steps; i += 1u) {
+    let a = h * f32(i);
+    let speed = sqrt(radii.x * radii.x * sin(a) * sin(a) + radii.y * radii.y * cos(a) * cos(a));
+    var weight = 2.0;
+    if (i == 0u || i == steps) { weight = 1.0; }
+    else if (i % 2u == 1u) { weight = 4.0; }
+    sum = sum + weight * speed;
+  }
+  return sum * h / 3.0;
+}
+
+/** Rounded rectangle: four straight edges and four quarter arcs, from the top-right corner. */
+fn rounded_rect_perimeter(p: vec2f, halfSize: vec2f, cornerRadius: f32) -> f32 {
+  let corner = clamp(cornerRadius, 0.0, min(halfSize.x, halfSize.y));
+  let inner = max(halfSize - vec2f(corner), vec2f(0.0));
+  let center = clamp(p, -inner, inner);
+  let delta = p - center;
+  let straightX = 2.0 * inner.x;
+  let straightY = 2.0 * inner.y;
+  let quarter = corner * PI * 0.5;
+  let leftBase = straightX + quarter;
+  let bottomBase = straightX + 2.0 * quarter + straightY;
+  // Right edge starts after the bottom-right quarter arc: two straight runs, three quarter
+  // arcs and one straight height have already been walked.
+  let rightBase = 2.0 * straightX + 3.0 * quarter + straightY;
+  let topRightBase = 2.0 * straightX + 2.0 * straightY + 3.0 * quarter;
+  if (abs(delta.x) > EPSILON && abs(delta.y) > EPSILON) {
+    let phi = wrap_tau(atan2(delta.y, delta.x));
+    if (phi < PI * 0.5) { return topRightBase + phi * corner; }
+    if (phi < PI) { return straightX + (phi - PI * 0.5) * corner; }
+    if (phi < PI * 1.5) { return leftBase + straightY + (phi - PI) * corner; }
+    return bottomBase + straightX + (phi - PI * 1.5) * corner;
+  }
+  if (abs(delta.y) > EPSILON) {
+    if (delta.y > 0.0) { return inner.x - p.x; }
+    return bottomBase + (p.x + inner.x);
+  }
+  if (delta.x > 0.0) { return rightBase + (p.y + inner.y); }
+  return leftBase + (inner.y - p.y);
+}
+
+/** Capsule: upper cap, left edge, lower cap, right edge, from the upper-right cap start. */
+fn capsule_perimeter(p: vec2f, radius: f32, halfLength: f32) -> f32 {
+  let arc = PI * radius;
+  if (p.y >= halfLength) {
+    return clamp(atan2(p.y - halfLength, p.x), 0.0, PI) * radius;
+  }
+  if (p.y <= -halfLength) {
+    let angle = clamp(wrap_tau(atan2(p.y + halfLength, p.x)), PI, TAU);
+    return arc + 2.0 * halfLength + (angle - PI) * radius;
+  }
+  if (p.x >= 0.0) { return 2.0 * arc + 2.0 * halfLength + (p.y + halfLength); }
+  return arc + (halfLength - p.y);
+}
+
+/** Annulus: outer ring forwards, then inner ring backwards, so the band stays continuous. */
+fn annulus_perimeter(p: vec2f, outer: f32, inner: f32) -> f32 {
+  let radius = length(p);
+  let angle = wrap_tau(atan2(p.y, p.x));
+  if (abs(radius - outer) <= abs(radius - inner)) { return angle * outer; }
+  return TAU * outer + (TAU - angle) * inner;
+}
+
+/** Arc: only the swept wedge has a perimeter, so samples past an end clamp to that end. */
+fn arc_perimeter(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
+  let sweepAbs = abs(sweep);
+  let angle = wrap_tau(atan2(p.y, p.x));
+  var offset = wrap_tau(angle - start);
+  if (sweep < 0.0) { offset = wrap_tau(start - angle); }
+  return min(offset, sweepAbs) * radius;
+}
+
+/** Sector: arc, then the radius at the arc end, then the radius back to the arc start. */
+fn sector_perimeter(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
+  let sweepAbs = abs(sweep);
+  let angle = wrap_tau(atan2(p.y, p.x));
+  var offset = wrap_tau(angle - start);
+  if (sweep < 0.0) { offset = wrap_tau(start - angle); }
+  let startDir = vec2f(cos(start), sin(start)) * radius;
+  let endDir = vec2f(cos(start + sweep), sin(start + sweep)) * radius;
+  let startEdge = nearest_edge(p, vec2f(0.0), startDir);
+  let endEdge = nearest_edge(p, vec2f(0.0), endDir);
+  let arcLength = sweepAbs * radius;
+  let arcDistance = select(abs(length(p) - radius), min(length(p - startDir), length(p - endDir)), offset > sweepAbs);
+  if (arcDistance <= startEdge.x && arcDistance <= endEdge.x) {
+    return min(offset, sweepAbs) * radius;
+  }
+  if (endEdge.x <= startEdge.x) { return arcLength + (radius - endEdge.y); }
+  return arcLength + radius + startEdge.y;
+}
+
+/** Segment: the arc, then the chord from the arc end back to its start. */
+fn segment_perimeter(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
+  let sweepAbs = abs(sweep);
+  let angle = wrap_tau(atan2(p.y, p.x));
+  var offset = wrap_tau(angle - start);
+  if (sweep < 0.0) { offset = wrap_tau(start - angle); }
+  let arcStart = vec2f(cos(start), sin(start)) * radius;
+  let arcEnd = vec2f(cos(start + sweep), sin(start + sweep)) * radius;
+  let chord = nearest_edge(p, arcEnd, arcStart);
+  let arcLength = sweepAbs * radius;
+  let arcDistance = select(abs(length(p) - radius), min(length(p - arcStart), length(p - arcEnd)), offset > sweepAbs);
+  if (arcDistance <= chord.x) { return min(offset, sweepAbs) * radius; }
+  return arcLength + chord.y;
+}
+
+/** Regular polygon: pick the angular sector, then the projection onto that edge. */
+fn polygon_perimeter(p: vec2f, radius: f32, sides: u32) -> f32 {
+  let count = max(sides, 3u);
+  let step = TAU / f32(count);
+  let edgeLength = 2.0 * radius * sin(PI / f32(count));
+  let angle = wrap_tau(atan2(p.y, p.x));
+  let index = min(u32(floor(angle / step)), count - 1u);
+  let start = vec2f(cos(step * f32(index)), sin(step * f32(index))) * radius;
+  let end = vec2f(cos(step * f32(index + 1u)), sin(step * f32(index + 1u))) * radius;
+  return f32(index) * edgeLength + nearest_edge(p, start, end).y;
+}
+
+/** Triangle: three edges, from the first vertex. */
+fn triangle_perimeter(p: vec2f, a: vec2f, b: vec2f, c: vec2f) -> f32 {
+  let ab = nearest_edge(p, a, b);
+  let bc = nearest_edge(p, b, c);
+  let ca = nearest_edge(p, c, a);
+  let lab = length(b - a);
+  let lbc = length(c - b);
+  if (ab.x <= bc.x && ab.x <= ca.x) { return ab.y; }
+  if (bc.x <= ca.x) { return lab + bc.y; }
+  return lab + lbc + ca.y;
+}
+
+/** Rhombus: four edges through the four diagonal tips, from the +x tip. */
+fn rhombus_perimeter(p: vec2f, halfWidth: f32, halfHeight: f32) -> f32 {
+  let v0 = vec2f(halfWidth, 0.0);
+  let v1 = vec2f(0.0, halfHeight);
+  let v2 = vec2f(-halfWidth, 0.0);
+  let v3 = vec2f(0.0, -halfHeight);
+  let e0 = nearest_edge(p, v0, v1);
+  let e1 = nearest_edge(p, v1, v2);
+  let e2 = nearest_edge(p, v2, v3);
+  let e3 = nearest_edge(p, v3, v0);
+  let l0 = length(v1 - v0);
+  let l1 = length(v2 - v1);
+  let l2 = length(v3 - v2);
+  if (e0.x <= e1.x && e0.x <= e2.x && e0.x <= e3.x) { return e0.y; }
+  if (e1.x <= e2.x && e1.x <= e3.x) { return l0 + e1.y; }
+  if (e2.x <= e3.x) { return l0 + l1 + e2.y; }
+  return l0 + l1 + l2 + e3.y;
+}
+
+/**
+ * Arc length along the outline at the nearest outline point, in shape-space units. Every
+ * primitive now has a closed form except the ellipse, which is integrated numerically.
+ */
+fn perimeter_length(shape: u32, p: vec2f, size: vec2f, vertexB: vec2f, vertexC: vec2f, params: vec4f, sides: u32) -> f32 {
+  switch shape {
+    case SHAPE_RECT: { return rect_perimeter(p, size); }
+    case SHAPE_ROUNDED_RECT: { return rounded_rect_perimeter(p, size, params.x); }
+    case SHAPE_CIRCLE: { return wrap_tau(atan2(p.y, p.x)) * size.x; }
+    case SHAPE_ELLIPSE: {
+      let theta = wrap_tau(atan2(p.y / max(size.y, EPSILON), p.x / max(size.x, EPSILON)));
+      return ellipse_arc(theta, size);
+    }
+    case SHAPE_ARC: { return arc_perimeter(p, size.x, params.z, params.w); }
+    case SHAPE_ANNULUS: { return annulus_perimeter(p, size.x, size.y); }
+    case SHAPE_CAPSULE: { return capsule_perimeter(p, size.x, size.y); }
+    case SHAPE_POLYGON: { return polygon_perimeter(p, size.x, sides); }
+    case SHAPE_TRIANGLE: { return triangle_perimeter(p, size, vertexB, vertexC); }
+    case SHAPE_RHOMBUS: { return rhombus_perimeter(p, size.x, size.y); }
+    case SHAPE_SECTOR: { return sector_perimeter(p, size.x, params.z, params.w); }
+    case SHAPE_SEGMENT: { return segment_perimeter(p, size.x, params.z, params.w); }
+    default: { return -1.0; }
   }
 }
 
@@ -265,6 +523,7 @@ fn clip_to_framebuffer(clip: vec4f) -> vec2f {
   out.rotation = rotation;
   out.sides = (input.flags >> 8u) & 0xffu;
   out.flags = input.flags;
+  out.dash = input.dash;
   return out;
 }
 
@@ -281,7 +540,35 @@ fn clip_to_framebuffer(clip: vec4f) -> vec2f {
   // Relative to the outer edge of the stroke, so one coverage ramp serves fill and stroke alike.
   let signedPixel = select(abs(distancePixel) - max(input.params.y, 0.0) * 0.5, distancePixel, filled);
   let width = max(fwidth(signedPixel), EPSILON);
-  let coverage = clamp(0.5 - signedPixel / width, 0.0, 1.0);
+  var coverage = clamp(0.5 - signedPixel / width, 0.0, 1.0);
+  if (coverage <= 0.0) { discard; }
+
+  // Dashed outlines: walk the perimeter parameter and cut the stroke in the gaps. The transition
+  // is spread over one canvas pixel so a dash edge is as soft as the shape's own edge.
+  if ((input.flags & 1u) == 0u && input.dash.y > 0.0) {
+    let path = perimeter_length(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
+    if (path >= 0.0) {
+      let requested = input.dash.x + input.dash.y;
+      let total = perimeter_total(input.shape, input.size, input.vertexB, input.vertexC, input.params, input.sides);
+      var period = requested;
+      var visible = input.dash.x;
+      if (total > 0.0) {
+        // Snap the period to a whole number of turns, keeping the requested duty cycle: the
+        // closed outline then ends exactly where its dash pattern started.
+        let count = max(round(total / requested), 1.0);
+        period = total / count;
+        visible = period * (input.dash.x / requested);
+      }
+      let along = fract((path + input.dash.z) / period) * period;
+      let pixel = 1.0 / scale;
+      // Distance to the nearest pattern boundary: the dash start, the dash end, and the next
+      // dash start that fract() wraps around to.
+      let edge = min(min(along, abs(along - visible)), period - along);
+      var dashCoverage = smoothstep(0.0, pixel, edge);
+      if (along > visible) { dashCoverage = 1.0 - dashCoverage; }
+      coverage = coverage * dashCoverage;
+    }
+  }
   if (coverage <= 0.0) { discard; }
   return vec4f(input.color.rgb, input.color.a * coverage);
 }
