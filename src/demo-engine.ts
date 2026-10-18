@@ -12,6 +12,7 @@ import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D
 import { SCENE_EXAMPLES, type SceneExample } from "./scene-examples.js";
 import { buildScene } from "./scenes-3d.js";
 import { linearClearColor } from "./color-space.js";
+import { scaleScreenCommands } from "./screen-scale.js";
 import {
   frameBounds,
   boundsOfPoints,
@@ -503,7 +504,10 @@ export class DemoEngine {
       const height = Math.max(canvas.clientHeight, 1);
       this.canvasHeight = height;
       this.canvasAspect = width / height;
-      if (this.pending2DFit) this.frameSelectedExample();
+      // The backing store is `width × pixelRatio` wide, so that ratio is what turns the CSS-pixel
+      // authoring space of the screen pages into the target pixels the shaders work in.
+      const pixelRatio = output.size[0] / width;
+      if (this.pending2DFit) this.frameSelectedExample(pixelRatio);
       this.integrateCamera(delta);
       const c = this.config.camera;
       const basis = this.fpsCamera === undefined
@@ -521,18 +525,21 @@ export class DemoEngine {
       );
 
       const recorder = debug.beginFrame();
-      // The 2D pages place `screen` content in top-left canvas pixels, so they need the size of the
-      // target this frame renders into; 3D pages ignore it.
-      buildScene(this.selected.id, recorder, this.time, this.config.view.lineJoint, output.size);
+      // The 2D pages place `screen` content in top-left CSS pixels, so they need the size of the
+      // viewport they are authored against; 3D pages ignore it.
+      buildScene(this.selected.id, recorder, this.time, this.config.view.lineJoint, [width, height]);
       const raw = debug.finishFrame(recorder);
       // The width scale must cover joints as well: they are the same stroke as the segments
       // they join, so scaling only `line` commands would leave the wedges at full size.
       const scale = this.config.view.lineWidthScale;
-      const commands: readonly FrameCommand[] = raw.map((command) =>
+      const scaled: readonly FrameCommand[] = raw.map((command) =>
         command.kind === "line" || command.kind === "joint" || command.kind === "line2d" || command.kind === "joint2d"
           ? { ...command, width: command.width * scale }
           : command,
       );
+      // Screen pages are authored in CSS pixels (an 18 px label is 18 CSS px on any display); the
+      // shaders want target pixels, so one multiplication bridges them.
+      const commands = scaleScreenCommands(scaled, pixelRatio);
 
       // The 2D camera is independent from the 3D one: the projection comes from pan/zoom and the
       // viewport, while the 3D matrices above only feed the grid and any world-space text. On a 2D
@@ -919,7 +926,7 @@ export class DemoEngine {
    * origin and the wide matrices (up to 34 units across) fit without manual panning. Only the
    * pose's position changes — the current yaw/pitch is kept.
    */
-  private frameSelectedExample(): void {
+  private frameSelectedExample(pixelRatio = window.devicePixelRatio || 1): void {
     const c = this.config.camera;
     if (c.mode === "2d") {
       const canvas = this.canvas;
@@ -935,9 +942,10 @@ export class DemoEngine {
         // Fit the page's declared extent: a bevy shape matrix spans a thousand-odd units, so a
         // 1:1 scale at default zoom would show only one shape. The fit is in physical pixels,
         // the same space the 2D projection and the grid use, so a HiDPI canvas does not halve it.
-        const dpr = window.devicePixelRatio || 1;
-        const width = canvas.clientWidth * dpr;
-        const height = Math.max(canvas.clientHeight, 1) * dpr;
+        // The ratio comes from the backing store rather than `window.devicePixelRatio`, so the fit
+        // and the screen-space scaling below agree even if the two ever diverge.
+        const width = canvas.clientWidth * pixelRatio;
+        const height = Math.max(canvas.clientHeight, 1) * pixelRatio;
         const zoom = Math.min(width / view.width, height / view.height) * CAMERA_2D_FIT_MARGIN;
         c.zoom = clampFinite(zoom, CAMERA_2D_ZOOM_MIN, CAMERA_2D_ZOOM_MAX, c.zoom);
       }

@@ -34,6 +34,12 @@ const CHROME = resolveChromePath();
 const PROFILE = mkdtempSync(resolve(tmpdir(), "vgpu-capture-"));
 const WIDTH = 1920;
 const HEIGHT = 1080;
+/**
+ * Device scale factor the page is emulated at. `1` captures the CSS-pixel layout; a HiDPI value
+ * exercises the screen-space CSS→target pixel mapping, which is where a page authored in CSS pixels
+ * would otherwise render at half its intended size.
+ */
+const DEVICE_SCALE = Number(process.env.VGPU_DPR ?? "1");
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 
@@ -125,7 +131,7 @@ try {
     const page = makeClient(info.webSocketDebuggerUrl);
     await page.ready;
     await page.send("Page.enable");
-    await page.send("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: HEIGHT, deviceScaleFactor: 1, mobile: false });
+    await page.send("Emulation.setDeviceMetricsOverride", { width: WIDTH, height: HEIGHT, deviceScaleFactor: DEVICE_SCALE, mobile: false });
     await page.send("Page.navigate", { url });
     const counts = await waitForRenderReady(page, "");
     const shot = await page.send("Page.captureScreenshot", { format: "png" });

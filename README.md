@@ -146,7 +146,9 @@ Two coordinate spaces share one pixel-based pipeline:
 | `screen` | top-left corner | down | one canvas pixel | no |
 
 `world2d` mirrors the reference 2D camera: the origin is the centre of the target, `+y` points up and
-`zoom` is canvas pixels per world unit. `2d_shapes`' `X_EXTENT = 1000` is a pixel-scale world
+`zoom` is canvas pixels per world unit. Both spaces are in **target pixels**, like the text `screen`
+space, so a HiDPI caller scales `screen` content itself (`src/screen-scale.ts` does that for the
+gallery); `world2d` needs no such step because its projection already reads the target size. `2d_shapes`' `X_EXTENT = 1000` is a pixel-scale world
 coordinate in that sense, not a top-left one — the top-left, +y-down space is the reference UI space,
 and here it is `screen`, the same one `TextSpace "screen"` already uses.
 
@@ -182,6 +184,13 @@ Three placement spaces share one pipeline and are selected per block:
 | `world-plane` (default) | world units, block on a fixed local XY plane | `fontSize × pixelSize` |
 | `world-billboard` | world units, block rebuilt from the camera's axes | `fontSize × pixelSize` |
 | `screen` | **top-left origin pixels** (`position.z` ignored) | `fontSize` pixels |
+
+The `screen` space is in **target pixels** — the same units as the pass's viewport — because the
+library has no DOM access and must not guess a display density. A caller on a HiDPI display owns the
+conversion: the gallery authors its pages in CSS pixels and multiplies every screen-space command by
+`devicePixelRatio` before handing the frame over (`src/screen-scale.ts`). A block placed at
+`[24, 24]` with `fontSize: 18` in CSS pixels then draws at `[48, 48]` and 36 target pixels on a 2×
+display, which is what keeps a label the same physical size on every screen.
 
 `fontSize` is in **font pixels** and is the layout unit; `pixelSize` is world units per font pixel.
 That pair is the reference `font_size` / `pixel_size`, and it lets a block keep a fixed world
