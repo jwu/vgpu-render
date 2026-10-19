@@ -105,8 +105,10 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
   let clip = camera.viewProjection * vec4f(input.point, 1.0);
   var size = input.size;
   if ((input.flags & 1u) != 0u) {
-    // World-space size uses the vertical projection term, not the combined axis length.
-    size *= camera.viewProjection[1][1] * camera.viewportSize.y * 0.5 / max(clip.w, 0.0001);
+    // World-space size uses the vertical projection term, not the combined axis length. The
+    // absolute value keeps screen space's flipped +y from yielding a negative size, which would
+    // silently skip the sub-pixel alpha fade below.
+    size *= abs(camera.viewProjection[1][1]) * camera.viewportSize.y * 0.5 / max(clip.w, 0.0001);
   }
   let offset = corners[vertex] * size / camera.viewportSize * clip.w;
   var out: Out;
@@ -201,8 +203,10 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
 
   var pixelWidth = max(input.width, 0.0);
   if (input.flags == 1u) {
-    // World-space width scales by the vertical projection term at this clip depth.
-    pixelWidth = input.width * camera.viewProjection[1][1] * camera.viewportSize.y * 0.5
+    // World-space width scales by the vertical projection term at this clip depth. The absolute
+    // value keeps screen space's flipped +y from yielding a negative width, which would skip the
+    // sub-pixel alpha fade below.
+    pixelWidth = input.width * abs(camera.viewProjection[1][1]) * camera.viewportSize.y * 0.5
       / max(mix(clipA, clipB, along).w, 0.0001);
   }
   // Reference thinness fade: a sub-pixel line loses alpha instead of collapsing to a sliver.
@@ -447,7 +451,7 @@ struct Out { @builtin(position) clip: vec4f, @location(0) color: vec4f, @locatio
     // Reference resolve_joint_width measures one world unit along the camera's right axis
     // and converts it to pixels: that equals the vertical projection term used by the line
     // shader, so joint and segment widths stay identical.
-    width = width * camera.viewProjection[1][1] * camera.viewportSize.y * 0.5 / max(clip_b.w, 0.0001);
+    width = width * abs(camera.viewProjection[1][1]) * camera.viewportSize.y * 0.5 / max(clip_b.w, 0.0001);
   } else if (width > 0.0 && width < 1.0) {
     // Reference thinness fade: sub-pixel strokes lose alpha instead of collapsing to a sliver.
     out.color.a *= width;
