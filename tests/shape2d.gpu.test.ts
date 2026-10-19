@@ -43,10 +43,16 @@ function softCount(pixels: Uint8Array): number {
   return count;
 }
 
-/** `zIndex` stays optional for the same reason every command defaults it: one segment is the
- * pre-`zIndex` order, which is what these cases exercise. */
-function shape(partial: Omit<Shape2DCommand, "kind" | "zIndex"> & { zIndex?: number }): FrameCommand {
-  return { kind: "shape2d", zIndex: 0, ...partial };
+/** `zIndex` and `strokeWidthMode` stay optional for the same reason every command defaults them:
+ * these cases exercise the unannotated behaviour, which is the pre-`zIndex` order with a
+ * canvas-pixel outline. */
+function shape(
+  partial: Omit<Shape2DCommand, "kind" | "zIndex" | "strokeWidthMode"> & {
+    zIndex?: number;
+    strokeWidthMode?: "screen" | "world";
+  },
+): FrameCommand {
+  return { kind: "shape2d", zIndex: 0, strokeWidthMode: "screen", ...partial };
 }
 
 /** Shared defaults so each case only spells out the parameters it is about. */
@@ -55,6 +61,7 @@ const base = {
   vertexC: [0, 0] as const,
   cornerRadius: 0,
   thickness: 1,
+  strokeWidthMode: "screen" as const,
   filled: true,
   rotation: 0,
   startAngle: 0,
@@ -420,6 +427,49 @@ test("real GPU keeps a closing arc and sector on their own side of the ring", as
     ]);
     expect(lit(sector, near)).toBe(true);
     expect(litOnFarSide(sector)).toBe(0);
+
+    renderer.destroy();
+  } finally {
+    gpu.dispose();
+  }
+});
+
+test("real GPU scales a world-space outline with the zoom and keeps a screen-space one at its pixel width", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    /** Lit pixels along the horizontal diameter: two rim crossings of the stroke. */
+    const rimWidth = async (strokeWidthMode: "screen" | "world", zoom: number): Promise<number> => {
+      renderer.prepare(
+        [shape({ ...base, shape: "circle", center: [0, 0], size: [40, 40], thickness: 12, filled: false, strokeWidthMode })],
+        { viewProjection: identity, view: identity },
+        { pan: [0, 0], zoom },
+      );
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
+      const pixels = await output.color.read({ mipLevel: 0, region: "all" });
+      let count = 0;
+      const y = Math.round(HEIGHT / 2);
+      for (let x = 0; x < WIDTH; x++) if (lit(pixels, [x, y])) count++;
+      return count;
+    };
+
+    // A screen-space outline is a pixel count: 12 px per rim, so 24 px across the diameter.
+    for (const zoom of [1, 2]) {
+      const width = await rimWidth("screen", zoom);
+      expect(width, `a screen-space outline changed at zoom ${zoom}`).toBeGreaterThanOrEqual(22);
+      expect(width, `a screen-space outline changed at zoom ${zoom}`).toBeLessThanOrEqual(26);
+    }
+    // A world-space outline is 12 world2d units, so it doubles with the zoom.
+    const near = await rimWidth("world", 1);
+    expect(near).toBeGreaterThanOrEqual(22);
+    expect(near).toBeLessThanOrEqual(26);
+    const far = await rimWidth("world", 2);
+    expect(far).toBeGreaterThanOrEqual(46);
+    expect(far).toBeLessThanOrEqual(50);
 
     renderer.destroy();
   } finally {

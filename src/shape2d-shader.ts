@@ -7,9 +7,11 @@
  * derivative of the distance, which keeps edges one pixel wide at any magnification.
  *
  * The distance is evaluated in the shape's own space (the space its coordinates were given in),
- * then converted to canvas pixels, so a stroke width is always a pixel count. `pixelsPerUnit`
- * and `yFlip` are what make that conversion exact for both 2D spaces: `world2d` has +y up and
- * `zoom` pixels per unit, `screen` has +y down and one.
+ * then converted to canvas pixels. `pixelsPerUnit` and `yFlip` are what make that conversion
+ * exact for both 2D spaces: `world2d` has +y up and `zoom` pixels per unit, `screen` has +y down
+ * and one. An outline is either a canvas-pixel count or a shape-space width; the latter is
+ * multiplied by `pixelsPerUnit`, so it thickens with the zoom exactly like a stroke primitive's
+ * `widthMode: "world"`.
  */
 
 export function shape2dShader(): string {
@@ -511,6 +513,12 @@ fn clip_to_framebuffer(clip: vec4f) -> vec2f {
   return vec2f((ndc.x * 0.5 + 0.5) * camera.viewportSize.x, (0.5 - ndc.y * 0.5) * camera.viewportSize.y);
 }
 
+/** Outline width in canvas pixels. Flag bit 1 means the stored thickness is in shape-space units. */
+fn stroke_pixels(thickness: f32, flags: u32, pixelsPerUnit: f32) -> f32 {
+  let value = max(thickness, 0.0);
+  return select(value, value * pixelsPerUnit, (flags & 2u) != 0u);
+}
+
 @vertex fn vs_main(input: In, @builtin(vertex_index) vertex: u32) -> Out {
   let corners = array<vec2f, 6>(
     vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
@@ -521,7 +529,7 @@ fn clip_to_framebuffer(clip: vec4f) -> vec2f {
   let rotation = input.rotationRadius.x;
   let radius = input.rotationRadius.y;
   // A stroke extends past the shape, so the quad has to cover its outer edge too.
-  let stroke = select(input.params.y, 0.0, (input.flags & 1u) != 0u);
+  let stroke = select(stroke_pixels(input.params.y, input.flags, scale), 0.0, (input.flags & 1u) != 0u);
   let extent = radius + stroke * 0.5 / scale;
   let offset = corners[vertex] * extent * scale;
 
@@ -557,8 +565,9 @@ fn clip_to_framebuffer(clip: vec4f) -> vec2f {
   let distanceLocal = shape_distance(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
   let distancePixel = distanceLocal * scale;
   let filled = (input.flags & 1u) != 0u;
+  let strokePixels = stroke_pixels(input.params.y, input.flags, scale);
   // Relative to the outer edge of the stroke, so one coverage ramp serves fill and stroke alike.
-  let signedPixel = select(abs(distancePixel) - max(input.params.y, 0.0) * 0.5, distancePixel, filled);
+  let signedPixel = select(abs(distancePixel) - strokePixels * 0.5, distancePixel, filled);
   let width = max(fwidth(signedPixel), EPSILON);
   var coverage = clamp(0.5 - signedPixel / width, 0.0, 1.0);
   if (coverage <= 0.0) { discard; }

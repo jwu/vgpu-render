@@ -95,8 +95,15 @@ export type Shape2DOptions = {
   color?: Color;
   /** Rotation in radians, anticlockwise in `world2d` and screen-clockwise in `screen`. */
   rotation?: number;
-  /** Outline width in canvas pixels; the `<shape>` and `<shape>_d` variants read it. */
+  /** Outline width; the `<shape>` and `<shape>_d` variants read it. See `strokeWidthMode`. */
   strokeWidth?: number;
+  /**
+   * Whether `strokeWidth` is canvas pixels (`"screen"`, the default) or `world2d` units
+   * (`"world"`) — the shape twin of `widthMode` on the stroke primitives. A world-space outline
+   * grows with the camera zoom, a screen-space one keeps its pixel width. `screen` commands have
+   * no zoom, so the two modes coincide there.
+   */
+  strokeWidthMode?: "screen" | "world";
   /** Start angle of `arc`/`sector`/`segment` in radians. Defaults to `0`, the +x axis. */
   startAngle?: number;
   /** Sweep of `arc`/`sector`/`segment` in radians. Defaults to a full turn; negative turns the other way. */
@@ -121,8 +128,9 @@ export type Shape2DCommand = {
   readonly vertexB: Vec2;
   readonly vertexC: Vec2;
   readonly cornerRadius: number;
-  /** Outline width in canvas pixels. */
+  /** Outline width, in the unit `strokeWidthMode` names. */
   readonly thickness: number;
+  readonly strokeWidthMode: "screen" | "world";
   readonly filled: boolean;
   /**
    * Dashed-outline pattern `[visible, gap, phase]` in shape-space units for the `_d` variants;
@@ -1132,6 +1140,7 @@ export class FrameDrawList2D {
   ): void {
     this.#assertOpen();
     const thickness = positive(options.strokeWidth ?? DEFAULT_2D_STROKE_WIDTH, "strokeWidth");
+    const strokeWidthMode = sizeModeValue(options.strokeWidthMode ?? "screen", "strokeWidthMode");
     const rotation = finite(options.rotation ?? 0, "rotation");
     const cornerRadius = fields.cornerRadius ?? 0;
     if (cornerRadius < 0) throw new RangeError("cornerRadius must not be negative");
@@ -1145,6 +1154,7 @@ export class FrameDrawList2D {
       vertexC: fields.vertexC ?? [0, 0],
       cornerRadius,
       thickness,
+      strokeWidthMode,
       filled: variant.filled,
       rotation,
       startAngle: fields.startAngle ?? 0,

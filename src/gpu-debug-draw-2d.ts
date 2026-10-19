@@ -164,6 +164,7 @@ function sameShape2D(a: Shape2DCommand, b: Shape2DCommand): boolean {
     sameVec2(a.vertexC, b.vertexC) &&
     a.cornerRadius === b.cornerRadius &&
     a.thickness === b.thickness &&
+    a.strokeWidthMode === b.strokeWidthMode &&
     a.filled === b.filled &&
     a.rotation === b.rotation &&
     a.startAngle === b.startAngle &&
@@ -469,7 +470,7 @@ class SpaceBucket2D {
       params: [command.cornerRadius, command.thickness, command.startAngle, command.sweep],
       rotationRadius: [command.rotation, boundingRadius(command)],
       color: command.color,
-      flags: (command.filled ? 1 : 0) | (command.sides << 8),
+      flags: (command.filled ? 1 : 0) | (command.strokeWidthMode === "world" ? 2 : 0) | (command.sides << 8),
       dash: command.dash ?? [0, 0, 0],
     });
   }

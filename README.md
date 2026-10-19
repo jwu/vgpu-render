@@ -196,8 +196,10 @@ construction band below the matrix draws every control point (pink anchors, ambe
 seven reference curve shapes.
 - Shapes: `rect`, `rect_r`, `circle`, `ellipse`, `arc`, `annulus`, `capsule`, `polygon`,
 `triangle`, `rhombus`, `sector`, `segment`. Each is one instanced quad evaluated as a signed
-distance field in the fragment stage, so nothing is triangulated on the CPU and an outline
-width stays a pixel count at any zoom. Every primitive follows the 3D naming: `<shape>` strokes
+distance field in the fragment stage, so nothing is triangulated on the CPU. An outline is a
+canvas-pixel count by default; `strokeWidthMode: "world"` reads `strokeWidth` in `world2d` units
+instead, so the outline thickens with the camera zoom exactly like a stroke's `widthMode: "world"`.
+Every primitive follows the 3D naming: `<shape>` strokes
 the outline, `<shape>_s` fills it and `<shape>_d` dashes the outline along its perimeter,
 taking the same `[visible, gap, phase]` triple as the line layer. `arc` has no interior, so it
 has no `_s` variant, and `Shape2DOptions` no longer carries `fill` — the method name decides.
