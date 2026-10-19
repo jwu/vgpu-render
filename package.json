@@ -1,6 +1,6 @@
 {
   "name": "vgpu-render",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "WebGPU debug-draw, gizmo, infinite grid and text layer built on vgpu",
   "license": "MIT",
   "type": "module",
