@@ -368,3 +368,58 @@ test("real GPU closes the dashed annulus on each ring", async () => {
     gpu.dispose();
   }
 });
+
+test("real GPU keeps a closing arc and sector on their own side of the ring", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    const shot = async (commands: readonly FrameCommand[]): Promise<Uint8Array> => {
+      renderer.prepare(commands, { viewProjection: identity, view: identity }, DEFAULT_CAMERA);
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
+      return output.color.read({ mipLevel: 0, region: "all" });
+    };
+
+    /** Lit pixels in the half of the canvas the sweep never reaches. */
+    const litOnFarSide = (pixels: Uint8Array): number => {
+      let count = 0;
+      for (let y = 0; y < HEIGHT; y++) {
+        for (let x = 0; x < WIDTH / 2 - 6; x++) {
+          const index = (y * WIDTH + x) * 4;
+          if (pixels[index]! > 10 || pixels[index + 1]! > 10 || pixels[index + 2]! > 10) count++;
+        }
+      }
+      return count;
+    };
+
+    // A shrinking arc spends its last frames with a sweep smaller than strokeWidth / radius. The
+    // wedge that clips the ring used to be the intersection of two half-planes, which collapses
+    // onto a line through the centre as the sweep closes: the far side of the ring then read a
+    // distance of radius * sweep (a pixel or two) and a sliver appeared 180 degrees from the start.
+    // A short sweep is under a pixel tall, so sample one pixel above the axis, inside the wedge.
+    const near = pixel(19, 1);
+    for (const sweep of [0.05, 0.01, 0]) {
+      const arc = await shot([
+        shape({ ...base, shape: "arc", center: [0, 0], size: [20, 20], thickness: 4, filled: false, sweep }),
+      ]);
+      // A closed arc has no length left to stroke; any sweep still shorter than a pixel of
+      // stroke width keeps its stub at the start.
+      expect(lit(arc, near), `the closing arc vanished at sweep ${sweep}`).toBe(sweep > 0);
+      expect(litOnFarSide(arc), `the closing arc leaked across the ring at sweep ${sweep}`).toBe(0);
+    }
+
+    // The same clip bounds a sector's fill, so it has to hold there as well.
+    const sector = await shot([
+      shape({ ...base, shape: "sector", center: [0, 0], size: [20, 20], filled: true, sweep: 0.05 }),
+    ]);
+    expect(lit(sector, near)).toBe(true);
+    expect(litOnFarSide(sector)).toBe(0);
+
+    renderer.destroy();
+  } finally {
+    gpu.dispose();
+  }
+});

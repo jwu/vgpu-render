@@ -174,31 +174,34 @@ fn sd_rhombus(p: vec2f, a: f32, b: f32) -> f32 {
   return value / length(vec2f(1.0 / dx, 1.0 / dy));
 }
 
-/** Sector of at most half a turn: the intersection of the disc and the two edge half-planes. */
 /**
- * Angular wedge of sweep radians from start: only the two bounding half-planes, no radius.
- * Keeping the disc out of it matters for the complementary wedge below, where a radius term would
- * clamp the opposite side to zero and leave the uncovered wedge of an arc or sector painted.
+ * Angular wedge of sweep radians from start: at most zero inside, and outside it returns the
+ * distance to the nearer end, measured along the arc at the sample's radius.
+ *
+ * Clamping with a pair of half-planes works for wide sweeps but degenerates as the sweep closes:
+ * their intersection collapses onto a line through the centre, so a point on the far side of the
+ * ring reads a near-zero distance and a shrinking arc paints a sliver opposite its start. The
+ * angular form keeps growing with the angle there, stays exact on the ring itself, and still
+ * narrows to the centre, so a nearly closed wedge keeps its point instead of a flat end.
  */
 fn sd_wedge(p: vec2f, start: f32, sweep: f32) -> f32 {
-  let end = start + sweep;
-  // Inward normals of the two straight edges, in the order the sweep turns.
-  let startEdge = vec2f(sin(start), -cos(start));
-  let endEdge = vec2f(-sin(end), cos(end));
-  return max(dot(p, startEdge), dot(p, endEdge));
+  let sweepAbs = abs(sweep);
+  // A sweep that closed completely has no wedge at all; reporting the whole plane as covered
+  // would paint a dot at the start of a zero-length arc.
+  if (sweepAbs <= EPSILON) { return 1e6; }
+  let angle = wrap_tau(atan2(p.y, p.x));
+  var offset = wrap_tau(angle - start);
+  if (sweep < 0.0) { offset = wrap_tau(start - angle); }
+  // Negative while inside the wedge, otherwise the angle past the nearer end.
+  let over = min(offset - sweepAbs, TAU - offset);
+  return over * length(p);
 }
 
-/**
- * Sector of any sweep. Past half a turn the two half-planes would bound the complementary wedge
- * instead, so the complement is subtracted from the disc. A negative sweep runs the other way.
- */
+/** Sector of any sweep: the disc, clipped to the angular wedge. A negative sweep runs the other way. */
 fn sd_sector(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
   let disc = length(p) - radius;
   if (abs(sweep) >= TAU - EPSILON) { return disc; }
-  if (abs(sweep) <= PI) { return max(disc, sd_wedge(p, start, sweep)); }
-  let complementSweep = select(TAU + sweep, TAU - sweep, sweep > 0.0);
-  let complement = sd_wedge(p, start + sweep, complementSweep);
-  return max(disc, -complement);
+  return max(disc, sd_wedge(p, start, sweep));
 }
 
 /** Circular segment: the disc on the arc side of the chord. Always convex. */
