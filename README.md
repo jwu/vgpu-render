@@ -25,13 +25,14 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
 - **Battle VFX** (`/?page=vfx`) — the battle-effects page in `examples/vfx/`: `world2d`
   scenes staged on a loop timeline with a scrub slider, an editable `duration` (0.8 s on every
   page), per-effect parameters, and hue/saturation sliders so each effect can be recoloured.
-  Both effects play across the same anime.js easing matrix — columns are the eleven families
+  Most effects play across the same anime.js easing matrix — columns are the eleven families
   (`linear` / `quad` / `cubic` / `quart` / `quint` / `sine` / `expo` / `circ` / `back` /
   `elastic` / `bounce`), rows are the directions (`in` / `out` / `inOut`), 33 cells in total.
   Every cell shares the clock, the geometry and the parameters, so the curve difference is the
   only variable, and a square plot of each curve with a live playhead sits above its effect;
   `linear` (the only directionless family) is the baseline and the diagonal guide inside every
-  plot.
+  plot. `heal-beam` is the exception: one effect shown large, with its elements on a timeline
+  instead of a matrix.
 
   - `slash-arc` — the swing grows: a filled sector and an arc stroke sweep out from the start
     angle, so the swept angle at any instant *is* the curve.
@@ -51,6 +52,18 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
   - `pillar-fade` — the opposite motion: the column is at full height on its first frame, and what
     the clock takes away is its definition — it widens and fades into a haze. Same shaft shape, one
     colour, nothing round added on top; only the timing differs.
+  - `heal-beam` — the first page that shows **one** effect instead of a matrix, and the first with
+    an element timeline: the heal from `~/gamedev/battle` (a ground pool spreading from the feet, a
+    stacked column rising off the body, sparks drifting up its length) on the left, and one curve row
+    per element on the right — pool spread, column height, column brightness, spark brightness — with
+    a single playhead crossing all four. The rows and the stage read the same phase functions, so the
+    curve strip *is* the effect's timing rather than a second animation describing it.
+  - `fireball` — a projectile: the caster winds up an ember, the ball flies a straight line to the
+    target dragging a tail, and the hit opens four layers at once — flash, a fast thin ring, a slow
+    wide ring, sparks thrown out and embers left drifting. The stage is a strip across the top and
+    the four curve rows sit underneath, sharing one playhead: ride it and the strip says the flight
+    is still climbing while every blast row is flat, then the ring's arc peaks and turns over while
+    the sparks are at their widest.
 
 Both sets share the engine (`gallery/demo-engine.ts`): a switch swaps the registry,
 dispatcher, storage record and camera, while the WebGPU device and render loop stay up.

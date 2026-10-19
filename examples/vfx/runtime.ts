@@ -12,6 +12,8 @@ import type { EffectParams } from "../shared/meta.js";
 import type { VfxSceneContext } from "./scene-context.js";
 import { defaultParams, paramsFor } from "./params.js";
 import { VFX_EXAMPLES } from "./registry.js";
+import { draw as healBeam } from "./heal-beam/scene.js";
+import { draw as fireball } from "./fireball/scene.js";
 import { draw as slashArc } from "./slash-arc/scene.js";
 import { draw as battleSlash } from "./battle-slash/scene.js";
 import { draw as hitMark } from "./hit-mark/scene.js";
@@ -20,6 +22,8 @@ import { draw as pillarAppear } from "./pillar-appear/scene.js";
 import { draw as pillarFade } from "./pillar-fade/scene.js";
 
 const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: VfxSceneContext) => void>> = {
+  "heal-beam": healBeam,
+  "fireball": fireball,
   "slash-arc": slashArc,
   "battle-slash": battleSlash,
   "hit-mark": hitMark,

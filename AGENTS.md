@@ -40,6 +40,7 @@ examples/vfx/params.ts       ← 特效参数解析、clamp 与取色
 examples/vfx/matrix.ts      ← 各页共用的 11×3 矩阵布局、标题与曲线图
 examples/vfx/action-phase.ts ← 各页共用的「动作窗口」时序（时长 × 占比 → progress/eased/fade）
 examples/vfx/unit.ts       ← 各页共用的战斗单位圆盘（`circle_s` + 描边，HSV 派生颜色）
+examples/vfx/timeline-tracks.ts ← 单特效页共用的元素曲线时间轴（每元素一行 + 共享播放头 + 秒刻度）
 examples/vfx/<slug>/scene.ts ← 战斗特效单页实现（world2d + timeline）
 examples/vfx/<slug>/meta.ts  ← 单页元数据（duration、params、view2d）
 examples/shared/             ← 共享布局、标签、几何、绘制 helper 与 meta helper

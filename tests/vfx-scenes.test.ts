@@ -9,6 +9,37 @@ import { LOOP_SECONDS, slashPhase } from "../examples/vfx/slash-arc/scene.js";
 import { battleSwingPhase } from "../examples/vfx/battle-slash/scene.js";
 import { actionPhase } from "../examples/vfx/action-phase.js";
 import { PILLAR_LAYER_COUNT } from "../examples/vfx/pillar.js";
+import {
+  BEAM_BAND_COUNT,
+  GROW_RATIO,
+  TIMELINE_LAYOUT,
+  healPhase,
+  sparkBrightness,
+} from "../examples/vfx/heal-beam/scene.js";
+import {
+  BODY_RADIUS,
+  BURST_OPEN,
+  BURST_SPAN,
+  CASTER,
+  CHARGE_RATIO,
+  EMBER_TRAVEL,
+  HIT_RATIO,
+  SPARK_TRAVEL,
+  TARGET,
+  TIMELINE_LAYOUT as FIREBALL_TIMELINE_LAYOUT,
+  burstBrightness,
+  burstRadius,
+  emberBrightness,
+  fireballPhase,
+  fireballPhaseAt,
+  fireballPosition,
+  fireballRadius,
+  flashBrightness,
+  ringRadius,
+  slowRingRadius,
+  sparkBrightness as fireballSparkBrightness,
+  tailBrightness,
+} from "../examples/vfx/fireball/scene.js";
 import { inCirc, outCirc } from "../examples/vfx/easing.js";
 import {
   EASING_DIRECTIONS,
@@ -572,5 +603,275 @@ describe("pillar fade", () => {
     // The column has faded; only the plots' playheads are left among the shapes.
     const shapes = shapesOf(LOOP_SECONDS * 0.6);
     expect(pillarsOf(shapes)).toHaveLength(0);
+  });
+});
+
+describe("heal beam", () => {
+  const shapesOf = (time: number, params?: Record<string, number>) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("heal-beam", drawList, time, undefined, undefined, params);
+    return drawList.commands().flatMap((command) => (command.kind === "shape2d" ? [command] : []));
+  };
+  /** The column's bands: vertical strokes sized in world units, which is what the effect draws. */
+  const bandsOf = (time: number, params?: Record<string, number>) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("heal-beam", drawList, time, undefined, undefined, params);
+    return drawList
+      .commands()
+      .flatMap((command) => (command.kind === "line2d" ? [command] : []))
+      .filter((command) => command.widthMode === "world" && command.start[0] === command.end[0]);
+  };
+  const textsOf = (time: number) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("heal-beam", drawList, time);
+    return drawList
+      .commands()
+      .flatMap((command) => (command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : []));
+  };
+
+  test("phase splits the loop into spread, grow and fade", () => {
+    const first = healPhase(0);
+    expect(first.progress).toBe(0);
+    expect(first.spread).toBe(0);
+    // Nothing has grown on the first frame: the column exists only once the loop starts.
+    expect(first.grow).toBe(0);
+    expect(first.fade).toBe(1);
+
+    // The column is up at the end of the grow window and holds there; the pool never stops opening.
+    expect(healPhase(LOOP_SECONDS * GROW_RATIO).grow).toBeCloseTo(1, 6);
+    expect(healPhase(LOOP_SECONDS * 0.6).grow).toBeCloseTo(1, 6);
+    expect(healPhase(LOOP_SECONDS * 0.6).spread).toBeGreaterThan(healPhase(LOOP_SECONDS * 0.3).spread);
+    // Fade is the straight line down, and it reaches zero at the end of the loop.
+    expect(healPhase(LOOP_SECONDS * 0.25).fade).toBeCloseTo(0.75, 6);
+    expect(healPhase(LOOP_SECONDS - 1e-9).fade).toBeCloseTo(0, 6);
+    // A clock outside the loop wraps instead of extrapolating.
+    expect(healPhase(LOOP_SECONDS + LOOP_SECONDS * 0.25).progress).toBeCloseTo(0.25, 6);
+    expect(healPhase(-LOOP_SECONDS * 0.25).progress).toBeCloseTo(0.75, 6);
+  });
+
+  test("sparks ride staggered phases and die at both ends", () => {
+    const count = 4;
+    for (let index = 0; index < count; index++) {
+      // Spark `index` wraps once per loop: its birth and its death are the same instant, at
+      // `1 - index/count`. That is the seam the sine exists to hide.
+      const seam = (1 - index / count) % 1;
+      expect(sparkBrightness(seam, index, count, 1)).toBeCloseTo(0, 6);
+      // …and its peak sits half a window later.
+      expect(sparkBrightness((seam + 0.5) % 1, index, count, 1)).toBeCloseTo(1, 6);
+    }
+    // The fade scales every spark at once; a zero count draws no spark at all.
+    expect(sparkBrightness(0.5, 0, count, 0.5)).toBeCloseTo(0.5, 6);
+    expect(sparkBrightness(0.5, 0, 0, 1)).toBe(0);
+  });
+
+  test("grow the column from nothing and hold it at full height", () => {
+    // The first frame has no column at all — the pool and the body only.
+    expect(bandsOf(0)).toHaveLength(0);
+    const tallest = (time: number): number =>
+      Math.max(...bandsOf(time).map((command) => Math.abs(command.end[1] - command.start[1])));
+    expect(tallest(LOOP_SECONDS * GROW_RATIO)).toBeGreaterThan(0);
+    // Once the grow window is over the column holds its height; only its alpha keeps falling.
+    expect(tallest(LOOP_SECONDS * 0.5)).toBeCloseTo(tallest(LOOP_SECONDS * GROW_RATIO), 6);
+    // The stack is the cone-shaped ladder: each band narrower than the one outside it and no wider
+    // than the column's declared width.
+    const bands = bandsOf(LOOP_SECONDS * 0.5);
+    expect(bands).toHaveLength(BEAM_BAND_COUNT);
+    const widths = bands.map((command) => command.width);
+    for (let index = 1; index < widths.length; index++) expect(widths[index]!).toBeLessThan(widths[index - 1]!);
+    // Every band goes transparent at the top, which is the 2D layer's only gradient.
+    for (const band of bands) expect(band.colorEnd[3]).toBe(0);
+  });
+
+  test("spread the ground pool and fade the whole effect out", () => {
+    const pool = (time: number): number =>
+      Math.max(...shapesOf(time).filter((command) => command.shape === "ellipse").map((command) => command.size[0]));
+    // Two concentric ellipses: a wide dim one that spreads, and a bright core inside it.
+    const ellipses = shapesOf(LOOP_SECONDS * 0.5).filter((command) => command.shape === "ellipse");
+    expect(ellipses).toHaveLength(2);
+    expect(ellipses[1]!.size[0]).toBeCloseTo(ellipses[0]!.size[0] * 0.5, 6);
+    expect(ellipses[0]!.size[1]).toBeCloseTo(ellipses[0]!.size[0] * 0.42, 6);
+    // The pool opens over the whole loop, and its alpha is the square of the fade.
+    expect(pool(LOOP_SECONDS * 0.6)).toBeGreaterThan(pool(LOOP_SECONDS * 0.2));
+    const late = shapesOf(LOOP_SECONDS * 0.9).filter((command) => command.shape === "ellipse")[0]!;
+    const early = shapesOf(LOOP_SECONDS * 0.1).filter((command) => command.shape === "ellipse")[0]!;
+    expect(late.color[3]).toBeLessThan(early.color[3]);
+  });
+
+  test("draw one spark per slice, and none when the slider is at zero", () => {
+    // The sparks are the stage's small green-dominant filled circles: the unit body is a big one,
+    // and the timeline's curve dots live to the right of the rows' left edge.
+    const sparksAt = (params: Record<string, number>): number =>
+      shapesOf(LOOP_SECONDS * 0.3, params).filter(
+        (command) =>
+          command.shape === "circle" &&
+          command.filled &&
+          command.center[0] < TIMELINE_LAYOUT.left &&
+          command.size[0] < 0.5 &&
+          command.color[1] > command.color[0],
+      ).length;
+    expect(sparksAt({ duration: LOOP_SECONDS, sparks: 5 })).toBe(5);
+    expect(sparksAt({ duration: LOOP_SECONDS, sparks: 0 })).toBe(0);
+  });
+
+  test("label every element row and draw one shared playhead", () => {
+    const texts = textsOf(LOOP_SECONDS * 0.4);
+    expect(texts).toEqual(expect.arrayContaining(["地面光斑", "柱身", "柱身亮度", "上升光点"]));
+    // Time ticks under the last row: 0, half the loop, the whole loop.
+    expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
+
+    // One screen-space vertical spanning every row; its x is the same progress the stage uses.
+    const drawList = new FrameDrawList();
+    buildVfxScene("heal-beam", drawList, LOOP_SECONDS * 0.5);
+    const verticals = drawList
+      .commands()
+      .flatMap((command) => (command.kind === "line2d" ? [command] : []))
+      .filter(
+        (command) =>
+          command.widthMode !== "world" && command.start[0] === command.end[0] && Math.abs(command.end[1] - command.start[1]) > 5,
+      );
+    expect(verticals).toHaveLength(1);
+    expect(verticals[0]!.start[0]).toBeCloseTo(TIMELINE_LAYOUT.left + TIMELINE_LAYOUT.width * 0.5, 6);
+  });
+});
+
+describe("fireball", () => {
+  const commandsOf = (progress: number) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("fireball", drawList, progress * LOOP_SECONDS);
+    return drawList.commands();
+  };
+  const shapesOf = (progress: number) =>
+    commandsOf(progress).flatMap((command) => (command.kind === "shape2d" ? [command] : []));
+  /** The column's bands are the only world-width vertical strokes on this page. */
+  const textsOf = (progress: number) =>
+    commandsOf(progress).flatMap((command) =>
+      command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : [],
+    );
+
+  test("split the loop into windup, flight and blast", () => {
+    const start = fireballPhase(0);
+    expect(start.charge).toBe(0);
+    expect(start.flight).toBe(0);
+    expect(start.blast).toBe(0);
+    // The windup saturates exactly at the launch, and the launch is where flight leaves zero.
+    expect(fireballPhase(LOOP_SECONDS * CHARGE_RATIO).charge).toBeCloseTo(1, 6);
+    expect(fireballPhase(LOOP_SECONDS * CHARGE_RATIO).flight).toBeCloseTo(0, 6);
+    expect(fireballPhase(LOOP_SECONDS * CHARGE_RATIO * 2).flight).toBeGreaterThan(0);
+    // The ball lands at `HIT_RATIO`: flight is complete and the blast opens from zero.
+    expect(fireballPhase(LOOP_SECONDS * HIT_RATIO).flight).toBeCloseTo(1, 6);
+    expect(fireballPhase(LOOP_SECONDS * HIT_RATIO).blast).toBeCloseTo(0, 6);
+    expect(fireballPhase(LOOP_SECONDS * HIT_RATIO + 1e-6).blast).toBeGreaterThan(0);
+    // Nothing flies after the hit.
+    expect(fireballPhase(LOOP_SECONDS * 0.9).flight).toBeCloseTo(1, 6);
+    // A clock outside the loop wraps instead of extrapolating.
+    expect(fireballPhase(LOOP_SECONDS * 1.25).progress).toBeCloseTo(0.25, 6);
+    expect(fireballPhase(-LOOP_SECONDS * 0.25).progress).toBeCloseTo(0.75, 6);
+  });
+
+  test("ease the flight so the ball is fastest mid-air", () => {
+    // Equal time steps cover more distance in the middle of the flight window than at its ends.
+    const at = (t: number) => fireballPosition(fireballPhaseAt(t))[0];
+    const step = 0.02;
+    const middle = (CHARGE_RATIO + HIT_RATIO) / 2;
+    const here = at(middle + step) - at(middle);
+    expect(here).toBeGreaterThan(at(CHARGE_RATIO + step) - at(CHARGE_RATIO));
+    expect(here).toBeGreaterThan(at(HIT_RATIO) - at(HIT_RATIO - step));
+    // It still starts at the caster's edge and ends on the target, and never goes backwards.
+    expect(at(CHARGE_RATIO)).toBeCloseTo(CASTER[0] + BODY_RADIUS * 0.55, 6);
+    expect(at(HIT_RATIO)).toBeCloseTo(TARGET[0], 6);
+    let previous = -Infinity;
+    for (let index = 0; index <= 40; index++) {
+      const value = at((index / 40) * HIT_RATIO);
+      expect(value).toBeGreaterThanOrEqual(previous);
+      previous = value;
+    }
+  });
+
+  test("draw one fireball: the windup ember hands over to the ball", () => {
+    // On the first frame the ball has no size at all, and the ember is at the caster.
+    expect(fireballRadius(fireballPhase(0))).toBeCloseTo(0.42, 6);
+    // Half way through the windup it is bigger, and at the launch it is full size.
+    expect(fireballRadius(fireballPhase(LOOP_SECONDS * CHARGE_RATIO * 0.5))).toBeGreaterThan(0.42);
+    expect(fireballRadius(fireballPhase(LOOP_SECONDS * CHARGE_RATIO))).toBeCloseTo(1, 6);
+    // In flight the ball is a body plus a halo plus a core, and the tail is behind it.
+    const flying = shapesOf(0.3).filter((command) => command.shape === "circle");
+    expect(flying.length).toBeGreaterThan(0);
+    // After the hit the ball is gone: every blast circle sits within the blast's reach of the target,
+    // and none of them is anywhere near the caster. Stage layers carry a zIndex; the timeline's curve
+    // dots do not, which is how this stays a test about the stage.
+    const blast = shapesOf(0.6).filter((command) => command.shape === "circle" && command.zIndex > 0);
+    expect(blast.length).toBeGreaterThan(0);
+    for (const circle of blast) {
+      expect(Math.abs(circle.center[0] - TARGET[0])).toBeLessThan(BODY_RADIUS * 6);
+      expect(Math.abs(circle.center[0] - CASTER[0])).toBeGreaterThan(BODY_RADIUS * 4);
+    }
+    // The ember only exists while the ball has not launched.
+    expect(tailBrightness(fireballPhase(0))).toBe(0);
+    expect(tailBrightness(fireballPhase(LOOP_SECONDS * 0.3))).toBeGreaterThan(0);
+    expect(tailBrightness(fireballPhase(LOOP_SECONDS * 0.6))).toBe(0);
+  });
+
+  test("open the four blast layers on four different clocks", () => {
+    // On the hit frame the flash is full and both rings are still at zero.
+    const hit = fireballPhase(LOOP_SECONDS * HIT_RATIO + 1e-6);
+    expect(flashBrightness(hit)).toBeGreaterThan(0.99);
+    expect(ringRadius(hit)).toBeLessThan(0.01);
+    expect(slowRingRadius(hit)).toBeLessThan(0.01);
+
+    // A fifth of the way in: the flash is gone, the fast ring is nearly done, the slow one lags.
+    const early = fireballPhase(LOOP_SECONDS * HIT_RATIO + (LOOP_SECONDS * (1 - HIT_RATIO)) / 5);
+    expect(flashBrightness(early)).toBe(0);
+    expect(ringRadius(early)).toBeGreaterThan(slowRingRadius(early));
+    expect(slowRingRadius(early)).toBeLessThan(1);
+
+    // The sparks are out and gone before the slow ring has finished travelling.
+    expect(fireballSparkBrightness(early)).toBeGreaterThan(0);
+    const later = fireballPhase(LOOP_SECONDS * HIT_RATIO + (LOOP_SECONDS * (1 - HIT_RATIO)) * 0.7);
+    expect(fireballSparkBrightness(later)).toBe(0);
+    // The slow ring is still short of its full travel there — it is the longest of the four clocks.
+    expect(slowRingRadius(later)).toBeLessThan(1);
+    const last = fireballPhase(LOOP_SECONDS * HIT_RATIO + (LOOP_SECONDS * (1 - HIT_RATIO)) * 0.9);
+    expect(slowRingRadius(last)).toBeCloseTo(1, 6);
+
+    // Embers outlive every other layer — they are still dimly there at the end of the loop.
+    expect(emberBrightness(last)).toBeGreaterThan(0);
+    expect(emberBrightness(fireballPhase(LOOP_SECONDS - 1e-6))).toBeCloseTo(0, 5);
+    // Sparks are thrown far and die young; embers stay near the target and outlive them. That
+    // separation is what keeps the two from reading as one layer.
+    expect(SPARK_TRAVEL).toBeGreaterThan(EMBER_TRAVEL);
+    const sparksGone = fireballPhase(LOOP_SECONDS * HIT_RATIO + (LOOP_SECONDS * (1 - HIT_RATIO)) * 0.6);
+    expect(fireballSparkBrightness(sparksGone)).toBe(0);
+    expect(emberBrightness(sparksGone)).toBeGreaterThan(0.3);
+  });
+
+  test("contract the fire body instead of fading it", () => {
+    // It opens to full size and then shrinks back to nothing: the body leaves the stage by
+    // contracting, because a half-transparent orange disc over a dark background is brown.
+    // `t` here is the blast fraction the module measures against its own span.
+    const at = (t: number) => burstRadius(fireballPhaseAt(HIT_RATIO + (1 - HIT_RATIO) * t));
+    expect(at(0)).toBeCloseTo(0, 6);
+    expect(at(BURST_SPAN * BURST_OPEN)).toBeCloseTo(1, 6);
+    expect(at(BURST_SPAN * 0.8)).toBeLessThan(1);
+    expect(at(BURST_SPAN)).toBeCloseTo(0, 6);
+    // Its brightness never fades: the radius is what ends the layer.
+    expect(burstBrightness(fireballPhaseAt(HIT_RATIO + (1 - HIT_RATIO) * BURST_SPAN * 0.9))).toBe(1);
+  });
+
+  test("label every element row and draw one shared playhead", () => {
+    const texts = textsOf(0.4);
+    expect(texts).toEqual(expect.arrayContaining(["火球 · 飞行", "火球 · 大小", "爆炸 · 闪光 / 冲击环", "爆炸 · 火花 / 余烬"]));
+    expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
+
+    // One screen-space vertical spanning every row, at the playhead's x.
+    const verticals = commandsOf(0.5)
+      .flatMap((command) => (command.kind === "line2d" ? [command] : []))
+      .filter(
+        (command) =>
+          command.widthMode !== "world" &&
+          command.start[0] === command.end[0] &&
+          Math.abs(command.end[1] - command.start[1]) > 5,
+      );
+    expect(verticals).toHaveLength(1);
+    expect(verticals[0]!.start[0]).toBeCloseTo(FIREBALL_TIMELINE_LAYOUT.left + FIREBALL_TIMELINE_LAYOUT.width * 0.5, 6);
   });
 });
