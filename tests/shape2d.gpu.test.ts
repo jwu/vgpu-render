@@ -244,3 +244,127 @@ test("real GPU cuts every dashed outline into dashes", async () => {
     gpu.dispose();
   }
 });
+
+test("real GPU keeps each end of a dashed arc on that end's dash phase", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    const shot = async (commands: readonly FrameCommand[]): Promise<Uint8Array> => {
+      renderer.prepare(commands, { viewProjection: identity, view: identity }, DEFAULT_CAMERA);
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
+      return output.color.read({ mipLevel: 0, region: "all" });
+    };
+
+    // An arc of radius 24 over 1.2 turns is 90.48 long, so with a [8, 12] pattern its two ends sit
+    // 10.48 apart in pattern space: one phase leaves the start inside a gap while the end sits well
+    // inside a dash, the other swaps them. The stroke is half a width wide past each end, and that
+    // stub has to read its own end's phase instead of being clamped to the far end.
+    const outline = {
+      ...base,
+      shape: "arc" as const,
+      center: [0, 0] as const,
+      size: [24, 24] as const,
+      thickness: 4,
+      filled: false,
+      startAngle: 0,
+      sweep: Math.PI * 1.2,
+    };
+    // Just outside the start (359 degrees) and just outside the end (216.4 degrees).
+    const beforeStart = pixel(24, -1);
+    const pastEnd = pixel(-19, -14);
+
+    const startInGap = await shot([shape({ ...outline, dash: [8, 12, 16] })]);
+    expect(lit(startInGap, beforeStart), "the stub before the start inherits the end's dash").toBe(false);
+    expect(lit(startInGap, pastEnd), "the stub past the end lost its dash").toBe(true);
+
+    const startInDash = await shot([shape({ ...outline, dash: [8, 12, 4] })]);
+    expect(lit(startInDash, beforeStart), "the stub before the start lost its dash").toBe(true);
+    expect(lit(startInDash, pastEnd), "the stub past the end inherits the start's dash").toBe(false);
+
+    renderer.destroy();
+  } finally {
+    gpu.dispose();
+  }
+});
+
+test("real GPU closes the dashed annulus on each ring", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    const shot = async (commands: readonly FrameCommand[]): Promise<Uint8Array> => {
+      renderer.prepare(commands, { viewProjection: identity, view: identity }, DEFAULT_CAMERA);
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
+      return output.color.read({ mipLevel: 0, region: "all" });
+    };
+    /**
+     * Lengths of the lit runs walking around one ring, in samples. A ring whose pattern does not
+     * close at the +x seam leaves one run cut short, or a leftover stub between two dashes.
+     */
+    const runs = (pixels: Uint8Array, radius: number, steps = 1440): number[] => {
+      const flags: boolean[] = [];
+      for (let index = 0; index < steps; index++) {
+        const theta = (index / steps) * Math.PI * 2;
+        const x = Math.round(WIDTH / 2 + radius * Math.cos(theta));
+        const y = Math.round(HEIGHT / 2 - radius * Math.sin(theta));
+        // The sampled circle lands up to a pixel off the stroke centre, so take the brightest
+        // neighbour: the ring is two pixels wide and the pattern, not the coverage, is in question.
+        let best = 0;
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            best = Math.max(best, channel(pixels, x + dx, y + dy, 1));
+          }
+        }
+        flags.push(best > 128);
+      }
+      const start = flags.indexOf(false);
+      if (start < 0) return flags.length === 0 ? [] : [flags.length];
+      const lengths: number[] = [];
+      let run = 0;
+      for (let index = 0; index < steps; index++) {
+        if (flags[(start + index) % steps]!) {
+          run++;
+        } else if (run > 0) {
+          lengths.push(run);
+          run = 0;
+        }
+      }
+      if (run > 0) lengths.push(run);
+      return lengths;
+    };
+
+    const outline = {
+      ...base,
+      shape: "annulus" as const,
+      center: [0, 0] as const,
+      size: [34, 16] as const,
+      thickness: 2,
+      filled: false,
+    };
+    // Both boundaries stroke their own circle, so each one has to carry an even pattern all the
+    // way around; a phase jump at the seam shows up as an uneven run length at some phase.
+    for (let phase = 0; phase < 32; phase += 4) {
+      const pixels = await shot([shape({ ...outline, dash: [24, 8, phase] })]);
+      for (const radius of [16, 34]) {
+        // Ignore runs under a sample and a half: the dash boundary at the seam is anti-aliased and
+        // can flicker a single pixel either way.
+        const lengths = runs(pixels, radius).filter((length) => length > 8);
+        expect(lengths.length, `${radius} ring has no dashes at phase ${phase}`).toBeGreaterThan(0);
+        const shortest = Math.min(...lengths);
+        const longest = Math.max(...lengths);
+        expect(shortest, `${radius} ring has a stub at phase ${phase}: ${lengths.join("/")}`).toBeGreaterThan(longest * 0.6);
+      }
+    }
+
+    renderer.destroy();
+  } finally {
+    gpu.dispose();
+  }
+});

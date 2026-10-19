@@ -258,9 +258,10 @@ fn rect_perimeter(p: vec2f, halfSize: vec2f) -> f32 {
 /**
  * Closed-outline length in shape-space units, or -1 for an open outline (an arc). A closed
  * outline snaps its dash period to a whole number of periods, so the pattern meets itself at the
- * perimeter start instead of jumping by P mod period.
+ * perimeter start instead of jumping by P mod period. An annulus strokes two separate circles, so
+ * the length follows whichever ring the sample sits on and each ring closes on its own.
  */
-fn perimeter_total(shape: u32, size: vec2f, vertexB: vec2f, vertexC: vec2f, params: vec4f, sides: u32) -> f32 {
+fn perimeter_total(shape: u32, p: vec2f, size: vec2f, vertexB: vec2f, vertexC: vec2f, params: vec4f, sides: u32) -> f32 {
   switch shape {
     case SHAPE_RECT: { return 4.0 * (size.x + size.y); }
     case SHAPE_ROUNDED_RECT: {
@@ -271,7 +272,10 @@ fn perimeter_total(shape: u32, size: vec2f, vertexB: vec2f, vertexC: vec2f, para
     case SHAPE_CIRCLE: { return TAU * size.x; }
     case SHAPE_ELLIPSE: { return ellipse_arc(TAU, size); }
     case SHAPE_ARC: { return -1.0; }
-    case SHAPE_ANNULUS: { return TAU * (size.x + size.y); }
+    case SHAPE_ANNULUS: {
+      if (abs(length(p) - size.x) <= abs(length(p) - size.y)) { return TAU * size.x; }
+      return TAU * size.y;
+    }
     case SHAPE_CAPSULE: { return 2.0 * PI * size.x + 4.0 * size.y; }
     case SHAPE_POLYGON: {
       let count = max(sides, 3u);
@@ -367,21 +371,34 @@ fn capsule_perimeter(p: vec2f, radius: f32, halfLength: f32) -> f32 {
   return arc + (halfLength - p.y);
 }
 
-/** Annulus: outer ring forwards, then inner ring backwards, so the band stays continuous. */
+/**
+ * Annulus: the outer boundary is walked forwards and the inner one backwards, both from the +x
+ * seam. Each ring measures its own circumference, so both close there instead of the inner ring
+ * inheriting the outer one's leftover phase (which left a stub at the seam).
+ */
 fn annulus_perimeter(p: vec2f, outer: f32, inner: f32) -> f32 {
   let radius = length(p);
   let angle = wrap_tau(atan2(p.y, p.x));
   if (abs(radius - outer) <= abs(radius - inner)) { return angle * outer; }
-  return TAU * outer + (TAU - angle) * inner;
+  return (TAU - angle) * inner;
 }
 
-/** Arc: only the swept wedge has a perimeter, so samples past an end clamp to that end. */
+/**
+ * Arc: only the swept wedge has a perimeter. A sample past an end reads the nearer end, because the
+ * half stroke left over the cap sits within a couple of pixels of it: clamping every one of them to
+ * the far end instead would paint a stub in the far end's phase. The value has to stay
+ * non-negative, since the fragment stage reads a negative perimeter as "this shape has no dash".
+ */
 fn arc_perimeter(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
   let sweepAbs = abs(sweep);
   let angle = wrap_tau(atan2(p.y, p.x));
   var offset = wrap_tau(angle - start);
   if (sweep < 0.0) { offset = wrap_tau(start - angle); }
-  return min(offset, sweepAbs) * radius;
+  if (offset <= sweepAbs) { return offset * radius; }
+  let pastEnd = offset - sweepAbs;
+  let pastStart = TAU - offset;
+  if (pastStart < pastEnd) { return 0.0; }
+  return sweepAbs * radius;
 }
 
 /** Sector: arc, then the radius at the arc end, then the radius back to the arc start. */
@@ -549,7 +566,7 @@ fn clip_to_framebuffer(clip: vec4f) -> vec2f {
     let path = perimeter_length(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
     if (path >= 0.0) {
       let requested = input.dash.x + input.dash.y;
-      let total = perimeter_total(input.shape, input.size, input.vertexB, input.vertexC, input.params, input.sides);
+      let total = perimeter_total(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
       var period = requested;
       var visible = input.dash.x;
       if (total > 0.0) {
