@@ -131,13 +131,16 @@
   `w = 1`），现有 shader 本来就在投影之后完成全部屏幕空间几何（像素宽度、dash 相位、接头楔形、
   近平面裁剪）。世界宽度通过 `viewProjection[1][1] * viewportSize.y * 0.5` 自动得到 `width × zoom`。
 - 形状：一个 instanced quad + 每实例 SDF 参数，fragment 求有符号距离并用 `fwidth` 做 1 像素
-  抗锯齿；描边就是 `abs(d) - strokeWidth / 2`。`arc` 的距离是环带与 `startAngle`/`sweep` 扇形
+  抗锯齿；描边就是 `abs(d) - strokePixels / 2`。`strokeWidth` 默认是画布像素，
+  `strokeWidthMode: "world"` 时按 `pixelsPerUnit` 换算成像素，所以随 zoom 变粗，与线宽
+  `widthMode: "world"` 同一语义。`arc` 的距离是环带与 `startAngle`/`sweep` 扇形
   求 `max`，所以描边只覆盖扫过的弧段，不再整圆。
 - 虚线不新增管线：同一份 SDF fragment 多读一个 `dash` 实例属性，按 `perimeter_length()`
   返回的弧长参数 `fract` 切段；`perimeter_length()` 对每种形状各写一条周长参数化函数。
-- 混绘：2D 在全部 3D 图元之后、text 之前绘制；不写深度并 pin 到近平面，因此是无条件覆盖
-  3D 的 overlay。2D 页的 `world-plane` 标签也走 2D 相机矩阵（`demo-engine.ts`），与图元同一套
-  坐标；`screen` 标题仍是固定像素，不受 pan / zoom 影响。
+- 混绘：2D 在全部 3D 图元之后绘制；不写深度并 pin 到近平面，因此是无条件覆盖
+  3D 的 overlay。2D 图元与文字共享 `zIndex` 键空间，按 key 升序逐段发射，同 key 时先 2D
+  后文字（见 `docs/z-index.md`）。2D 页的 `world-plane` 标签也走 2D 相机矩阵
+  （`demo-engine.ts`），与图元同一套坐标；`screen` 标题仍是固定像素，不受 pan / zoom 影响。
 - 兼容性约束（真实 GPU 测试暴露过）：
   - 设备运行在 WebGPU **compatibility mode**，整型 varying 必须写
     `@interpolate(flat, either)`，默认的 `first` 采样会被拒绝。
