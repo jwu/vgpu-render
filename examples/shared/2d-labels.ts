@@ -293,6 +293,16 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "grid(color)", samples: ["base", "alpha", "color", "blue"] },
     ],
   },
+  "2d-order": {
+    title: "2D & Text Layering",
+    note: "zIndex · 2D primitives and text share one key space · higher draws later, so it covers lower · equal keys keep the old order",
+    columns: [
+      { title: "shape z1 · text z0", samples: ["shape covers text"] },
+      { title: "shape z0 · text z1", samples: ["text covers shape"] },
+      { title: "shape 0 · text 1 · shape 2", samples: ["text in between"] },
+    ],
+    titleFont: 19,
+  },
 };
 
 
