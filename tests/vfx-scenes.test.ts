@@ -58,6 +58,17 @@ import {
   enemyCount,
   strikePulse,
 } from "../examples/vfx/chain-lightning/scene.js";
+import {
+  CUT_LIFE,
+  CUT_START,
+  DASH_END,
+  DASH_START,
+  TIMELINE_LAYOUT as DASH_TIMELINE_LAYOUT,
+  cutBrightness,
+  cutGrow,
+  cutStart,
+  dashSlashPhaseAt,
+} from "../examples/vfx/dash-slash/scene.js";
 import { inCirc, outCirc } from "../examples/vfx/easing.js";
 import {
   EASING_DIRECTIONS,
@@ -1036,3 +1047,75 @@ describe("chain lightning", () => {
   });
 });
 
+describe("dash slash", () => {
+  const commandsOf = (time: number, params: Record<string, number> = {}) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("dash-slash", drawList, time, undefined, undefined, params);
+    return drawList.commands();
+  };
+
+  test("dash, blink, pause, then the cuts", () => {
+    expect(dashSlashPhaseAt(0).dash).toBe(0);
+    expect(dashSlashPhaseAt(DASH_START).dash).toBe(0);
+    expect(dashSlashPhaseAt(DASH_END).dash).toBeCloseTo(1, 6);
+    // The blink belongs to the arrival: nothing before it, gone shortly after.
+    expect(dashSlashPhaseAt(DASH_END - 1e-9).blink).toBe(0);
+    expect(dashSlashPhaseAt(DASH_END).blink).toBeCloseTo(1, 6);
+    expect(dashSlashPhaseAt(DASH_END + 1e-6).blink).toBeGreaterThan(0.999);
+    expect(dashSlashPhaseAt(DASH_END + 0.05).blink).toBe(0);
+    // The pause is real: no cut exists while the caster is travelling or right after arriving.
+    expect(cutBrightness(DASH_END, 0)).toBe(0);
+    expect(cutBrightness(CUT_START - 1e-9, 0)).toBe(0);
+    expect(cutBrightness(CUT_START + 1e-6, 0)).toBeGreaterThan(0.9);
+  });
+
+  test("land one cut after another, all inside the loop", () => {
+    // Each cut opens later than the one before it, and the flurry is staggered rather than simultaneous.
+    for (let index = 1; index < 6; index++) {
+      expect(cutStart(index)).toBeGreaterThan(cutStart(index - 1));
+      expect(cutBrightness(cutStart(index) - 1e-9, index)).toBe(0);
+      expect(cutBrightness(cutStart(index - 1), index)).toBe(0);
+    }
+    // The last of six cuts opens and fades out before the loop wraps.
+    expect(cutStart(5) + CUT_LIFE).toBeLessThan(1);
+    // One cut keeps its longest stretch for a moment and then fades monotonically.
+    const values = Array.from({ length: 20 }, (_, step) => cutBrightness(CUT_START + (step / 19) * CUT_LIFE, 0));
+    for (let index = 1; index < values.length; index++) {
+      expect(values[index]).toBeLessThanOrEqual(values[index - 1]!);
+    }
+    expect(cutGrow(CUT_START, 0)).toBe(0);
+    expect(cutGrow(CUT_START + CUT_LIFE, 0)).toBe(1);
+  });
+
+  test("draw three rungs per open cut, and no trail when the slider is zero", () => {
+    // Sampled while the first cut is open and the second one has not started yet.
+    const time = LOOP_SECONDS * (CUT_START + 0.02);
+    const marks = commandsOf(time).filter((command) => command.kind === "shape2d" && command.zIndex >= 4);
+    // Halo, cut and core — three rhombi for one cut.
+    expect(marks).toHaveLength(3);
+    // With no afterimages selected there is nothing lit behind the caster.
+    const trailDiscs = commandsOf(LOOP_SECONDS * 0.2, { trails: 0 }).filter(
+      (command) => command.kind === "shape2d" && command.zIndex === 1,
+    );
+    expect(trailDiscs).toHaveLength(0);
+  });
+
+  test("label every element row and draw one shared playhead", () => {
+    const texts = commandsOf(LOOP_SECONDS * 0.5).flatMap((command) =>
+      command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : [],
+    );
+    expect(texts).toEqual(expect.arrayContaining(["位移 · 冲刺", "刀痕 · 连斩", "刀痕 · 拉伸", "一闪 · 亮度"]));
+    expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
+
+    const verticals = commandsOf(LOOP_SECONDS * 0.5)
+      .flatMap((command) => (command.kind === "line2d" ? [command] : []))
+      .filter(
+        (command) =>
+          command.widthMode !== "world" &&
+          command.start[0] === command.end[0] &&
+          Math.abs(command.end[1] - command.start[1]) > 4,
+      );
+    expect(verticals).toHaveLength(1);
+    expect(verticals[0]!.start[0]).toBeCloseTo(DASH_TIMELINE_LAYOUT.left + DASH_TIMELINE_LAYOUT.width * 0.5, 6);
+  });
+});

@@ -9,6 +9,7 @@ import type { SceneExample } from "../shared/meta.js";
 import { meta as healBeam } from "./heal-beam/meta.js";
 import { meta as fireball } from "./fireball/meta.js";
 import { meta as chainLightning } from "./chain-lightning/meta.js";
+import { meta as dashSlash } from "./dash-slash/meta.js";
 import { meta as slashArc } from "./slash-arc/meta.js";
 import { meta as battleSlash } from "./battle-slash/meta.js";
 import { meta as hitMark } from "./hit-mark/meta.js";
@@ -22,6 +23,7 @@ export const VFX_EXAMPLES: readonly SceneExample[] = [
   healBeam,
   fireball,
   chainLightning,
+  dashSlash,
   slashArc,
   battleSlash,
   hitMark,

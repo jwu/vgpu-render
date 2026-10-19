@@ -15,6 +15,7 @@ import { VFX_EXAMPLES } from "./registry.js";
 import { draw as healBeam } from "./heal-beam/scene.js";
 import { draw as fireball } from "./fireball/scene.js";
 import { draw as chainLightning } from "./chain-lightning/scene.js";
+import { draw as dashSlash } from "./dash-slash/scene.js";
 import { draw as slashArc } from "./slash-arc/scene.js";
 import { draw as battleSlash } from "./battle-slash/scene.js";
 import { draw as hitMark } from "./hit-mark/scene.js";
@@ -26,6 +27,7 @@ const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: VfxScene
   "heal-beam": healBeam,
   "fireball": fireball,
   "chain-lightning": chainLightning,
+  "dash-slash": dashSlash,
   "slash-arc": slashArc,
   "battle-slash": battleSlash,
   "hit-mark": hitMark,

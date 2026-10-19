@@ -72,6 +72,12 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
     off the tree; the three rows plot the strike, each bolt's afterglow strobe, and the hit flash
     and ring. No engine reference — it is designed from the "first hit, then the rest on the same
     frame" beat.
+  - `dash-slash` — the delayed cut: the caster dashes past the enemy leaving afterimages, blinks out
+    behind it, and then the stage holds. Only after that pause do six cuts open on the enemy one by
+    one, each at its own angle and on its own short clock. The pause is the whole point — a dash
+    that resolves on the frame it lands is a movement effect, not a hit. `cuts`, `length` and
+    `trails` change the flurry, the cut size and the afterimages; the four rows plot the dash, each
+    cut's brightness, one cut's stretch and the blink.
 
 Both sets share the engine (`gallery/demo-engine.ts`): a switch swaps the registry,
 dispatcher, storage record and camera, while the WebGPU device and render loop stay up.
