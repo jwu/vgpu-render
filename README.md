@@ -203,8 +203,13 @@ taking the same `[visible, gap, phase]` triple as the line layer. `arc` has no i
 has no `_s` variant, and `Shape2DOptions` no longer carries `fill` — the method name decides.
 Dashes are cut from the shape's perimeter parameter, a closed form for every primitive except
 the ellipse (Simpson-integrated arc length), so they stay continuous across corners.
-- The layer is an overlay: it draws after every 3D primitive, pins itself to the near plane and
-does not write depth. Screen-space text remains the last thing drawn.
+- The layer is an overlay: it draws after every 3D primitive and pins itself to the near plane
+without writing depth.
+- **Layering:** `zIndex` — an integer in `-8..8`, default `0` — is shared by the 2D primitives and
+the text blocks, so the two are directly comparable. Segments are drawn in ascending key order, so
+a higher key covers a lower one; equal keys keep the pre-`zIndex` order, 2D first, then text. It is
+never depth: nothing in this layer writes the depth buffer, the key only orders draw calls. See
+`docs/z-index.md`.
 - `InfiniteGrid2D` renders the reference's 2D grid as a full-viewport shader quad: decimal LOD levels,
   screen-space line width and the same three-layer alpha de-duplication as the 3D grid. It reads
   `cellSize`, `lineWidthPixels`, `minPixelsBetweenCells`, the LOD range and both line colors from
@@ -217,7 +222,8 @@ classifies the 2D layer like the 3D scenes: `2d-index` is the API index, the twe
 (`2d-rect`, `2d-rounded-rect`, `2d-circle`, `2d-ellipse`, `2d-arc`, `2d-annulus`, `2d-capsule`,
 `2d-polygon`, `2d-triangle`, `2d-rhombus`, `2d-sector`, `2d-segment`) each own one primitive, and
 `2d-lines`, `2d-curves`, `2d-markers`, `2d-arrows`, `2d-spaces`, `2d-grid` cover the stroke API
-families. Every matrix page's column titles and sample labels are `world2d` text, so they pan
+families, and `2d-order` shows the `zIndex` layering key against text. Every matrix page's column
+titles and sample labels are `world2d` text, so they pan
 and zoom with the geometry they annotate.
 
 ## Text
