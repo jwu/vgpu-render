@@ -47,6 +47,7 @@ import { meta as page2dArrows } from "./2d-arrows/meta.js";
 import { meta as page2dSpaces } from "./2d-spaces/meta.js";
 import { meta as page2dGrid } from "./2d-grid/meta.js";
 import { meta as page2dZIndex } from "./z-index/meta.js";
+import { meta as page2dWorldSpaceWidth } from "./2d-world-space-width/meta.js";
 
 export type { ExampleColumn, SceneExample } from "./shared/meta.js";
 
@@ -94,4 +95,5 @@ export const SCENE_EXAMPLES: readonly SceneExample[] = [
   page2dSpaces,
   page2dGrid,
   page2dZIndex,
+  page2dWorldSpaceWidth,
 ];

@@ -27,6 +27,7 @@ import { draw as arrows } from "./2d-arrows/scene.js";
 import { draw as spaces } from "./2d-spaces/scene.js";
 import { draw as grid } from "./2d-grid/scene.js";
 import { draw as order } from "./z-index/scene.js";
+import { draw as worldSpaceWidth } from "./2d-world-space-width/scene.js";
 
 const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: SceneContext) => void>> = {
   "2d-index": index,
@@ -49,6 +50,7 @@ const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: SceneCon
   "2d-spaces": spaces,
   "2d-grid": grid,
   "z-index": order,
+  "2d-world-space-width": worldSpaceWidth,
 };
 
 export const SCENE_IDS_2D: readonly string[] = Object.keys(PAGES);

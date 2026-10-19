@@ -224,7 +224,9 @@ classifies the 2D layer like the 3D scenes: `2d-index` is the API index, the twe
 (`2d-rect`, `2d-rounded-rect`, `2d-circle`, `2d-ellipse`, `2d-arc`, `2d-annulus`, `2d-capsule`,
 `2d-polygon`, `2d-triangle`, `2d-rhombus`, `2d-sector`, `2d-segment`) each own one primitive, and
 `2d-lines`, `2d-curves`, `2d-markers`, `2d-arrows`, `2d-spaces`, `2d-grid` cover the stroke API
-families, and `z-index` shows the `zIndex` layering key against shapes and text. Every matrix page's column
+families, `z-index` shows the `zIndex` layering key against shapes and text, and
+`2d-world-space-width` puts the same width number in both units so scrolling proves which one
+follows the zoom. Every matrix page's column
 titles and sample labels are `world2d` text, so they pan
 and zoom with the geometry they annotate.
 
