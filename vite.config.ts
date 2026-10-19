@@ -13,7 +13,7 @@ import { sanitizeSource } from "./scripts/source-scrub.js";
 const PAGES_BASE = process.env.VGPU_BASE ?? "/vgpu-render/";
 
 /** Scene modules whose source the gallery previews, so their comments reach the browser. */
-const PREVIEWED_SCENE = /\/examples\/[^/]+\/scene\.ts$/;
+const PREVIEWED_SCENE = /\/examples\/(?:basic|vfx)\/[^/]+\/scene\.ts$/;
 
 /**
  * Scrubs the upstream brand names out of the `?raw` imports the source preview uses.

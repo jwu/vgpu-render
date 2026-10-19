@@ -10,9 +10,11 @@ import { Separator } from "@/components/ui/separator";
 import type { DemoSnapshot } from "@/demo-engine";
 import type { SourceToken } from "@/demo-source";
 import { useHighlightedSource } from "@/demo-hooks";
+import type { SceneSet } from "@examples/sets.js";
 
 export type DemoWorkspaceProps = {
   readonly snapshot: DemoSnapshot;
+  readonly sceneSet: SceneSet;
   readonly canvasRef: React.RefObject<HTMLCanvasElement | null>;
 };
 
@@ -27,8 +29,8 @@ const TOKEN_CLASS: Readonly<Record<SourceToken["kind"], string>> = {
   function: "token-function",
 };
 
-function SourcePreview({ exampleId }: { readonly exampleId: string }) {
-  const tokens = useHighlightedSource(exampleId);
+function SourcePreview({ sceneSetId, exampleId }: { readonly sceneSetId: string; readonly exampleId: string }) {
+  const tokens = useHighlightedSource(sceneSetId, exampleId);
   return (
     <pre id="example-code" className="code">
       <code>
@@ -42,16 +44,21 @@ function SourcePreview({ exampleId }: { readonly exampleId: string }) {
   );
 }
 
-export function DemoWorkspace({ snapshot, canvasRef }: DemoWorkspaceProps) {
+export function DemoWorkspace({ snapshot, sceneSet, canvasRef }: DemoWorkspaceProps) {
   const { selected, status, statusDetail, counts } = snapshot;
   const description = selected.notes ? `${selected.description} — ${selected.notes}` : selected.description;
-  const hint = selected.family === "2d" ? "拖拽/WASD 平移 · Shift 加速 · 滚轮缩放" : "拖拽旋转 · 滚轮缩放";
+  // The battle pages add a timeline on top of the 2D camera, so their hint mentions both.
+  const hint = sceneSet.id === "vfx"
+    ? "拖拽/WASD 平移 · 滚轮缩放 · 时间轴可拖拽"
+    : selected.family === "2d"
+      ? "拖拽/WASD 平移 · Shift 加速 · 滚轮缩放"
+      : "拖拽旋转 · 滚轮缩放";
 
   return (
     <section className="workspace" aria-label="示例预览">
       <header className="workspace-header">
         <div>
-          <div className="eyebrow">交互示例 · interactive example</div>
+          <div className="eyebrow">{sceneSet.workspaceEyebrow}</div>
           <h1 id="example-title">{selected.title}</h1>
         </div>
         <div className="status-group">
@@ -79,7 +86,7 @@ export function DemoWorkspace({ snapshot, canvasRef }: DemoWorkspaceProps) {
           <span className="hint">{hint}</span>
         </div>
         <Separator />
-        <SourcePreview exampleId={selected.id} />
+        <SourcePreview sceneSetId={sceneSet.id} exampleId={selected.id} />
       </section>
     </section>
   );

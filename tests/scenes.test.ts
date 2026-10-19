@@ -2,8 +2,8 @@ import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { DebugDraw3D } from "../src/debug-draw-3d.js";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
-import { SCENE_EXAMPLES } from "../examples/registry.js";
-import { buildScene } from "../examples/runtime.js";
+import { SCENE_EXAMPLES } from "../examples/basic/registry.js";
+import { buildScene } from "../examples/basic/runtime.js";
 import { SyntheticFont } from "./support/synthetic-font.js";
 
 // A unit-scale projection would clip the text scenes away: the source/size matrix spans about 20 world

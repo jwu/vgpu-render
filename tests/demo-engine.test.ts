@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { backgroundToHex, camera2DKeyPan, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig } from "../gallery/demo-engine.js";
+import { backgroundToHex, camera2DKeyPan, cameraPoseFor, fpsMoveSpeed, hexToRgb, resolveInitialConfig, zoom2DMax } from "../gallery/demo-engine.js";
 import { orbitBasis, orbitEye } from "../gallery/demo-camera.js";
 import { DEFAULT_DEMO_CONFIG, FRONT_DEMO_CONFIG, SCENE_CLEAR_COLOR, OBLIQUE_DEMO_CONFIG, REFERENCE_DEMO_CONFIG, SCREENSHOT_DEMO_CONFIG } from "../gallery/demo-config.js";
+import { VFX_EXAMPLES } from "../examples/vfx/registry.js";
 
 describe("hexToRgb", () => {
   it("parses six-digit hex with and without a leading hash", () => {
@@ -162,5 +163,33 @@ describe("fps camera movement", () => {
   it("sprints three times as fast while shift is held", () => {
     expect(fpsMoveSpeed(new Set(["w", "shift"]))).toBe(15);
     expect(fpsMoveSpeed(new Set(["shift"]))).toBe(15);
+  });
+});
+
+describe("zoom2DMax", () => {
+  it("keeps the absolute ceiling for a page that fits far out", () => {
+    // Basic 2D pages fit a thousand-odd world units, so their opening zoom is well under 1.
+    expect(zoom2DMax(0.55)).toBe(40);
+    expect(zoom2DMax(1)).toBe(64);
+  });
+
+  it("scales the ceiling with the fit, so a close-fitting page can zoom in", () => {
+    const view = VFX_EXAMPLES[0]?.view2d;
+    expect(view).toBeDefined();
+    // A typical gallery canvas; the fit margin is 0.94. The battle page's world extent is small, so
+    // it opens far closer than a basic 2D page does (0.55) — which is the case the fixed ceiling of
+    // 40 could not serve.
+    const fit = Math.min(892 / view!.width, 560 / view!.height) * 0.94;
+    expect(fit).toBeGreaterThan(15);
+    expect(zoom2DMax(fit) / fit).toBeCloseTo(64, 6);
+    // Basic pages keep the absolute ceiling: their fit is small enough that 64x lands under 40.
+    expect(zoom2DMax(0.55)).toBe(40);
+  });
+
+  it("falls back to the absolute ceiling for a degenerate fit", () => {
+    expect(zoom2DMax(0)).toBe(40);
+    expect(zoom2DMax(-3)).toBe(40);
+    expect(zoom2DMax(Number.NaN)).toBe(40);
+    expect(zoom2DMax(Number.POSITIVE_INFINITY)).toBe(40);
   });
 });

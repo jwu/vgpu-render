@@ -520,7 +520,7 @@ bun scripts/capture-vgpu.ts circle line
 
 - 文本：`examples/shared/labels-3d.ts` 逐场景转录 `_get_column_label` / `_get_sample_label`，包括格式
   （`w = 1.0`、`ROUND`、`s:0.93  r:-22°  h:216°`）与 curve 的 construction band 标题。
-  侧栏 `examples/registry.ts` 从同一张表派生，两处不会再漂移。
+  侧栏 `examples/basic/registry.ts` 从同一张表派生，两处不会再漂移。
 - 位置：`examples/shared/draw-3d.ts` 的 `SCENE_LABEL_SPECS` 按参考的 x 包围盒（`_get_*_x_bounds`）
   把行标签右端放在样本左侧 `SAMPLE_LABEL_GAP = 0.12` 处，列标题按 bounds 中点居中；
   `LABEL_Y = <scene>_Y + 0.01`，`index` / `world_space_width` 用它们自己的 0.08 / 18 px / 24 px。

@@ -16,7 +16,7 @@ joint shading are ported, while AA is still incomplete.
 Text rendering is vgpu's own capability rather than part of the port: the labels in the reference
 examples are `Label3D` nodes owned by those scenes, not output of the addon. The port redraws them
 anyway, because they are part of what an example looks like: `examples/shared/labels-3d.ts` carries the
-reference column/row strings and `examples/<slug>/scene.ts` places them at the reference coordinates, on
+reference column/row strings and `examples/basic/<slug>/scene.ts` places them at the reference coordinates, on
 the ground plane (`rotation: [-PI/2, 0, 0]`) at the reference `font_size`/`pixel_size`, so the
 gallery and its sidebar finally agree with the reference text. The fonts differ, so glyph shapes
 are not pixel-identical. See the README's Text section for the three placement spaces, the
@@ -36,7 +36,7 @@ tests are smoke tests, not full visual regression baselines.
 
 ## Example scenes
 
-Each scene is dispatched by `examples/runtime.ts` and implemented in its own `examples/<slug>/scene.ts`. `circle`, `line`,
+Each scene is dispatched by `examples/basic/runtime.ts` and implemented in its own `examples/basic/<slug>/scene.ts`. `circle`, `line`,
 `sphere`, `cone`, `cylinder` and `capsule` are faithful ports of the reference
 sources: real column/row coordinates, colors, widths, the rotation-tunnel basis,
 cumulative-arc-length dashes, and the reference wireframe topology (latitude rings and
@@ -145,7 +145,7 @@ only difference from the reference encoding.
   while this port subdivides with a fixed step count, so vertex counts differ even though the
   shape matches.
 
-Anything flagged `implemented: false` in `examples/registry.ts` is shown with a
+Anything flagged `implemented: false` in `examples/basic/registry.ts` is shown with a
 `·` marker in the gallery.
 
 `z-index` and the `zIndex` layering key are a **vgpu extension, not a parity item**: the

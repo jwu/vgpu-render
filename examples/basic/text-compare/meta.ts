@@ -1,0 +1,6 @@
+/** Sidebar metadata for the `text-compare` page. */
+
+import type { SceneExample } from "../../shared/meta.js";
+import { column } from "../../shared/meta.js";
+
+export const meta: SceneExample = { id: "text-compare", title: "Text Compare", description: "A matrix of one sentence: rows are glyph sources, columns are font sizes.", notes: "Not a reference port: there is no upstream text API, so this is vgpu's own capability. Transposed relative to the line/circle matrices — text grows sideways, so six source columns would be wider than a camera wants to frame. Read down a column to compare encodings at one size, across a row to compare sizes under one encoding. The last row is a fixed-orientation block rather than a camera-facing one, so it foreshortens as you orbit. Every row floats above the grid plane, which writes depth and would otherwise clip it.", implemented: true, group: "text", columns: [column("glyph source", ["bitmap 1x", "bitmap 4x", "sdf 1x", "sdf 4x", "msdf outline", "msdf baked"]), column("font size", ["16 px", "24 px", "36 px"]), column("placement", ["world-billboard", "world-plane", "foreshortens"]), column("what changes", ["coverage interpolation", "supersampled coverage", "distance reconstruction", "per-edge distance", "prebaked at 24 px"])] };

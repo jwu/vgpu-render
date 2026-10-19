@@ -110,7 +110,7 @@
 | `2d-spaces` | 矩阵 | `world2d` / `screen` 对照，以及 `widthMode` / `sizeMode` |
 | `2d-grid` | 矩阵 | width、cells、spacing、skew、outer、rotation、color 各一列，参数表与 3D grid 对齐 |
 
-矩阵页的列标题与行标签由 `examples/shared/2d-labels.ts` 的 `LABELS_2D` 提供，`examples/registry.ts` 直接读同一张表生成
+矩阵页的列标题与行标签由 `examples/shared/2d-labels.ts` 的 `LABELS_2D` 提供，`examples/basic/registry.ts` 直接读同一张表生成
 侧栏列，所以页面和侧栏不会出现对方没有的列。列标题以 API 为主、单行显示 `rect(width)` / `rect_d(dash)` / `rect_s(solid)`，与 3D 页一致。
 为了容纳 `polygon(circumradius)` 这类长标题，shape 页的列距取
 `250`、列标题字号取 `20`（`LABELS_2D` 的 `spacing` / `titleFont`），字号 22 的默认值留给

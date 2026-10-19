@@ -9,6 +9,9 @@
 import { SCENE_LABELS } from "./labels-3d.js";
 import { LABELS_2D, page2DView } from "./2d-labels.js";
 
+/** Resolved values for a page's {@link ParamSpec} list, keyed by spec `key`. */
+export type EffectParams = Readonly<Record<string, number>>;
+
 export type ExampleColumn = {
   readonly label: string;
   readonly samples: readonly string[];
@@ -44,6 +47,39 @@ export type SceneExample = {
    * the sidebar shows, which is what every other world-space example wants.
    */
   readonly hideGrid?: boolean;
+  /**
+   * Length of one playthrough in seconds. The battle pages loop inside this window; a page without
+   * a duration runs on the gallery's endless clock, which is what every static or free-running
+   * example does.
+   */
+  readonly duration?: number;
+  /**
+   * Tunable effect parameters, rendered as sliders by the battle page. A page without specs has no
+   * parameter panel, and its scene reads no `params` at all.
+   */
+  readonly params?: readonly ParamSpec[];
+};
+
+/**
+ * One slider of the effect parameter panel.
+ *
+ * The spec is the single description of the parameter: the panel builds its slider from `min`,
+ * `max`, `step` and `default`, and `clampEffectParams` keeps a stored value inside the same range,
+ * so a scene can read its params without re-checking them.
+ */
+export type ParamSpec = {
+  readonly key: string;
+  readonly label: string;
+  /** Reference-style hint printed next to the label, e.g. a WGSL or addon name. */
+  readonly name?: string;
+  readonly min: number;
+  readonly max: number;
+  readonly step: number;
+  readonly default: number;
+  /** Suffix printed after the numeric value, e.g. `°` or `s`. */
+  readonly unit?: string;
+  /** Hide the slider's numeric field for ranges where typing a value is noise. */
+  readonly integer?: boolean;
 };
 
 // Columns whose reference variants are only approximated by this vgpu port are flagged false so the

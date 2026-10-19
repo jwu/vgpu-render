@@ -9,8 +9,8 @@
 import { effect, frame, init, sampler, surface, target } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 import { BakedMsdfRasterizer, CanvasGlyphRasterizer, DebugDraw3D, GpuDebugDraw3D, FrameDrawList, InfiniteGrid2D, InfiniteGrid3D, loadDefaultFont, loadFontFaces, OutlineGlyphRasterizer, world2dProjection, type Camera2D, type FrameCommand, type InfiniteGrid2DOptions, type InfiniteGridOptions, type TextFontSource, type TextSources, type Vec3 } from "../src/index.js";
-import { SCENE_EXAMPLES, type SceneExample } from "../examples/registry.js";
-import { buildScene } from "../examples/runtime.js";
+import type { SceneExample } from "../examples/shared/meta.js";
+import { BASIC_SCENE_SET, type SceneSet } from "../examples/sets.js";
 import { linearClearColor } from "../src/color-space.js";
 import { scaleScreenCommands } from "./screen-scale.js";
 import { MULTI_WEIGHT_SANS_FAMILY } from "../examples/shared/font-families.js";
@@ -33,6 +33,7 @@ import {
   applyDisplayConfig,
   cloneDemoConfig,
   DEFAULT_DEMO_CONFIG,
+  DEMO_CONFIG_KEY,
   displayConfigFor,
   displayConfigFrom,
   FRONT_DEMO_CONFIG,
@@ -52,6 +53,15 @@ import {
   type ProjectionMode,
 } from "./demo-config.js";
 
+/**
+ * Ceiling for the 2D camera's zoom: the absolute limit, raised to `CAMERA_2D_ZOOM_IN_STEPS` times the
+ * fitted zoom so a page that opens close up can still be zoomed into.
+ */
+export function zoom2DMax(fitZoom: number): number {
+  if (!Number.isFinite(fitZoom) || fitZoom <= 0) return CAMERA_2D_ZOOM_MAX;
+  return Math.max(CAMERA_2D_ZOOM_MAX, fitZoom * CAMERA_2D_ZOOM_IN_STEPS);
+}
+
 export type EngineStatus = "requesting" | "ready" | "error";
 
 export type DemoSnapshot = {
@@ -60,6 +70,12 @@ export type DemoSnapshot = {
   readonly status: EngineStatus;
   readonly statusDetail: string;
   readonly counts: string;
+  /** Which scene set is selected; the shell switches sidebars, controls and storage by it. */
+  readonly sceneSetId: SceneSet["id"];
+  /** Length of the selected page's loop, or `undefined` for a page on the endless clock. */
+  readonly duration: number | undefined;
+  /** Whether the loop clock is running. Mirrors `config.view.animate`. */
+  readonly playing: boolean;
 };
 
 export type DemoEngineOptions = {
@@ -67,12 +83,27 @@ export type DemoEngineOptions = {
   /** Config resolved from URL params and storage, before the first render. */
   readonly config: DemoConfig;
   /**
+   * The scene set to open with. Defaults to the basic gallery, so every caller that predates the
+   * battle page keeps the exact behaviour it had.
+   */
+  readonly sceneSet?: SceneSet;
+  /**
+   * Current effect parameters, read once per frame. The battle page owns the parameter state and
+   * hands the engine a reader, so dragging a slider does not re-enter the snapshot cycle.
+   */
+  readonly sceneParams?: () => Readonly<Record<string, number>>;
+  /**
    * Frames each selected example (pivot + distance) when it changes. Disabled when the URL pins
    * the camera to the reference pose, since that comparison needs the pose left alone.
    */
   readonly autoFrame?: boolean;
   /** Display fields the URL pins; see {@link displayOverridesFrom}. */
   readonly displayOverrides?: DisplayOverrides;
+  /**
+   * Display fields a scene set starts from when a page has no stored record yet. The battle page
+   * dims the grid here, since its effect is the subject rather than the grid it sits on.
+   */
+  readonly displayDefaults?: { readonly gridOpacity?: number } | undefined;
 };
 
 type PointerMode = "rotate" | "pan" | "fps";
@@ -167,6 +198,16 @@ const GLIDE_PERSIST_INTERVAL = 200;
  */
 const CAMERA_2D_ZOOM_MIN = 0.05;
 const CAMERA_2D_ZOOM_MAX = 40;
+/**
+ * Zoom-in headroom above the fitted zoom, as a multiple.
+ *
+ * The absolute ceiling alone is not enough: a page whose world extent is small (the battle page fits
+ * ~22 world units across, so it opens around zoom 34) would hit 40 after one wheel notch and look
+ * stuck, while a basic 2D page opens near 0.55 and has the whole range to roam. Scaling the ceiling
+ * with the fit gives both pages the same *relative* freedom — about 64× in either direction — and
+ * leaves the basic pages at their old 40 whenever their fit stays below 0.625.
+ */
+const CAMERA_2D_ZOOM_IN_STEPS = 64;
 /** How much of the fitted `view2d` extent a 2D page leaves as margin. */
 const CAMERA_2D_FIT_MARGIN = 0.94;
 /**
@@ -272,9 +313,19 @@ function galleryStorage(): Storage | undefined {
   }
 }
 
-/** Resolves the initial config from URL params, cloning shared presets. */
-export function resolveInitialConfig(compareMode: boolean, params: URLSearchParams, storage?: Storage): DemoConfig {
-  const base = compareMode ? cloneDemoConfig(SCREENSHOT_DEMO_CONFIG) : loadDemoConfig(storage ?? null);
+/**
+ * Resolves the initial config from URL params, cloning shared presets.
+ *
+ * `configKey` is the active scene set's storage record, so the battle page opens with its own
+ * panel state instead of the basic gallery's.
+ */
+export function resolveInitialConfig(
+  compareMode: boolean,
+  params: URLSearchParams,
+  storage?: Storage,
+  configKey: string = DEMO_CONFIG_KEY,
+): DemoConfig {
+  const base = compareMode ? cloneDemoConfig(SCREENSHOT_DEMO_CONFIG) : loadDemoConfig(storage ?? null, configKey);
   applyDisplayOverrides(base, displayOverridesFrom(params));
   // The capture preset owns the camera in compare mode so paired screenshots stay deterministic; every
   // `?camera=` pose is an interactive-gallery override only.
@@ -289,9 +340,13 @@ export class DemoEngine {
   private canvas: HTMLCanvasElement | undefined;
   private config: DemoConfig;
   private selected: SceneExample;
+  /** The set the shell is showing; switching it swaps registry, dispatcher and storage keys. */
+  private sceneSet: SceneSet;
+  private readonly sceneParams: () => Readonly<Record<string, number>>;
   private readonly displayOverrides: DisplayOverrides;
-  /** Per-example display groups, mirrored into storage by `persist`. */
-  private readonly displayConfigs: Record<string, DemoDisplayConfig>;
+  private readonly displayDefaults: { readonly gridOpacity?: number };
+  /** Per-example display groups of the current set, mirrored into storage by `persist`. */
+  private displayConfigs: Record<string, DemoDisplayConfig>;
   private status: EngineStatus = "requesting";
   private statusDetail = "正在请求 WebGPU";
   private counts = "";
@@ -319,6 +374,8 @@ export class DemoEngine {
   private glidePersistedAt = 0;
   /** Set when a 2D page asked for its fit before the canvas had a layout size. */
   private pending2DFit = false;
+  /** Zoom the current 2D page was fitted to; the ceiling for zooming in is relative to it. */
+  private camera2DFitZoom = 1;
   private destroyed = false;
 
   constructor(options: DemoEngineOptions) {
@@ -326,9 +383,18 @@ export class DemoEngine {
     this.config = options.config;
     this.autoFrame = options.autoFrame ?? true;
     this.displayOverrides = options.displayOverrides ?? {};
+    this.displayDefaults = options.displayDefaults ?? {};
+    this.sceneSet = options.sceneSet ?? BASIC_SCENE_SET;
+    this.sceneParams = options.sceneParams ?? (() => ({}));
     // Compare mode is deterministic by design: it neither reads nor writes records.
-    this.displayConfigs = this.compareMode ? {} : loadDisplayConfigs(galleryStorage());
-    this.selected = SCENE_EXAMPLES[0]!;
+    this.displayConfigs = this.compareMode
+      ? {}
+      : loadDisplayConfigs(galleryStorage(), this.sceneSet.storageKeys.display);
+    this.selected = this.sceneSet.examples[0]!;
+    // A set that opens on a 2D page (the battle page does) has to start the 2D camera, and to fit
+    // its declared extent once the canvas reports a size.
+    this.config.camera.mode = this.selected.family === "2d" ? "2d" : "3d";
+    this.pending2DFit = this.selected.family === "2d";
     this.current = this.buildSnapshot();
 
     window.addEventListener("error", this.onWindowError);
@@ -352,7 +418,7 @@ export class DemoEngine {
   /** Applies the example encoded in the URL hash or `?scene=`, if present. */
   selectInitialFromLocation(params: URLSearchParams): void {
     const id = params.get("scene") ?? location.hash.slice(1);
-    const match = SCENE_EXAMPLES.find((example) => example.id === id);
+    const match = this.sceneSet.examples.find((example) => example.id === id);
     if (match) {
       this.selectExample(match, false);
       return;
@@ -372,7 +438,7 @@ export class DemoEngine {
     // scene was set up with. `hideGrid` is only the starting point for an example that
     // has no record yet.
     this.restoreDisplayConfig(example);
-    if (updateHash) location.hash = example.id;
+    if (updateHash) this.syncLocation();
     if (this.autoFrame) {
       this.frameSelectedExample();
       this.persist();
@@ -389,8 +455,98 @@ export class DemoEngine {
     // Compare mode is the screenshot path: it keeps the preset's display fields so paired
     // captures stay deterministic, whichever example the page happens to open.
     if (this.compareMode) return;
-    applyDisplayConfig(this.config, this.displayConfigs[example.id] ?? displayConfigFor(example));
+    const stored = this.displayConfigs[example.id];
+    const display = stored ?? this.defaultDisplayFor(example);
+    applyDisplayConfig(this.config, display);
     applyDisplayOverrides(this.config, this.displayOverrides);
+  }
+
+  /**
+   * Writes the selected page and example into the URL, so a reload or a shared link reopens the
+   * same view. The basic gallery keeps its bare `#<id>` hash; the battle page adds `?page=vfx`,
+   * which is what tells the entry point which set to mount.
+   */
+  private syncLocation(): void {
+    if (this.compareMode) {
+      // Capture runs address a scene by hash and must not gain a query string.
+      location.hash = this.selected.id;
+      return;
+    }
+    const url = new URL(location.href);
+    if (this.sceneSet.id === "basic") url.searchParams.delete("page");
+    else url.searchParams.set("page", this.sceneSet.id);
+    url.hash = this.selected.id;
+    history.replaceState(null, "", url);
+  }
+
+  /**
+   * Swaps the scene set the shell shows: registry, dispatcher, storage records and camera.
+   *
+   * The WebGPU device, the surface and the render loop stay alive — only the page table and the
+   * persisted config change, which is what lets one entry point serve both pages without a reload.
+   * The outgoing set is persisted first, so each page keeps its own panel state.
+   */
+  switchSceneSet(set: SceneSet): void {
+    if (set.id === this.sceneSet.id) return;
+    this.persist();
+    this.sceneSet = set;
+    const stored = this.compareMode ? undefined : galleryStorage();
+    this.config = this.compareMode
+      ? cloneDemoConfig(DEFAULT_DEMO_CONFIG)
+      : loadDemoConfig(stored, set.storageKeys.config);
+    this.displayConfigs = this.compareMode ? {} : loadDisplayConfigs(stored, set.storageKeys.display);
+    this.cameraVelocity = { yaw: 0, pitch: 0, zoom: 0, pan: [0, 0, 0] };
+    this.fpsCamera = undefined;
+    this.selected = set.examples[0]!;
+    this.time = 0;
+    this.previousTimestamp = undefined;
+    this.counts = "";
+    this.config.camera.mode = this.selected.family === "2d" ? "2d" : "3d";
+    this.restoreDisplayConfig(this.selected);
+    this.syncLocation();
+    this.frameSelectedExample();
+    this.emit();
+    this.persist();
+  }
+
+  /** Loop time of the selected page, in seconds. */
+  getTime(): number {
+    return this.time;
+  }
+
+  /**
+   * Length of the selected page's loop, or `undefined` when it runs on the endless clock.
+   *
+   * A page's timeline may expose `duration` as an effect parameter (the battle page does), and that
+   * value wins over the duration the page declared: the sidebar is where the user re-times the loop.
+   */
+  getDuration(): number | undefined {
+    const fromParams = this.sceneParams().duration;
+    if (typeof fromParams === "number" && Number.isFinite(fromParams) && fromParams > 0) return fromParams;
+    return this.selected.duration;
+  }
+
+  /**
+   * Moves the timeline. A page with a duration clamps to its loop, so a scrub can never park the
+   * effect outside the window the scene authors.
+   */
+  setTime(seconds: number): void {
+    if (!Number.isFinite(seconds)) return;
+    const duration = this.selected.duration;
+    this.time = Math.max(0, duration === undefined ? seconds : Math.min(seconds, duration));
+  }
+
+  /** Rewinds the loop to its first frame. */
+  restartTime(): void {
+    this.time = 0;
+  }
+
+  /** A page's starting display group: the gallery defaults plus this set's own tweaks. */
+  private defaultDisplayFor(example: SceneExample): DemoDisplayConfig {
+    const display = displayConfigFor(example);
+    const gridOpacity = this.displayDefaults.gridOpacity;
+    if (gridOpacity !== undefined) display.gridOpacity = gridOpacity;
+    return display;
   }
 
   setAnimate(animate: boolean): void {
@@ -544,7 +700,13 @@ export class DemoEngine {
     const render = (timestamp: number): void => {
       if (this.destroyed) return;
       const delta = this.previousTimestamp === undefined ? 0 : Math.min((timestamp - this.previousTimestamp) / 1000, 0.1);
-      if (this.config.view.animate) this.time += delta;
+      if (this.config.view.animate) {
+        this.time += delta;
+        // A page that declares a duration is a loop: the battle effects restart instead of ageing
+        // past their own last keyframe. Pages without one keep the endless clock.
+        const duration = this.getDuration();
+        if (duration !== undefined && duration > 0 && this.time >= duration) this.time %= duration;
+      }
       this.applyFpsMovement(delta);
       this.previousTimestamp = timestamp;
 
@@ -575,7 +737,7 @@ export class DemoEngine {
       const drawList = debug.beginFrame();
       // The 2D pages place `screen` content in top-left CSS pixels, so they need the size of the
       // viewport they are authored against; 3D pages ignore it.
-      buildScene(this.selected.id, drawList, this.time, this.config.view.lineJoint, [width, height]);
+      this.sceneSet.buildScene(this.selected.id, drawList, this.time, this.config.view.lineJoint, [width, height], this.sceneParams());
       const raw = debug.finishFrame(drawList);
       // The width scale must cover joints as well: they are the same stroke as the segments
       // they join, so scaling only `line` commands would leave the wedges at full size.
@@ -638,7 +800,8 @@ export class DemoEngine {
         f.pass({ target: output }, (pass) => pass.draw(present));
       });
 
-      const nextCounts = `${commands.length} 条命令 · ${this.selected.columns.length} 列`;
+      const columnText = this.selected.columns.length > 0 ? ` · ${this.selected.columns.length} 列` : "";
+      const nextCounts = `${commands.length} 条命令${columnText}`;
       if (nextCounts !== this.counts) {
         this.counts = nextCounts;
         this.emit();
@@ -675,6 +838,9 @@ export class DemoEngine {
       status: this.status,
       statusDetail: this.statusDetail,
       counts: this.counts,
+      sceneSetId: this.sceneSet.id,
+      duration: this.getDuration(),
+      playing: this.config.view.animate,
     };
   }
 
@@ -701,7 +867,7 @@ export class DemoEngine {
     const storage = galleryStorage();
     if (storage === undefined) return;
     try {
-      saveDemoConfig(this.config, storage);
+      saveDemoConfig(this.config, storage, this.sceneSet.storageKeys.config);
       this.rememberDisplayConfig(storage);
     } catch {
       /* Storage can be unavailable. */
@@ -719,7 +885,7 @@ export class DemoEngine {
     if (this.displayOverrides.showGrid !== undefined) display.showGrid = base.showGrid;
     if (this.displayOverrides.projection !== undefined) display.projection = base.projection;
     this.displayConfigs[this.selected.id] = display;
-    saveDisplayConfig(this.selected.id, display, storage);
+    saveDisplayConfig(this.selected.id, display, storage, this.sceneSet.storageKeys.display);
   }
 
   /** Maps the gallery grid config onto the library option names. */
@@ -902,7 +1068,7 @@ export class DemoEngine {
 
     if (velocity.zoom !== 0) {
       const step = integrateGlide(0, velocity.zoom, GLIDE_HALFLIFE, frame);
-      const next = clampFinite(c.zoom * 2 ** -step.value, CAMERA_2D_ZOOM_MIN, CAMERA_2D_ZOOM_MAX, c.zoom);
+      const next = clampFinite(c.zoom * 2 ** -step.value, CAMERA_2D_ZOOM_MIN, zoom2DMax(this.camera2DFitZoom), c.zoom);
       velocity.zoom = next === c.zoom ? 0 : step.velocity;
       c.zoom = next;
     }
@@ -1023,7 +1189,10 @@ export class DemoEngine {
         const width = canvas.clientWidth * pixelRatio;
         const height = Math.max(canvas.clientHeight, 1) * pixelRatio;
         const zoom = Math.min(width / view.width, height / view.height) * CAMERA_2D_FIT_MARGIN;
-        c.zoom = clampFinite(zoom, CAMERA_2D_ZOOM_MIN, CAMERA_2D_ZOOM_MAX, c.zoom);
+        // The fit is its own ceiling: a page may open closer than the absolute limit, and that
+        // fitted zoom then becomes the reference the zoom-in headroom is measured from.
+        c.zoom = clampFinite(zoom, CAMERA_2D_ZOOM_MIN, Math.max(CAMERA_2D_ZOOM_MAX, zoom), c.zoom);
+        this.camera2DFitZoom = c.zoom;
       }
       c.pan = [0, 0];
       this.pending2DFit = false;
@@ -1042,7 +1211,7 @@ export class DemoEngine {
   /** Measures one frame of the selected example; scene geometry is static per example. */
   private selectedBounds(): Bounds | undefined {
     const drawList = new FrameDrawList();
-    buildScene(this.selected.id, drawList, 0, this.config.view.lineJoint);
+    this.sceneSet.buildScene(this.selected.id, drawList, 0, this.config.view.lineJoint);
     return boundsOfPoints(drawList.commands().flatMap(commandPoints));
   }
 
@@ -1107,7 +1276,7 @@ export class DemoEngine {
   };
 
   private onHashChange = (): void => {
-    const match = SCENE_EXAMPLES.find((example) => example.id === location.hash.slice(1));
+    const match = this.sceneSet.examples.find((example) => example.id === location.hash.slice(1));
     if (match) this.selectExample(match, false);
   };
 

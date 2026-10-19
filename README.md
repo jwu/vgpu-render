@@ -16,6 +16,47 @@ Passing GPU smoke tests does not establish visual equivalence.
 Text rendering (see [Text](#text)) is vgpu's own capability rather than a port: the reference addon
 has no text API at all, and the labels in its examples are plain billboard nodes.
 
+## Pages
+
+The gallery serves two independent page sets from one entry (`gallery/demo.tsx`):
+
+- **Basic examples** (`/`) — the API / parity gallery in `examples/basic/`:
+  the 3D matrix, the 2D shape matrices and the text pages.
+- **Battle VFX** (`/?page=vfx`) — the battle-effects page in `examples/vfx/`: `world2d`
+  scenes staged on a loop timeline with a scrub slider, an editable `duration` (0.8 s on every
+  page), per-effect parameters, and hue/saturation sliders so each effect can be recoloured.
+  Both effects play across the same anime.js easing matrix — columns are the eleven families
+  (`linear` / `quad` / `cubic` / `quart` / `quint` / `sine` / `expo` / `circ` / `back` /
+  `elastic` / `bounce`), rows are the directions (`in` / `out` / `inOut`), 33 cells in total.
+  Every cell shares the clock, the geometry and the parameters, so the curve difference is the
+  only variable, and a square plot of each curve with a live playhead sits above its effect;
+  `linear` (the only directionless family) is the baseline and the diagonal guide inside every
+  plot.
+
+  - `slash-arc` — the swing grows: a filled sector and an arc stroke sweep out from the start
+    angle, so the swept angle at any instant *is* the curve.
+  - `battle-slash` — the swing the `~/gamedev/battle` simulator draws: the first frame is
+    already a full 240° band as wide as its own radius, which then retracts from its start edge
+    while it fades. Here the curve is how fast that mark gets wiped away. Only the arc is drawn;
+    the hit resolution is the next page.
+  - `hit-mark` — the stroke's other half: a blazing rhombus cut across a real unit, its long axis
+    stretching outward while it fades. The unit is drawn because a cut across empty grid is just a
+    diamond — this is where you can feel whether the timing reads as a hit.
+  - `hit-flash` — the other half of the hit feedback: a full-strength disc over the whole unit,
+    lifting on `1 - eased`. The `circ` / `in` cell is the simulator's own timing; the rest of the
+    matrix shows what a slower or faster curve does to the same flash.
+  - `pillar-appear` — a column of light growing into view: four nested fills of one colour, narrowing and brightening
+    toward the core through the alpha ladder alone. Height climbs with the curve while opacity falls
+    with it, so one instant reads as a point on the way up.
+  - `pillar-fade` — the opposite motion: the column is at full height on its first frame, and what
+    the clock takes away is its definition — it widens and fades into a haze. Same shaft shape, one
+    colour, nothing round added on top; only the timing differs.
+
+Both sets share the engine (`gallery/demo-engine.ts`): a switch swaps the registry,
+dispatcher, storage record and camera, while the WebGPU device and render loop stay up.
+Each set keeps its own `localStorage` records, so the two pages never overwrite each
+other's panel state.
+
 ## Install
 
 ```bash

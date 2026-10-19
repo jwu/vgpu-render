@@ -1,8 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { FrameDrawList, type JointCommand, type LineCommand, type TextCommand, type TriangleCommand, type Vec3 } from "../src/frame-draw-list.js";
-import { buildScene } from "../examples/runtime.js";
-import { CIRCLE_REFERENCE } from "../examples/circle/scene.js";
-import { LINE_REFERENCE } from "../examples/line/scene.js";
+import { buildScene } from "../examples/basic/runtime.js";
+import { CIRCLE_REFERENCE } from "../examples/basic/circle/scene.js";
+import { LINE_REFERENCE } from "../examples/basic/line/scene.js";
 import { SCENE_LABELS } from "../examples/shared/labels-3d.js";
 
 function commandsFor(id: string): readonly (LineCommand | JointCommand | TriangleCommand | { kind: "point" })[] {

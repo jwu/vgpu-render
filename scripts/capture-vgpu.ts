@@ -3,8 +3,9 @@
 // Usage:
 //   bun scripts/capture-vgpu.ts [scene ...]
 //
-// Requires the Vite dev server at http://127.0.0.1:5174 and a working GPU
-// display (X11 or Wayland). The WebGPU canvas must report
+// Requires a running Vite dev server (default http://localhost:5173; override with `VGPU_URL`) and
+// a working GPU display (X11 or Wayland). Reuse the server the developer already has — never start
+// one here, and never `pkill -f vite`, which would also take down the other projects' servers. The WebGPU canvas must report
 // `document.documentElement.dataset.renderReady === "true"` before capture.
 //
 // `CHROME_PATH` selects the browser binary (default: first known install path, then `PATH`), and
@@ -14,6 +15,7 @@
 // Set `VGPU_COMPARE=0` for scenes with no Godot reference — the text scenes, which the addon cannot
 // draw — so the capture is the gallery alone instead of a split view against a missing reference.
 // `VGPU_QUERY` appends a one-off query, e.g. `grid=0` to hide the infinite grid over the text.
+// `VGPU_PAGE` selects a scene set, e.g. `VGPU_PAGE=vfx VGPU_COMPARE=0 bun scripts/capture-vgpu.ts slash-arc`.
 
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
@@ -23,12 +25,15 @@ import { resolve } from "node:path";
 import { ozonePlatformArgs, resolveChromePath } from "./chrome-launch.js";
 
 const SCENES = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["circle", "line"];
-const BASE_URL = process.env.VGPU_URL ?? "http://127.0.0.1:5174";
+const BASE_URL = process.env.VGPU_URL ?? "http://localhost:5173";
 /**
  * `?compare=1` puts the Godot reference beside the vgpu render. Scenes without a reference capture
  * the gallery alone when this is turned off; see the usage note above.
  */
 const COMPARE = process.env.VGPU_COMPARE !== "0";
+/** Scene set to capture; unset for the basic gallery, `vfx` for the battle page. */
+const PAGE = process.env.VGPU_PAGE;
+const PAGE_QUERY = PAGE === undefined || PAGE === "" ? "" : `page=${PAGE}&`;
 const OUTPUT_DIR = resolve(import.meta.dir, "..", "artifacts", "visual-baseline");
 const CHROME = resolveChromePath();
 const PROFILE = mkdtempSync(resolve(tmpdir(), "vgpu-capture-"));
@@ -123,7 +128,7 @@ try {
 
   for (const scene of SCENES) {
     const extra = process.env.VGPU_QUERY === undefined ? "" : `${process.env.VGPU_QUERY}&`;
-    const url = `${BASE_URL}/?${extra}${COMPARE ? "compare=1&" : ""}scene=${scene}`;
+    const url = `${BASE_URL}/?${extra}${PAGE_QUERY}${COMPARE ? "compare=1&" : ""}scene=${scene}`;
     // Open a blank page and navigate once. Opening the scene itself in the `/json/new` call and then
     // navigating to the same URL leaves `renderReady` unset, and the wait below never returns.
     const target = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" });

@@ -104,7 +104,7 @@ type SliderInputRowProps = {
  * (empty input, a lone `-`, `1.`) stay editable; the draft is dropped on blur
  * or Enter, falling back to the engine value.
  */
-function SliderInputRow({ id, label, name, min, max, step, value, onValueChange, format }: SliderInputRowProps) {
+export function SliderInputRow({ id, label, name, min, max, step, value, onValueChange, format }: SliderInputRowProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const display = draft ?? trimNumber(value);
 
@@ -160,7 +160,7 @@ function SliderInputRow({ id, label, name, min, max, step, value, onValueChange,
 }
 
 /** Number-only row for wide-range values a slider cannot express well. */
-function NumberRow({ id, label, name, min, max, step, value, integer, onValueChange }: {
+export function NumberRow({ id, label, name, min, max, step, value, integer, onValueChange }: {
   readonly id: string;
   readonly label: string;
   readonly name?: string | undefined;
@@ -208,7 +208,7 @@ function trimNumber(value: number): string {
   return String(Number.parseFloat(value.toFixed(4)));
 }
 
-type ToggleRowProps = {
+export type ToggleRowProps = {
   readonly label: string;
   readonly name?: string | undefined;
   readonly checked: boolean;
@@ -221,7 +221,7 @@ type ToggleRowProps = {
  * label keeps the click target correct, and `aria-label` names the visible
  * checkbox instead of the `aria-hidden` input.
  */
-function ToggleRow({ label, name, checked, onCheckedChange }: ToggleRowProps) {
+export function ToggleRow({ label, name, checked, onCheckedChange }: ToggleRowProps) {
   return (
     <Label className="control-head control-head-toggle">
       <ControlLabel label={label} name={name} />
@@ -255,6 +255,21 @@ function ColorRow({ id, label, name, value, onValueChange }: {
 export type DemoControlsProps = {
   readonly config: DemoConfig;
   readonly handlers: ControlHandlers;
+  /**
+   * Extra sections rendered above the standard groups. The battle page puts its timeline and effect
+   * parameters here, so the camera, grid and display controls stay the ones the gallery already has.
+   */
+  readonly children?: ReactNode;
+  /**
+   * Shared open-state of the sidebar groups. The battle page renders two groups of its own and
+   * hands the same state down, so its sections and these fold into one persisted layout.
+   */
+  readonly sections?: ControlSectionsState;
+};
+
+export type ControlSectionsState = {
+  readonly open: Record<SectionId, boolean>;
+  readonly setOpen: (id: SectionId, open: boolean) => void;
 };
 
 /** Display section: background, camera projection, animation and visibility. */
@@ -679,10 +694,10 @@ function GridControls({ config, handlers }: DemoControlsProps) {
   );
 }
 
-/** The three sidebar groups; the ids double as the persisted open-state keys. */
-type SectionId = "display" | "geometry" | "infinite-grid";
+/** The sidebar groups; the ids double as the persisted open-state keys. The battle page adds its own. */
+export type SectionId = "display" | "geometry" | "infinite-grid" | "timeline" | "effect-params";
 
-const SECTION_IDS: readonly SectionId[] = ["display", "geometry", "infinite-grid"];
+const SECTION_IDS: readonly SectionId[] = ["display", "geometry", "infinite-grid", "timeline", "effect-params"];
 const SECTION_STATE_KEY = "vgpu-render:control-sections";
 
 /**
@@ -691,7 +706,13 @@ const SECTION_STATE_KEY = "vgpu-render:control-sections";
  * overrides the ones the user actually toggled.
  */
 function loadSectionState(): Record<SectionId, boolean> {
-  const state: Record<SectionId, boolean> = { display: true, geometry: true, "infinite-grid": true };
+  const state: Record<SectionId, boolean> = {
+    display: true,
+    geometry: true,
+    "infinite-grid": true,
+    timeline: true,
+    "effect-params": true,
+  };
   try {
     const raw = globalThis.localStorage.getItem(SECTION_STATE_KEY);
     if (raw === null) return state;
@@ -708,10 +729,7 @@ function loadSectionState(): Record<SectionId, boolean> {
   return state;
 }
 
-function useControlSections(): {
-  readonly open: Record<SectionId, boolean>;
-  readonly setOpen: (id: SectionId, open: boolean) => void;
-} {
+export function useControlSections(): ControlSectionsState {
   const [open, setOpenState] = useState<Record<SectionId, boolean>>(loadSectionState);
 
   useEffect(() => {
@@ -729,7 +747,7 @@ function useControlSections(): {
   return { open, setOpen };
 }
 
-type ControlSectionProps = {
+export type ControlSectionProps = {
   readonly id: SectionId;
   readonly title: string;
   readonly subtitle: string;
@@ -742,7 +760,7 @@ type ControlSectionProps = {
  * Collapsible group. The panels are independent rather than an accordion, so
  * two sections can stay open while comparing a grid value against a geometry one.
  */
-function ControlSection({ id, title, subtitle, open, onOpenChange, children }: ControlSectionProps) {
+export function ControlSection({ id, title, subtitle, open, onOpenChange, children }: ControlSectionProps) {
   return (
     <Collapsible.Root
       className="control-section"
@@ -763,11 +781,15 @@ function ControlSection({ id, title, subtitle, open, onOpenChange, children }: C
   );
 }
 
-export function DemoControls({ config, handlers }: DemoControlsProps) {
-  const { open, setOpen } = useControlSections();
+export function DemoControls({ config, handlers, children, sections }: DemoControlsProps) {
+  // Always called: the hook order has to stay stable, and the battle page simply ignores this
+  // instance in favour of the state it shares with its own sections.
+  const fallbackSections = useControlSections();
+  const { open, setOpen } = sections ?? fallbackSections;
   return (
     <aside className="sidebar sidebar-controls" aria-label="渲染控制">
       <div className="control-list">
+        {children}
         <ControlSection
           id="display"
           title="显示"

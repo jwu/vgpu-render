@@ -1,28 +1,23 @@
 /**
  * Example picker sidebar.
  *
- * The list is rendered from `SCENE_EXAMPLES`; selection is written back through
- * the engine so the URL hash stays the single source of truth. Entries are grouped
- * by capability: 3D graphics, 2D graphics and text drive different cameras and
- * different layers, so one flat list would hide that.
+ * The list is rendered from the active scene set: `sceneSet.families` decides the groups and
+ * `sceneSet.examples` the entries, so the basic gallery keeps its 3D / 2D / text split while the
+ * battle page shows its own single group. Selection is written back through the engine so the URL
+ * hash stays the single source of truth.
  */
 
 import { useState } from "react";
-import type { SceneExample } from "@examples/registry.js";
+import type { SceneSet } from "@examples/sets.js";
+import type { SceneExample } from "@examples/shared/meta.js";
 
 export type DemoExampleListProps = {
-  readonly examples: readonly SceneExample[];
+  readonly sceneSet: SceneSet;
   readonly selectedId: string;
   readonly onSelect: (example: SceneExample) => void;
 };
 
-const FAMILIES: readonly { readonly id: string; readonly title: string; readonly matches: (example: SceneExample) => boolean }[] = [
-  { id: "3d", title: "3D Graphics", matches: (example) => (example.group ?? example.family ?? "3d") === "3d" },
-  { id: "2d", title: "2D Graphics", matches: (example) => (example.group ?? example.family ?? "3d") === "2d" },
-  { id: "text", title: "Text", matches: (example) => example.group === "text" },
-];
-
-export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleListProps) {
+export function DemoExampleList({ sceneSet, selectedId, onSelect }: DemoExampleListProps) {
   // Each family folds independently; the 3D list alone is long enough that collapsing 2D or text
   // saves a lot of scrolling.
   const [collapsed, setCollapsed] = useState<readonly string[]>([]);
@@ -34,13 +29,13 @@ export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleL
     <aside className="sidebar sidebar-examples">
       <header className="sidebar-header">
         <div className="brand">
-          vgpu-render <span>示例</span>
+          {sceneSet.brand} <span>{sceneSet.label}</span>
         </div>
-        <div className="eyebrow">3D 调试绘制管线</div>
+        <div className="eyebrow">{sceneSet.eyebrow}</div>
       </header>
       <nav id="example-list" className="example-list" aria-label="示例列表">
-        {FAMILIES.map((family) => {
-          const entries = examples.filter(family.matches);
+        {sceneSet.families.map((family) => {
+          const entries = sceneSet.examples.filter(family.matches);
           if (entries.length === 0) return null;
           const folded = collapsed.includes(family.id);
           const entriesId = `example-group-${family.id}`;
@@ -79,7 +74,7 @@ export function DemoExampleList({ examples, selectedId, onSelect }: DemoExampleL
           );
         })}
       </nav>
-      <footer className="sidebar-footer">WebGPU · vgpu · WGSL</footer>
+      <footer className="sidebar-footer">{sceneSet.footer}</footer>
     </aside>
   );
 }

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { LABELS_2D } from "../examples/shared/2d-labels.js";
-import { buildScene2D } from "../examples/2d-runtime.js";
+import { buildScene2D } from "../examples/basic/2d-runtime.js";
 import { FrameDrawList } from "../src/frame-draw-list.js";
-import { buildScene } from "../examples/runtime.js";
-import { SCENE_EXAMPLES } from "../examples/registry.js";
+import { buildScene } from "../examples/basic/runtime.js";
+import { SCENE_EXAMPLES } from "../examples/basic/registry.js";
 
 const twoDimensional = SCENE_EXAMPLES.filter((example) => example.family === "2d");
 const matrixPages = Object.keys(LABELS_2D);

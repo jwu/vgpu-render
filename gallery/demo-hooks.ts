@@ -8,31 +8,34 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type { CameraPreset, DemoConfig, DemoGridConfig, LineJoint, ProjectionMode } from "./demo-config.js";
 import { backgroundToHex, type DemoEngine } from "./demo-engine.js";
-import type { SceneExample } from "../examples/registry.js";
-import { SCENE_EXAMPLES } from "../examples/registry.js";
 import { sourceForExample, tokenizeSource, type SourceToken } from "./demo-source.js";
 
-/** Every page module, keyed by its path, with the preview sources already scrubbed. */
-const SCENE_SOURCES = import.meta.glob("../examples/*/scene.ts", {
+/**
+ * Every page module, keyed by its path, with the preview sources already scrubbed.
+ *
+ * The glob spans both scene sets (`examples/basic/<slug>` and `examples/vfx/<slug>`), so the
+ * preview works without the hooks knowing which entry mounted the shell.
+ */
+const SCENE_SOURCES = import.meta.glob("../examples/*/*/scene.ts", {
   query: "?raw",
   import: "default",
   eager: true,
 }) as Readonly<Record<string, string>>;
 
 /** `world_space_width` uses an underscore id but a hyphenated directory. */
-const pageSource = (id: string): string => SCENE_SOURCES[`../examples/${id.replaceAll("_", "-")}/scene.ts`] ?? "";
+const pageSource = (sceneSetId: string, id: string): string =>
+  SCENE_SOURCES[`../examples/${sceneSetId}/${id.replaceAll("_", "-")}/scene.ts`] ?? "";
 
 export function useEngineSnapshot(engine: DemoEngine) {
   const subscribe = useCallback((listener: () => void) => engine.subscribe(listener), [engine]);
   return useSyncExternalStore(subscribe, () => engine.snapshot(), () => engine.snapshot());
 }
 
-export function useExamples(): readonly SceneExample[] {
-  return SCENE_EXAMPLES;
-}
-
-export function useHighlightedSource(exampleId: string): readonly SourceToken[] {
-  return useMemo(() => tokenizeSource(sourceForExample(pageSource(exampleId))), [exampleId]);
+export function useHighlightedSource(sceneSetId: string, exampleId: string): readonly SourceToken[] {
+  return useMemo(
+    () => tokenizeSource(sourceForExample(pageSource(sceneSetId, exampleId))),
+    [sceneSetId, exampleId],
+  );
 }
 
 export type ControlHandlers = {

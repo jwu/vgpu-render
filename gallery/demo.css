@@ -22,10 +22,45 @@
 
 .app-shell {
   display: grid;
+  /* Row 1 is the page switcher; the three columns sit in row 2 and keep their own scrolling. */
   grid-template-columns: 224px minmax(0, 1fr) 224px;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
   background: var(--sidebar);
+}
+
+/* Page switcher: the only chrome shared by both scene sets. Compare mode hides it, being a
+ * single-scene capture path. */
+.page-switcher {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+.page-tab {
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.page-tab:hover {
+  color: var(--foreground);
+}
+.page-tab[data-active="true"] {
+  border-color: var(--border);
+  background: var(--secondary);
+  color: var(--foreground);
+}
+.compare-mode .page-switcher {
+  display: none;
 }
 
 canvas {
@@ -221,6 +256,32 @@ canvas {
   gap: 26px;
   padding: 2px 1px 1px;
 }
+/* Timeline: transport buttons plus one scrub slider, updated outside React's cycle. */
+.timeline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.timeline-readout {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.timeline-total {
+  opacity: 0.65;
+}
+.timeline-scrub {
+  width: 100%;
+  margin: 4px 0 2px;
+  accent-color: var(--foreground);
+  cursor: pointer;
+}
+.vfx-reset {
+  display: flex;
+}
+.vfx-reset > * {
+  width: 100%;
+}
 /* Reset action pinned below the scrolling section list. */
 .control-actions {
   padding: 14px 16px;
@@ -399,6 +460,18 @@ h1 {
   overflow: hidden;
   border: 1px solid var(--border);
   background: var(--muted);
+}
+/* The battle matrix is wide by nature: eleven columns do not fit the 996px reading column the basic
+ * pages use, so this page hands the canvas the whole workspace and a taller frame. */
+.app-shell[data-page="vfx"] .workspace {
+  padding: 34px 28px 48px;
+}
+.app-shell[data-page="vfx"] .preview-frame {
+  height: min(70vw, 640px);
+  min-height: 380px;
+}
+.app-shell[data-page="vfx"] .description {
+  max-width: 900px;
 }
 
 .details {

@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
 import { FrameDrawList, type FrameCommand } from "../src/frame-draw-list.js";
-import { buildScene } from "../examples/runtime.js";
+import { buildScene } from "../examples/basic/runtime.js";
 
 const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 

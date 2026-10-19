@@ -28,17 +28,28 @@ src/infinite-grid-3d.ts      ← 无限网格渲染
 src/vector-math.ts           ← 引擎与示例共用的向量/圆基底工具
 src/text-reference.ts        ← dev-only 文本对照页（不导出、不进库构建）
 
-examples/runtime.ts          ← 示例分发（buildScene：2D → 3D → text）
-examples/registry.ts         ← 侧栏登记表（只固定页面顺序）
+examples/sets.ts             ← 两套页面集合：basic（基础示例）与 vfx（战斗特效）
+examples/basic/runtime.ts    ← basic 分发（buildScene：2D → 3D → text）
+examples/basic/registry.ts   ← basic 侧栏登记表（只固定页面顺序）
+examples/basic/<slug>/scene.ts ← 基础示例单页场景实现
+examples/basic/<slug>/meta.ts  ← 基础示例单页元数据
+examples/vfx/runtime.ts      ← 战斗特效分发（buildScene：loop time + 参数）
+examples/vfx/registry.ts     ← 战斗特效侧栏登记表
+examples/vfx/easing.ts       ← 缓动曲线：11 家族 × in/out/inOut（anime.js 定义，linear 无方向）
+examples/vfx/params.ts       ← 特效参数解析、clamp 与取色
+examples/vfx/matrix.ts      ← 各页共用的 11×3 矩阵布局、标题与曲线图
+examples/vfx/action-phase.ts ← 各页共用的「动作窗口」时序（时长 × 占比 → progress/eased/fade）
+examples/vfx/unit.ts       ← 各页共用的战斗单位圆盘（`circle_s` + 描边，HSV 派生颜色）
+examples/vfx/<slug>/scene.ts ← 战斗特效单页实现（world2d + timeline）
+examples/vfx/<slug>/meta.ts  ← 单页元数据（duration、params、view2d）
 examples/shared/             ← 共享布局、标签、几何、绘制 helper 与 meta helper
-examples/<slug>/scene.ts     ← 单页场景实现
-examples/<slug>/meta.ts      ← 单页侧栏元数据
 
 gallery/demo.tsx             ← 浏览器 gallery 入口（React 挂载点）
 gallery/demo-engine.ts       ← 命令式 WebGPU 引擎（渲染循环、相机、持久化）
 gallery/demo-hooks.ts        ← React 与引擎之间的订阅桥接
 gallery/demo-source.ts       ← 代码预览分词（纯逻辑）
-gallery/components/          ← Base UI + shadcn 壳层与控件
+gallery/components/          ← Base UI + shadcn 壳层与控件（含 vfx-controls.tsx：时间轴 + 特效参数）
+gallery/battle-params.ts     ← 战斗特效参数状态（每特效一份记录，独立于渲染循环）
 gallery/demo-config.ts       ← gallery 与截图对比配置
 gallery/index.css            ← base-lyra 主题 token
 gallery/demo.css             ← 三段式布局、compare 模式、代码高亮
@@ -69,7 +80,7 @@ bun run build
 ```text
 vgpu-render/
   ├── src/                         # 主引擎：库源码、渲染器、dev 工具
-  ├── examples/                    # 示例层：每页 scene/meta、registry、shared
+  ├── examples/                    # 示例层：sets.ts + basic/ + vfx/ + shared/
   ├── gallery/                     # 浏览器 gallery 壳层：React、引擎驱动、样式、资源
   ├── tests/                       # 单元测试、场景测试与真实 GPU 测试
   ├── scripts/                     # 截图捕获、dist 品牌词清洗等开发脚本
@@ -101,7 +112,10 @@ vgpu-render/
 - 新增公共 API 时补充类型定义、README/API 示例或对应测试；不要只修改 demo 而不更新库层契约。
 - 本地模块导入遵循现有 ESM 约定，使用 `.js` 扩展名。
 - 依赖方向固定：`src/` 不得导入 `examples/` 或 `gallery/`；`examples/` 只依赖 `src/` 与 `examples/shared/`；`gallery/` 可以依赖两者。引擎需要的向量/几何工具应下沉到 `src/`，不能反过来从示例布局模块借用。
-- 新增示例页时同时添加 `examples/<slug>/scene.ts` 与 `examples/<slug>/meta.ts`，在 `examples/runtime.ts` 分发、在 `examples/registry.ts` 固定侧栏顺序。页面入口统一为 `draw(drawList: FrameDrawList, context: SceneContext)`，`SceneContext` 固定从 `examples/shared/scene-context.ts` 导入；页面只导出 `draw`（测试直接引用的 `CIRCLE_REFERENCE` / `LINE_REFERENCE` 等除外），不要恢复集中式场景大文件。
+- 新增基础示例页时同时添加 `examples/basic/<slug>/scene.ts` 与 `examples/basic/<slug>/meta.ts`，在 `examples/basic/runtime.ts` 分发、在 `examples/basic/registry.ts` 固定侧栏顺序。页面入口统一为 `draw(drawList: FrameDrawList, context: SceneContext)`，`SceneContext` 固定从 `examples/shared/scene-context.ts` 导入；页面只导出 `draw`（测试直接引用的 `CIRCLE_REFERENCE` / `LINE_REFERENCE` 等除外），不要恢复集中式场景大文件。
+- 新增战斗特效页时添加 `examples/vfx/<slug>/scene.ts` 与 `meta.ts`（`family: "2d"`、`duration`、`params`、`view2d` 四项必填），在 `examples/vfx/runtime.ts` 的 `PAGES` 里分发、在 `examples/vfx/registry.ts` 定序。场景入口是 `draw(drawList: FrameDrawList, context: VfxSceneContext)`，`VfxSceneContext` 固定从 `examples/vfx/scene-context.ts` 导入，参数一律从 `context.params` 读；参数范围只写在 `meta.ts` 的 `ParamSpec[]` 里，由 `clampParams` 负责校验。
+- 战斗特效页的排版沿用基础示例矩阵页的约定：一列一个参数/家族、一行一个样本/方向，列标题在上、行标签在左，格子内容共享时钟与参数，只有被对比的那一个维度不同。缓动曲线一律写在 `examples/vfx/easing.ts` 里（anime.js 的定义），不要在某页里内联一份。
+- 两套页面的边界固定：`examples/basic` 与 `examples/vfx` 互不 import，只共用 `examples/shared/` 与 `examples/sets.ts`；`gallery/demo-engine.ts` 通过 `SceneSet` 注入注册表、dispatcher、存储 key 与参数来源，不得把某一套页面的 id 硬编码回引擎。
 - 示例源码预览由 `import.meta.glob` 按页读取 `examples/*/scene.ts`，路径与 Vite 的 `?raw` 清洗规则在 `gallery/demo-hooks.ts`、`vite.config.ts` 中保持一致。
 - WGSL 修改必须同步检查对应的 instance attribute、CPU 端 buffer 定义和渲染测试；注意 WebGPU 对布局、顶点数、透明度、深度和坐标空间的要求。
 - 渲染逻辑优先使用实例化和现有几何管线；不要在 CPU 上展开本项目明确设计为实例化的点或线图元。
@@ -121,12 +135,17 @@ vgpu-render/
 
 GPU 测试需要可用的 WebGPU/图形环境。相关测试会验证线、点、dash、世界空间宽度和三角形填充等行为；环境不可用时应明确报告，不能把未运行当作通过。
 
-视觉截图需要 Vite 服务、可用 GPU 显示服务器和 Chromium：
+视觉截图需要 Vite 服务、可用 GPU 显示服务器和 Chromium。**复用已经在跑的服务，agent 不启不关**：
 
 ```bash
-bun run dev -- --host 127.0.0.1 --port 5174
-bun scripts/capture-vgpu.ts circle line
+# dev server 由用户自己启动（默认 http://localhost:5173），agent 只读
+VGPU_URL=http://localhost:5173 bun scripts/capture-vgpu.ts circle line
+# 战斗特效页（无 Godot 参考，需关掉对比）
+VGPU_URL=http://localhost:5173 VGPU_PAGE=vfx VGPU_COMPARE=0 bun scripts/capture-vgpu.ts slash-arc
 ```
+
+**严禁 `pkill -f vite`**：它会连带杀掉其它项目（`~/dev/octo-assets`、`~/gamedev/battle` 等）的 dev server。
+需要独占端口时起在 5199，并 `kill` 自己记录的 PID，不去动别人的进程。
 
 截图写入 `artifacts/`，该目录整体已被 git 忽略，不会污染工作区状态。Godot 参考截图使用独立的 `/tmp/vgpu-parity-godot` 副本，不要修改 `~/src/` 下的上游仓库。截图对比页默认地址为：
 
