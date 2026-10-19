@@ -13,7 +13,9 @@ const white = [1, 1, 1, 1] as const;
 
 /** Canvas pixel of a `world2d` point under the default camera: 1 unit = 1 pixel, +y up. */
 function pixel(x: number, y: number): [number, number] {
-  return [WIDTH / 2 + x, HEIGHT / 2 - y];
+  // Rounded, because callers index the pixel buffer with it: a fractional coordinate would read
+  // `undefined` and every `lit()` check would silently answer false.
+  return [Math.round(WIDTH / 2 + x), Math.round(HEIGHT / 2 - y)];
 }
 
 function channel(pixels: Uint8Array, x: number, y: number, component: number): number {
@@ -472,6 +474,41 @@ test("real GPU scales a world-space outline with the zoom and keeps a screen-spa
     expect(far).toBeLessThanOrEqual(50);
 
     renderer.destroy();
+  } finally {
+    gpu.dispose();
+  }
+});
+
+test("real GPU cuts an arc's ends along a radius, not a hyperbolic hook", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    // Radius 40 with a 40-wide stroke: inner rim at 20, outer at 60, so the two rims sit at
+    // very different distances from the centre — which is exactly where the two cut shapes differ.
+    renderer.prepare(
+      [shape({ ...base, shape: "arc", center: [0, 0], size: [40, 40], thickness: 40, filled: false, startAngle: 0, sweep: Math.PI })],
+      { viewProjection: identity, view: identity },
+      DEFAULT_CAMERA,
+    );
+    frame(gpu, (f) => {
+      renderer.updateIndirect(f);
+      f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+    });
+    const pixels = await output.color.read({ mipLevel: 0, region: "all" });
+    renderer.destroy();
+
+    // A stroke is widened symmetrically, so the end cap reaches halfWidth / R radians past the
+    // end — 20 / 40 = 0.5 here. The cap is one radial line, so both rims must agree on where it
+    // stops. Scaling the angular overshoot by `length(p)` instead put the cut on r * dθ = const:
+    // the inner rim (r = 25) ended at 0.8 rad while the outer rim (r = 55) ended at 0.36, so the
+    // two rims disagreed between those angles and the cut read as a hook.
+    for (const radius of [25, 55]) {
+      const inside = pixel(radius * Math.cos(-0.4), radius * Math.sin(-0.4));
+      const outside = pixel(radius * Math.cos(-0.7), radius * Math.sin(-0.7));
+      expect(lit(pixels, inside), `radius ${radius} lost the end cap`).toBe(true);
+      expect(lit(pixels, outside), `radius ${radius} ran past the end cap`).toBe(false);
+    }
   } finally {
     gpu.dispose();
   }

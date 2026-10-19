@@ -186,7 +186,7 @@ fn sd_rhombus(p: vec2f, a: f32, b: f32) -> f32 {
  * angular form keeps growing with the angle there, stays exact on the ring itself, and still
  * narrows to the centre, so a nearly closed wedge keeps its point instead of a flat end.
  */
-fn sd_wedge(p: vec2f, start: f32, sweep: f32) -> f32 {
+fn sd_wedge(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
   let sweepAbs = abs(sweep);
   // A sweep that closed completely has no wedge at all; reporting the whole plane as covered
   // would paint a dot at the start of a zero-length arc.
@@ -196,14 +196,20 @@ fn sd_wedge(p: vec2f, start: f32, sweep: f32) -> f32 {
   if (sweep < 0.0) { offset = wrap_tau(start - angle); }
   // Negative while inside the wedge, otherwise the angle past the nearer end.
   let over = min(offset - sweepAbs, TAU - offset);
-  return over * length(p);
+  // Scaled by the arc radius, not by the distance to the centre. Both are straight lines in the
+  // angle, so either puts the cut on a constant angle; scaling by length(p) turns the cut into
+  // r * dθ = const, a hyperbola, and on a stroke as wide as its radius the two ends then leave at
+  // wildly different angles and the cut reads as a hook. A fixed radius also keeps the far side
+  // of the ring reading a large distance instead of the small perpendicular one a half-plane
+  // would give it.
+  return over * radius;
 }
 
 /** Sector of any sweep: the disc, clipped to the angular wedge. A negative sweep runs the other way. */
 fn sd_sector(p: vec2f, radius: f32, start: f32, sweep: f32) -> f32 {
   let disc = length(p) - radius;
   if (abs(sweep) >= TAU - EPSILON) { return disc; }
-  return max(disc, sd_wedge(p, start, sweep));
+  return max(disc, sd_wedge(p, radius, start, sweep));
 }
 
 /** Circular segment: the disc on the arc side of the chord. Always convex. */
