@@ -7,6 +7,7 @@ import type { Camera2D } from "./camera-2d.js";
 import type { FrameCommand, PointCommand, LineCommand, JointCommand, TriangleCommand, TextCommand, Vec3 } from "./frame-draw-list.js";
 import type { FrameCommand2D } from "./frame-draw-list-2d.js";
 import { GpuDebugDraw2D } from "./gpu-debug-draw-2d.js";
+import { orderedZIndexes } from "./draw-order.js";
 import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
 import { GpuText3D, type GpuText3DOptions } from "./gpu-text-3d.js";
 
@@ -828,8 +829,6 @@ export class GpuDebugDraw3D {
       pass.dispatch(this.#indirectCompute, 1);
       this.#indirectCompute.set({ params: { vertexCount: JOINT_VERTEX_COUNT, instanceCount: this.#jointCount }, args: this.#jointIndirect });
       pass.dispatch(this.#indirectCompute, 1);
-      this.#d2.dispatchIndirect(pass);
-      for (const renderer of this.#texts.values()) renderer.dispatchIndirect(pass);
     });
   }
 
@@ -848,11 +847,14 @@ export class GpuDebugDraw3D {
     if (this.#pointCount > 0) pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
     if (this.#lineCount > 0) pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });
     if (this.#jointCount > 0) pass.draw(this.#jointDraw, { indirect: this.#jointIndirect });
-    // The 2D layer is an overlay: it draws after every 3D primitive and before text, so a 2D
-    // HUD covers the 3D world while screen-space labels stay on top of both.
-    this.#d2.draw(pass);
-    // Text is last: its alpha-blended quads read the strokes and solids as they were left behind.
-    for (const renderer of this.#texts.values()) renderer.draw(pass);
+    // The 2D layer and text share one layering key. Emitting them key by key is what lets a shape
+    // cover a label, or the other way round; within a key the order stays 2D first, then text, so
+    // an unannotated frame keeps the pre-`zIndex` sequence.
+    const textZIndexes = [...this.#texts.values()].map((renderer) => renderer.zIndexes());
+    for (const zIndex of orderedZIndexes([this.#d2.zIndexes(), ...textZIndexes])) {
+      this.#d2.drawSegment(pass, zIndex);
+      for (const renderer of this.#texts.values()) renderer.drawSegment(pass, zIndex);
+    }
   }
 
   destroy(): void {

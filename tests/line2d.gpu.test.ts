@@ -39,7 +39,7 @@ test("real GPU draws world2d primitives with pixel-sized widths", async () => {
   const line: FrameCommand = {
     kind: "line2d", start: [-100, 0], end: [100, 0],
     color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1],
-    width: 10, widthMode: "screen", space: "world2d", layer: 1,
+    width: 10, widthMode: "screen", space: "world2d", layer: 1, zIndex: 0,
   };
   const pixels = await render([line]);
   // The canvas centre is the world2d origin and one unit covers one pixel, so the stroke runs
@@ -63,7 +63,7 @@ test("real GPU draws world2d primitives with pixel-sized widths", async () => {
 test("real GPU places world2d points above the canvas centre", async () => {
   const point: FrameCommand = {
     kind: "point2d", position: [0, 32], color: [1, 1, 1, 1],
-    size: 8, sizeMode: "screen", space: "world2d", layer: 1,
+    size: 8, sizeMode: "screen", space: "world2d", layer: 1, zIndex: 0,
   };
   const pixels = await render([point]);
   // +y is up, so 32 units above the centre land at pixel row 32.
@@ -78,7 +78,7 @@ test("real GPU overlays screen-space 2D on top of the 3D layer", async () => {
     {
       kind: "line2d", start: [0, HEIGHT / 2], end: [WIDTH, HEIGHT / 2],
       color: [1, 0, 0, 1], colorEnd: [1, 0, 0, 1],
-      width: 12, widthMode: "screen", space: "screen", layer: 1,
+      width: 12, widthMode: "screen", space: "screen", layer: 1, zIndex: 0,
     },
   ];
   const pixels = await render(commands);
@@ -92,7 +92,7 @@ test("real GPU preserves dash gaps in world2d", async () => {
   const line: FrameCommand = {
     kind: "line2d", start: [-100, 0], end: [100, 0],
     color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1],
-    width: 10, widthMode: "screen", dash: [12, 12, 0], space: "world2d", layer: 1,
+    width: 10, widthMode: "screen", dash: [12, 12, 0], space: "world2d", layer: 1, zIndex: 0,
   };
   const pixels = await render([line]);
   // The dash period is 24 pixels measured along the path, which starts at x = 28.
@@ -103,9 +103,9 @@ test("real GPU preserves dash gaps in world2d", async () => {
 
 test("real GPU joins world2d strips with round joints", async () => {
   const commands: FrameCommand[] = [
-    { kind: "line2d", start: [0, 0], end: [0, 40], color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1], width: 8, widthMode: "screen", joint: "round", space: "world2d", layer: 1 },
-    { kind: "line2d", start: [0, 40], end: [40, 40], color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1], width: 8, widthMode: "screen", joint: "round", space: "world2d", layer: 1 },
-    { kind: "joint2d", previous: [0, 0], center: [0, 40], next: [40, 40], color: [1, 1, 1, 1], width: 8, widthMode: "screen", joint: "round", space: "world2d", layer: 1 },
+    { kind: "line2d", start: [0, 0], end: [0, 40], color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1], width: 8, widthMode: "screen", joint: "round", space: "world2d", layer: 1, zIndex: 0 },
+    { kind: "line2d", start: [0, 40], end: [40, 40], color: [1, 1, 1, 1], colorEnd: [1, 1, 1, 1], width: 8, widthMode: "screen", joint: "round", space: "world2d", layer: 1, zIndex: 0 },
+    { kind: "joint2d", previous: [0, 0], center: [0, 40], next: [40, 40], color: [1, 1, 1, 1], width: 8, widthMode: "screen", joint: "round", space: "world2d", layer: 1, zIndex: 0 },
   ];
   const pixels = await render(commands);
   // The corner sits 40 units up from centre: (128, 24).

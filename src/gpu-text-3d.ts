@@ -28,16 +28,19 @@
  * - `screen` places it at a top-left origin pixel position with no projection at all.
  *
  * Depth is tested but never written. World text is therefore occluded by geometry in front of
- * it, while screen text sits at the near plane and always wins; not writing depth keeps a
- * glyph's translucent ink box from clipping the glyphs drawn after it.
+ * it, while screen text sits at the near plane and passes the depth test against anything already
+ * drawn; not writing depth keeps a glyph's translucent ink box from clipping the glyphs drawn
+ * after it. Layering against the 2D layer is `zIndex`, not depth: blocks and 2D primitives sort
+ * into one key space and are emitted key by key (see `docs/z-index.md`).
  */
 
-import { compute, draw, sampler, storage, texture, type Compute, type Draw, type FrameComputePass, type FramePass, type Gpu, type StorageBuffer, type Texture } from "vgpu";
+import { draw, sampler, texture, type Draw, type FramePass, type Gpu, type Texture } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
 import type { TextCommand } from "./frame-draw-list.js";
-import { depthBiasHelpers, identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
+import { depthBiasHelpers, identity, trim, world, zeroGeometry } from "./gpu-instancing.js";
+import { sortedByZIndex, type SegmentRange } from "./draw-order.js";
 import { DISTANCE_CHANNELS, DEFAULT_ATLAS_SIZE, buildMipChain, dirtyAtLevel, downsampleDistancePage, downsamplePage, extractRegion, GlyphAtlas, type GlyphEncoding } from "./text-atlas.js";
 import { DEFAULT_SDF_RANGE } from "./text-sdf.js";
 import { layoutText, resolveTextAnchor, type TextMeasurer } from "./text-layout.js";
@@ -320,6 +323,9 @@ function textPlaneWorld(rotation: readonly [number, number, number]): Float32Arr
   ]);
 }
 
+/** One `zIndex` segment of a glyph instance buffer. */
+type TextSegment = SegmentRange & { readonly zIndex: number };
+
 export class GpuText3D {
   readonly #gpu: Gpu;
   readonly #font: TextFontSource;
@@ -328,8 +334,6 @@ export class GpuText3D {
   readonly #ids: InstanceId[] = [];
   readonly #bridge: InstanceGeometry;
   readonly #draw: Draw;
-  readonly #indirect: StorageBuffer;
-  readonly #indirectCompute: Compute;
   readonly #atlasTexture: Texture;
   readonly #sampler: GPUSampler;
   readonly #mipLevels: number;
@@ -338,6 +342,8 @@ export class GpuText3D {
   #viewProjection: ArrayLike<number> = identity();
   #view: ArrayLike<number> = identity();
   #count = 0;
+  /** Glyph runs per `zIndex`, ascending. Empty keys are dropped, so a lookup that hits one draws. */
+  #segments: readonly TextSegment[] = [];
 
   constructor(gpu: Gpu, options: GpuText3DOptions) {
     const capacity = options.capacity ?? 16384;
@@ -395,9 +401,6 @@ export class GpuText3D {
       cull: "none",
       depth: { write: false, compare: "less-equal" },
     });
-    this.#indirect = storage(gpu, 16, { access: "read-write", indirect: true });
-    this.#indirectCompute = compute(gpu, INDIRECT_SHADER);
-    indirectArgs(this.#indirect, 6, 0);
     this.#atlasTexture = texture(gpu, {
       kind: "2d-array",
       size: [atlasSize, atlasSize],
@@ -433,8 +436,18 @@ export class GpuText3D {
   prepare(commands: readonly TextCommand[], camera: { readonly viewProjection: ArrayLike<number>; readonly view: ArrayLike<number>; readonly viewportSize?: readonly [number, number] }): void {
     // One frame per call, so the atlas knows which pages it may recycle. See `GlyphAtlas.beginFrame`.
     this.#atlas.beginFrame();
+    // Visit order is `zIndex` order, so each segment owns one contiguous run of glyph instances.
+    const ordered = sortedByZIndex(commands);
+    const segments: TextSegment[] = [];
     let index = 0;
-    for (const command of commands) {
+    let segmentStart = 0;
+    let segmentZIndex: number | undefined;
+    for (const command of ordered) {
+      if (command.zIndex !== segmentZIndex) {
+        if (segmentZIndex !== undefined) segments.push({ zIndex: segmentZIndex, start: segmentStart, count: index - segmentStart });
+        segmentZIndex = command.zIndex;
+        segmentStart = index;
+      }
       const layout = layoutText(
         command.spans,
         {
@@ -504,9 +517,10 @@ export class GpuText3D {
         index++;
       }
     }
+    if (segmentZIndex !== undefined) segments.push({ zIndex: segmentZIndex, start: segmentStart, count: index - segmentStart });
+    this.#segments = segments.filter((segment) => segment.count > 0);
     trim(this.#glyphs, this.#ids, index);
     this.#count = this.#bridge.publish();
-    indirectArgs(this.#indirect, 6, this.#count);
     this.#viewProjection = camera.viewProjection;
     this.#view = camera.view;
     this.#uploadAtlas();
@@ -547,23 +561,25 @@ export class GpuText3D {
     }
   }
 
-  /**
-   * Refreshes this draw's indirect arguments inside an already-open compute pass, so a frame
-   * only needs one pass for every indirect draw in it.
-   */
-  dispatchIndirect(pass: FrameComputePass): void {
-    this.#indirectCompute.set({ params: { vertexCount: 6, instanceCount: this.#count }, args: this.#indirect });
-    pass.dispatch(this.#indirectCompute, 1);
+  /** Every `zIndex` this renderer has glyphs for, ascending. */
+  zIndexes(): readonly number[] {
+    return this.#segments.map((segment) => segment.zIndex);
   }
 
-  draw(pass: FramePass): void {
-    if (this.#count === 0) return;
+  /**
+   * Draws the glyph quads of one `zIndex` segment. A block's glyphs are one contiguous run, so a
+   * segment costs exactly one draw; the run comes from the per-call `instances`/`firstInstance`
+   * pair rather than indirect arguments, because one pass visits several segments in a row.
+   */
+  drawSegment(pass: FramePass, zIndex: number): void {
+    const segment = this.#segments.find((candidate) => candidate.zIndex === zIndex);
+    if (segment === undefined) return;
     this.#draw.set({
       camera: { viewProjection: this.#viewProjection, view: this.#view, viewportSize: pass.target.size },
       atlas: this.#atlasTexture,
       atlasSampler: this.#sampler,
     });
-    pass.draw(this.#draw, { indirect: this.#indirect });
+    pass.draw(this.#draw, { instances: segment.count, firstInstance: segment.start });
   }
 
   get glyphCount(): number {
@@ -573,7 +589,6 @@ export class GpuText3D {
   destroy(): void {
     this.#draw.dispose();
     this.#bridge.destroy();
-    this.#indirectCompute.dispose();
     this.#atlasTexture.dispose();
   }
 }

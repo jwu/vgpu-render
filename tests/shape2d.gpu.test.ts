@@ -43,8 +43,10 @@ function softCount(pixels: Uint8Array): number {
   return count;
 }
 
-function shape(partial: Omit<Shape2DCommand, "kind">): FrameCommand {
-  return { kind: "shape2d", ...partial };
+/** `zIndex` stays optional for the same reason every command defaults it: one segment is the
+ * pre-`zIndex` order, which is what these cases exercise. */
+function shape(partial: Omit<Shape2DCommand, "kind" | "zIndex"> & { zIndex?: number }): FrameCommand {
+  return { kind: "shape2d", zIndex: 0, ...partial };
 }
 
 /** Shared defaults so each case only spells out the parameters it is about. */
@@ -60,6 +62,7 @@ const base = {
   sides: 0,
   color: white,
   space: "world2d" as const,
+  zIndex: 0,
   layer: 1,
 };
 

@@ -21,6 +21,7 @@ import type {
   ResolvedLineDefaults,
   ResolvedPointDefaults,
 } from "./frame-draw-list.js";
+import { resolveZIndex } from "./frame-draw-list.js";
 
 export type Line2DOptions = {
   color?: Color;
@@ -31,6 +32,11 @@ export type Line2DOptions = {
   joint?: LineJoint;
   /** Defaults to `world2d`; see `camera-2d.ts`. */
   space?: Space2D;
+  /**
+   * Layering key shared with the other 2D primitives and with text. Higher draws later, so it
+   * covers lower ones. It is never depth: the 2D layer writes no depth at all.
+   */
+  zIndex?: number;
   layer?: LayerMask;
 };
 
@@ -65,6 +71,8 @@ export type Point2DOptions = {
   sizeMode?: "screen" | "world";
   round?: boolean;
   space?: Space2D;
+  /** Layering key; see {@link Line2DOptions.zIndex}. */
+  zIndex?: number;
   layer?: LayerMask;
 };
 
@@ -94,6 +102,8 @@ export type Shape2DOptions = {
   /** Sweep of `arc`/`sector`/`segment` in radians. Defaults to a full turn; negative turns the other way. */
   sweep?: number;
   space?: Space2D;
+  /** Layering key; see {@link Line2DOptions.zIndex}. */
+  zIndex?: number;
   layer?: LayerMask;
 };
 
@@ -126,6 +136,7 @@ export type Shape2DCommand = {
   readonly sides: number;
   readonly color: Color;
   readonly space: Space2D;
+  readonly zIndex: number;
   readonly layer: LayerMask;
 };
 
@@ -137,6 +148,7 @@ export type Point2DCommand = {
   readonly sizeMode: "screen" | "world";
   readonly round?: boolean;
   readonly space: Space2D;
+  readonly zIndex: number;
   readonly layer: LayerMask;
 };
 
@@ -151,6 +163,7 @@ export type Line2DCommand = {
   readonly dash?: readonly [number, number, number];
   readonly joint?: LineJoint;
   readonly space: Space2D;
+  readonly zIndex: number;
   readonly layer: LayerMask;
 };
 
@@ -170,6 +183,7 @@ export type Joint2DCommand = {
   readonly dash?: readonly [number, number, number];
   readonly joint: RenderedJoint;
   readonly space: Space2D;
+  readonly zIndex: number;
   readonly layer: LayerMask;
 };
 
@@ -343,6 +357,7 @@ export class FrameDrawList2D {
       size,
       sizeMode: options.sizeMode ?? this.#defaults.point.sizeMode ?? "screen",
       space: spaceValue(options.space),
+      zIndex: resolveZIndex(options.zIndex),
       layer: layer(options.layer ?? this.#defaults.point.layer),
       ...(options.round === undefined ? {} : { round: options.round }),
     });
@@ -494,6 +509,7 @@ export class FrameDrawList2D {
       width,
       widthMode: options.widthMode ?? this.#defaults.line.widthMode ?? "screen",
       space: spaceValue(options.space),
+      zIndex: resolveZIndex(options.zIndex),
       layer: layer(options.layer ?? this.#defaults.line.layer),
       ...(dash === undefined ? {} : { dash }),
       ...(joint === undefined ? {} : { joint }),
@@ -1099,6 +1115,7 @@ export class FrameDrawList2D {
       widthMode: options.widthMode ?? this.#defaults.line.widthMode ?? "screen",
       joint,
       space: spaceValue(options.space),
+      zIndex: resolveZIndex(options.zIndex),
       layer: layer(options.layer ?? this.#defaults.line.layer),
       ...(dash === undefined ? {} : { dash: [dash[0], dash[1], dash[2] + distance] as const }),
     });
@@ -1135,6 +1152,7 @@ export class FrameDrawList2D {
       sides: fields.sides ?? 0,
       color: color(options.color),
       space: spaceValue(options.space),
+      zIndex: resolveZIndex(options.zIndex),
       layer: layer(options.layer),
       ...(dash === undefined ? {} : { dash }),
     });

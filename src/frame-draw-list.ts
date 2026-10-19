@@ -232,6 +232,12 @@ export type TextOptions = {
   source?: string;
   /** Whether geometry in front of the block occludes it. Defaults to `true`, like bevy's `Text2d`. */
   depthTest?: boolean;
+  /**
+   * Layering key shared with the 2D primitives. Blocks and 2D primitives with different keys are
+   * drawn in ascending key order, so a higher key covers a lower one. It is never depth: nothing
+   * here writes the depth buffer. Defaults to the block's, then to `0`.
+   */
+  zIndex?: number;
   layer?: LayerMask;
 };
 
@@ -279,6 +285,8 @@ export type TextCommand = {
   readonly rotation: readonly [number, number, number];
   readonly source?: string;
   readonly depthTest: boolean;
+  /** Resolved layering key; see {@link TextOptions.zIndex}. */
+  readonly zIndex: number;
   readonly layer: LayerMask;
 };
 
@@ -333,6 +341,8 @@ export type TextDefaults = {
   rotation?: readonly [number, number, number];
   source?: string;
   depthTest?: boolean;
+  /** Default layering key for text blocks. See {@link TextOptions.zIndex}. */
+  zIndex?: number;
   layer?: LayerMask;
 };
 
@@ -344,6 +354,17 @@ export type FrameDrawListDefaults = {
 
 export const DEFAULT_COLOR: Color = [1, 1, 1, 1];
 export const DEFAULT_LAYER = 1;
+/**
+ * Default layering key for both 2D primitives and text. Every command starts in one segment,
+ * whose internal order is the pre-`zIndex` draw order, so an unannotated frame renders the same.
+ */
+export const DEFAULT_Z_INDEX = 0;
+/**
+ * Inclusive bounds of `zIndex`. Every distinct value in a frame costs extra draw calls, so the
+ * range stays deliberately small.
+ */
+export const MIN_Z_INDEX = -8;
+export const MAX_Z_INDEX = 8;
 /** Default block font size in pixels; the world spaces scale it by `DEFAULT_TEXT_PIXEL_SIZE`. */
 export const DEFAULT_TEXT_SIZE = 16;
 /** Default world units per font pixel, i.e. a 0.32 world-unit glyph at the default size. */
@@ -393,6 +414,21 @@ function layerValue(value: number, name: string): LayerMask {
 
 function layer(value: number | undefined): LayerMask {
   return value === undefined ? DEFAULT_LAYER : layerValue(value, "layer");
+}
+
+/**
+ * Validates a layering key. It is shared by 2D primitives and text so the two cannot drift apart
+ * on what a legal key is, and so the renderer can group by key without further checks.
+ */
+export function resolveZIndex(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_Z_INDEX;
+  if (!Number.isInteger(value)) {
+    throw new RangeError("zIndex must be an integer");
+  }
+  if (value < MIN_Z_INDEX || value > MAX_Z_INDEX) {
+    throw new RangeError(`zIndex must be between ${MIN_Z_INDEX} and ${MAX_Z_INDEX}`);
+  }
+  return value;
 }
 
 function sizeModeValue(value: string, name: string): "screen" | "world" {
@@ -531,6 +567,7 @@ export type ResolvedTextDefaults = {
   rotation: readonly [number, number, number] | undefined;
   source: string | undefined;
   depthTest: boolean | undefined;
+  zIndex: number | undefined;
   layer: LayerMask | undefined;
 };
 
@@ -615,6 +652,7 @@ export function resolveFrameDrawListDefaults(defaults: FrameDrawListDefaults = {
       rotation: text.rotation === undefined ? undefined : vec3(text.rotation, "default text rotation"),
       source: text.source,
       depthTest: text.depthTest,
+      zIndex: text.zIndex === undefined ? undefined : resolveZIndex(text.zIndex),
       layer: text.layer === undefined ? undefined : layerValue(text.layer, "default text layer"),
     },
   };
@@ -939,6 +977,7 @@ export class FrameDrawList {
       rotation,
       ...(source === undefined ? {} : { source }),
       depthTest: options.depthTest ?? defaults.depthTest ?? true,
+      zIndex: resolveZIndex(options.zIndex ?? defaults.zIndex),
       layer: layer(options.layer ?? defaults.layer),
       ...(bounds === undefined ? {} : { bounds }),
     });

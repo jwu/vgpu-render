@@ -10,17 +10,20 @@
  *
  * `world2d` and `screen` commands need different matrices, and one draw binds one uniform, so each
  * space gets its own bucket of primitives. The layer draws after every 3D primitive with depth
- * write off, which is what makes the 2D overlay unconditionally cover the 3D world.
+ * write off, which is what makes the 2D overlay unconditionally cover the 3D world. Within the
+ * layer, commands are grouped by `zIndex` and drawn one instance slice per key, so a segment can
+ * interleave with text that shares the key; see `docs/z-index.md`.
  */
 
-import { compute, draw, geometry, storage, type Compute, type Draw, type FrameComputePass, type FramePass, type Gpu, type StorageBuffer } from "vgpu";
+import { draw, geometry, type Draw, type FramePass, type Gpu } from "vgpu";
 import { prepareShader } from "@vgpu/wgsl/prepare";
 
 import { instanceGeometry, type InstanceGeometry } from "vgpu/scene/gpu";
 import { instances, type InstanceCollection, type InstanceId } from "vgpu/scene";
 import { DEFAULT_CAMERA_2D, projection2D, type Camera2D, type Space2D, type Vec2 } from "./camera-2d.js";
 import type { FrameCommand2D, Joint2DCommand, Line2DCommand, Point2DCommand, Shape2DCommand, Shape2DKind } from "./frame-draw-list-2d.js";
-import { identity, indirectArgs, INDIRECT_SHADER, trim, world, zeroGeometry } from "./gpu-instancing.js";
+import { identity, trim, world, zeroGeometry } from "./gpu-instancing.js";
+import { EMPTY_RANGE, orderedZIndexes, rangesByZIndex, sortedByZIndex, zIndexesOf, type SegmentRange } from "./draw-order.js";
 import { shape2dShader } from "./shape2d-shader.js";
 
 export type GpuDebugDraw2DOptions = {
@@ -206,6 +209,15 @@ function jointGeometry(gpu: Gpu, vertexCount: number) {
   });
 }
 
+/** One `zIndex` segment: the instance run of every 2D kind that shares that key. */
+type Segment2D = {
+  readonly zIndex: number;
+  readonly shape: SegmentRange;
+  readonly point: SegmentRange;
+  readonly line: SegmentRange;
+  readonly joint: SegmentRange;
+};
+
 /**
  * The primitives of one 2D space. Separate instance collections from the 3D layer, because one
  * draw binds one camera uniform and both layers can be visible in the same frame.
@@ -232,12 +244,9 @@ class SpaceBucket2D {
   readonly #lineDraw: Draw;
   readonly #jointDraw: Draw;
   readonly #shapeDraw: Draw;
-  readonly #pointIndirect: StorageBuffer;
-  readonly #lineIndirect: StorageBuffer;
-  readonly #jointIndirect: StorageBuffer;
-  readonly #shapeIndirect: StorageBuffer;
-  readonly #indirectCompute: Compute;
   readonly #jointVertexCount: number;
+  /** Instance runs per `zIndex`, ascending; empty when the bucket drew nothing. */
+  #segments: readonly Segment2D[] = [];
   #pointCount = 0;
   #lineCount = 0;
   #jointCount = 0;
@@ -265,74 +274,71 @@ class SpaceBucket2D {
     this.#lineDraw = draw(gpu, { shader: prepareShader(options.shaders.line), geometry: this.#lineBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth });
     this.#jointDraw = draw(gpu, { shader: prepareShader(options.shaders.joint), geometry: this.#jointBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth });
     this.#shapeDraw = draw(gpu, { shader: prepareShader(shape2dShader()), geometry: this.#shapeBridge.geometry, instances: 0, blend: "alpha", cull: "none", depth });
-    this.#pointIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
-    this.#lineIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
-    this.#jointIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
-    this.#shapeIndirect = storage(gpu, 16, { access: "read-write", indirect: true });
-    this.#indirectCompute = compute(gpu, INDIRECT_SHADER);
-    indirectArgs(this.#pointIndirect, 6, 0);
-    indirectArgs(this.#lineIndirect, 6, 0);
-    indirectArgs(this.#jointIndirect, options.jointVertexCount, 0);
-    indirectArgs(this.#shapeIndirect, 6, 0);
   }
 
   prepare(points: readonly Point2DCommand[], lines: readonly Line2DCommand[], joints: readonly Joint2DCommand[], shapes: readonly Shape2DCommand[]): void {
+    // Visit order is `zIndex` order, so each kind's instances end up contiguous per segment.
+    const pointOrder = sortedByZIndex(points);
+    const lineOrder = sortedByZIndex(lines);
+    const jointOrder = sortedByZIndex(joints);
+    const shapeOrder = sortedByZIndex(shapes);
+    const zIndexes = zIndexesOf([points, lines, joints, shapes]);
+    const shapeRanges = rangesByZIndex(shapeOrder, zIndexes);
+    const pointRanges = rangesByZIndex(pointOrder, zIndexes);
+    const lineRanges = rangesByZIndex(lineOrder, zIndexes);
+    const jointRanges = rangesByZIndex(jointOrder, zIndexes);
+    this.#segments = zIndexes.map((zIndex, index) => ({
+      zIndex,
+      shape: shapeRanges[index] ?? EMPTY_RANGE,
+      point: pointRanges[index] ?? EMPTY_RANGE,
+      line: lineRanges[index] ?? EMPTY_RANGE,
+      joint: jointRanges[index] ?? EMPTY_RANGE,
+    }));
     this.#pointDirty = false;
     this.#lineDirty = false;
     this.#jointDirty = false;
     this.#shapeDirty = false;
-    for (let index = 0; index < points.length; index++) this.#addPoint(points[index]!, index);
-    for (let index = 0; index < lines.length; index++) this.#addLine(lines[index]!, index);
-    for (let index = 0; index < joints.length; index++) this.#addJoint(joints[index]!, index);
-    for (let index = 0; index < shapes.length; index++) this.#addShape(shapes[index]!, index);
-    if (trim(this.#points, this.#pointIds, points.length)) this.#pointDirty = true;
-    if (trim(this.#lines, this.#lineIds, lines.length)) this.#lineDirty = true;
-    if (trim(this.#joints, this.#jointIds, joints.length)) this.#jointDirty = true;
-    if (trim(this.#shapes, this.#shapeIds, shapes.length)) this.#shapeDirty = true;
-    if (this.#pointCache.length !== points.length) this.#pointDirty = true;
-    if (this.#lineCache.length !== lines.length) this.#lineDirty = true;
-    if (this.#jointCache.length !== joints.length) this.#jointDirty = true;
-    if (this.#shapeCache.length !== shapes.length) this.#shapeDirty = true;
-    this.#pointCache.length = points.length;
-    this.#lineCache.length = lines.length;
-    this.#jointCache.length = joints.length;
-    this.#shapeCache.length = shapes.length;
-    if (this.#pointDirty) {
-      this.#pointCount = this.#pointBridge.publish();
-      indirectArgs(this.#pointIndirect, 6, this.#pointCount);
-    }
-    if (this.#lineDirty) {
-      this.#lineCount = this.#lineBridge.publish();
-      indirectArgs(this.#lineIndirect, 6, this.#lineCount);
-    }
-    if (this.#jointDirty) {
-      this.#jointCount = this.#jointBridge.publish();
-      indirectArgs(this.#jointIndirect, this.#jointVertexCount, this.#jointCount);
-    }
-    if (this.#shapeDirty) {
-      this.#shapeCount = this.#shapeBridge.publish();
-      indirectArgs(this.#shapeIndirect, 6, this.#shapeCount);
-    }
+    for (let index = 0; index < pointOrder.length; index++) this.#addPoint(pointOrder[index]!, index);
+    for (let index = 0; index < lineOrder.length; index++) this.#addLine(lineOrder[index]!, index);
+    for (let index = 0; index < jointOrder.length; index++) this.#addJoint(jointOrder[index]!, index);
+    for (let index = 0; index < shapeOrder.length; index++) this.#addShape(shapeOrder[index]!, index);
+    if (trim(this.#points, this.#pointIds, pointOrder.length)) this.#pointDirty = true;
+    if (trim(this.#lines, this.#lineIds, lineOrder.length)) this.#lineDirty = true;
+    if (trim(this.#joints, this.#jointIds, jointOrder.length)) this.#jointDirty = true;
+    if (trim(this.#shapes, this.#shapeIds, shapeOrder.length)) this.#shapeDirty = true;
+    if (this.#pointCache.length !== pointOrder.length) this.#pointDirty = true;
+    if (this.#lineCache.length !== lineOrder.length) this.#lineDirty = true;
+    if (this.#jointCache.length !== jointOrder.length) this.#jointDirty = true;
+    if (this.#shapeCache.length !== shapeOrder.length) this.#shapeDirty = true;
+    this.#pointCache.length = pointOrder.length;
+    this.#lineCache.length = lineOrder.length;
+    this.#jointCache.length = jointOrder.length;
+    this.#shapeCache.length = shapeOrder.length;
+    if (this.#pointDirty) this.#pointCount = this.#pointBridge.publish();
+    if (this.#lineDirty) this.#lineCount = this.#lineBridge.publish();
+    if (this.#jointDirty) this.#jointCount = this.#jointBridge.publish();
+    if (this.#shapeDirty) this.#shapeCount = this.#shapeBridge.publish();
   }
 
-  dispatchIndirect(pass: FrameComputePass): void {
-    this.#indirectCompute.set({ params: { vertexCount: 6, instanceCount: this.#pointCount }, args: this.#pointIndirect });
-    pass.dispatch(this.#indirectCompute, 1);
-    this.#indirectCompute.set({ params: { vertexCount: 6, instanceCount: this.#lineCount }, args: this.#lineIndirect });
-    pass.dispatch(this.#indirectCompute, 1);
-    this.#indirectCompute.set({ params: { vertexCount: this.#jointVertexCount, instanceCount: this.#jointCount }, args: this.#jointIndirect });
-    pass.dispatch(this.#indirectCompute, 1);
-    this.#indirectCompute.set({ params: { vertexCount: 6, instanceCount: this.#shapeCount }, args: this.#shapeIndirect });
-    pass.dispatch(this.#indirectCompute, 1);
+  /** Instance runs of every kind for one `zIndex`, ascending by key. */
+  get segments(): readonly Segment2D[] {
+    return this.#segments;
   }
 
-  draw(pass: FramePass, camera: Camera2D): void {
-    if (this.#pointCount === 0 && this.#lineCount === 0 && this.#jointCount === 0 && this.#shapeCount === 0) return;
+  /**
+   * Draws one `zIndex` segment. Each kind contributes its own slice of the instance buffer, so a
+   * segment costs one draw per kind it actually uses. The slice comes from the per-call
+   * `instances`/`firstInstance` pair rather than indirect arguments, because the counts are known
+   * here and one pass visits several segments in a row.
+   */
+  drawSegment(pass: FramePass, camera: Camera2D, zIndex: number): void {
+    const segment = this.#segments.find((candidate) => candidate.zIndex === zIndex);
+    if (segment === undefined) return;
     const viewportSize = pass.target.size;
     const viewProjection = projection2D(this.space, camera, viewportSize);
     // Filled shapes first, then strokes, then points and joints: the layer reads as a filled
     // backdrop with its outlines and markers drawn over it.
-    if (this.#shapeCount > 0) {
+    if (segment.shape.count > 0) {
       this.#shapeDraw.set({
         camera: {
           viewProjection,
@@ -341,19 +347,19 @@ class SpaceBucket2D {
           pixelsPerUnit: this.space === "screen" ? 1 : camera.zoom,
         },
       });
-      pass.draw(this.#shapeDraw, { indirect: this.#shapeIndirect });
+      pass.draw(this.#shapeDraw, { instances: segment.shape.count, firstInstance: segment.shape.start });
     }
-    if (this.#pointCount > 0) {
+    if (segment.point.count > 0) {
       this.#pointDraw.set({ camera: { viewProjection, viewportSize } });
-      pass.draw(this.#pointDraw, { indirect: this.#pointIndirect });
+      pass.draw(this.#pointDraw, { instances: segment.point.count, firstInstance: segment.point.start });
     }
-    if (this.#lineCount > 0) {
+    if (segment.line.count > 0) {
       this.#lineDraw.set({ camera: { viewProjection, view: IDENTITY_VIEW, viewportSize } });
-      pass.draw(this.#lineDraw, { indirect: this.#lineIndirect });
+      pass.draw(this.#lineDraw, { instances: segment.line.count, firstInstance: segment.line.start });
     }
-    if (this.#jointCount > 0) {
+    if (segment.joint.count > 0) {
       this.#jointDraw.set({ camera: { viewProjection, view: IDENTITY_VIEW, viewportSize } });
-      pass.draw(this.#jointDraw, { indirect: this.#jointIndirect });
+      pass.draw(this.#jointDraw, { instances: segment.joint.count, firstInstance: segment.joint.start });
     }
   }
 
@@ -362,7 +368,6 @@ class SpaceBucket2D {
     this.#lineDraw.dispose();
     this.#jointDraw.dispose();
     this.#shapeDraw.dispose();
-    this.#indirectCompute.dispose();
     this.#pointBridge.destroy();
     this.#lineBridge.destroy();
     this.#jointBridge.destroy();
@@ -520,14 +525,21 @@ export class GpuDebugDraw2D {
     this.#buckets.screen.prepare(points.screen, lines.screen, joints.screen, shapes.screen);
   }
 
-  dispatchIndirect(pass: FrameComputePass): void {
-    this.#buckets.world2d.dispatchIndirect(pass);
-    this.#buckets.screen.dispatchIndirect(pass);
+  /**
+   * Every `zIndex` either bucket used, ascending. The caller draws these in order and interleaves
+   * them with the text segments, which share the same key space.
+   */
+  zIndexes(): readonly number[] {
+    return orderedZIndexes([
+      this.#buckets.world2d.segments.map((segment) => segment.zIndex),
+      this.#buckets.screen.segments.map((segment) => segment.zIndex),
+    ]);
   }
 
-  draw(pass: FramePass): void {
-    this.#buckets.world2d.draw(pass, this.#camera);
-    this.#buckets.screen.draw(pass, this.#camera);
+  /** Draws one `zIndex` of both spaces: `world2d` first, then the `screen` overlay, as before. */
+  drawSegment(pass: FramePass, zIndex: number): void {
+    this.#buckets.world2d.drawSegment(pass, this.#camera, zIndex);
+    this.#buckets.screen.drawSegment(pass, this.#camera, zIndex);
   }
 
   destroy(): void {
