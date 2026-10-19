@@ -31,8 +31,8 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
   Every cell shares the clock, the geometry and the parameters, so the curve difference is the
   only variable, and a square plot of each curve with a live playhead sits above its effect;
   `linear` (the only directionless family) is the baseline and the diagonal guide inside every
-  plot. `heal-beam` is the exception: one effect shown large, with its elements on a timeline
-  instead of a matrix.
+  plot. `heal-beam` was the first page to show **one** effect instead of a matrix, with its
+  elements on a timeline; `fireball` and `chain-lightning` follow the same shape.
 
   - `slash-arc` — the swing grows: a filled sector and an arc stroke sweep out from the start
     angle, so the swept angle at any instant *is* the curve.
@@ -64,6 +64,14 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
     the four curve rows sit underneath, sharing one playhead: ride it and the strip says the flight
     is still climbing while every blast row is flat, then the ring's arc peaks and turns over while
     the sparks are at their widest.
+  - `chain-lightning` — a strike, not a beam: one small charge, then the bolt lands and forks out of
+    the first enemy to every other one on that same frame. The path is a hard zig-zag — a few long
+    legs with big throws, rebuilt every frame from a deterministic hash — so it reads as lightning
+    drawn between two bodies rather than a trembling wire or a smooth arc. The tree then kicks twice
+    and is gone, and the rest of the loop is empty on purpose. `targets` changes how many forks hang
+    off the tree; the three rows plot the strike, each bolt's afterglow strobe, and the hit flash
+    and ring. No engine reference — it is designed from the "first hit, then the rest on the same
+    frame" beat.
 
 Both sets share the engine (`gallery/demo-engine.ts`): a switch swaps the registry,
 dispatcher, storage record and camera, while the WebGPU device and render loop stay up.

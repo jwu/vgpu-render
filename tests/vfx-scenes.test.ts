@@ -40,6 +40,24 @@ import {
   sparkBrightness as fireballSparkBrightness,
   tailBrightness,
 } from "../examples/vfx/fireball/scene.js";
+import {
+  CASTER as CHAIN_CASTER,
+  CHAIN_VIEW,
+  CHARGE_RATIO as CHAIN_CHARGE_RATIO,
+  BOLT_LIFE,
+  BOLT_PULSES,
+  ENEMY_RADIUS,
+  ENEMY_SLOTS,
+  FLICKER_FPS,
+  STRIKE_RATIO,
+  TIMELINE_LAYOUT as CHAIN_TIMELINE_LAYOUT,
+  boltFlicker,
+  boltPath,
+  chainPhase,
+  chainPhaseAt,
+  enemyCount,
+  strikePulse,
+} from "../examples/vfx/chain-lightning/scene.js";
 import { inCirc, outCirc } from "../examples/vfx/easing.js";
 import {
   EASING_DIRECTIONS,
@@ -875,3 +893,146 @@ describe("fireball", () => {
     expect(verticals[0]!.start[0]).toBeCloseTo(FIREBALL_TIMELINE_LAYOUT.left + FIREBALL_TIMELINE_LAYOUT.width * 0.5, 6);
   });
 });
+
+describe("chain lightning", () => {
+  const commandsOf = (time: number, params: Record<string, number> = {}) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("chain-lightning", drawList, time, undefined, undefined, params);
+    return drawList.commands();
+  };
+
+  const widthsOf = (commands: ReturnType<typeof commandsOf>) =>
+    commands.flatMap((command) =>
+      command.kind === "line2d" && command.widthMode === "world" ? [command.width] : [],
+    );
+
+  test("charge, strike, then fork on the hit frame", () => {
+    // The caster only charges: no bolt exists before the hit frame.
+    expect(chainPhaseAt(0).charge).toBe(0);
+    expect(chainPhaseAt(CHAIN_CHARGE_RATIO * 0.5).charge).toBeCloseTo(0.5, 6);
+    expect(chainPhaseAt(CHAIN_CHARGE_RATIO * 0.5).strike).toBe(0);
+    expect(chainPhaseAt(STRIKE_RATIO - 1e-9).fork).toBe(0);
+    expect(chainPhaseAt(STRIKE_RATIO - 1e-9).flash).toBe(0);
+    expect(chainPhaseAt(STRIKE_RATIO - 1e-9).ring).toBe(0);
+    expect(chainPhaseAt(STRIKE_RATIO - 1e-9).fade).toBe(0);
+    // The hit frame is the whole strike: full-length main bolt, every fork present, full brightness.
+    expect(chainPhaseAt(STRIKE_RATIO).strike).toBeCloseTo(1, 6);
+    const after = STRIKE_RATIO + 1e-6;
+    expect(chainPhaseAt(after).fork).toBe(1);
+    expect(chainPhaseAt(after).flash).toBeGreaterThan(0.999);
+    expect(chainPhaseAt(after).fade).toBeGreaterThan(0.999);
+    // It lands inside the first tenth of the loop, and the forks are never partially drawn.
+    expect(STRIKE_RATIO).toBeLessThan(0.1);
+  });
+
+  test("flick twice, then leave the rest of the loop empty", () => {
+    // Three kicks, each weaker than the one before: the strike plus two afterglow beats.
+    const kick = (index: number) => strikePulse(index / BOLT_PULSES);
+    expect(kick(0)).toBeCloseTo(1, 6);
+    expect(kick(1)).toBeCloseTo(1 - 1 / BOLT_PULSES, 6);
+    expect(kick(2)).toBeCloseTo(1 - 2 / BOLT_PULSES, 6);
+    expect(kick(1)).toBeLessThan(kick(0));
+    expect(kick(2)).toBeLessThan(kick(1));
+    // Between the kicks the tree is dark: that gap is what makes it a strike rather than a fade.
+    expect(strikePulse(1 / BOLT_PULSES - 1e-9)).toBeLessThan(1e-6);
+    // After `BOLT_LIFE` nothing is left for the rest of the loop — the empty air is the effect.
+    expect(chainPhaseAt(STRIKE_RATIO + BOLT_LIFE * 0.5).fade).toBeGreaterThan(0);
+    expect(chainPhaseAt(STRIKE_RATIO + BOLT_LIFE).fade).toBe(0);
+    expect(chainPhaseAt(STRIKE_RATIO + BOLT_LIFE + 1e-6).fade).toBe(0);
+    expect(chainPhaseAt(1 - 1e-9).fade).toBe(0);
+    expect(STRIKE_RATIO + BOLT_LIFE).toBeLessThan(0.5);
+    // A clock outside the loop wraps instead of extrapolating.
+    expect(chainPhase(LOOP_SECONDS + LOOP_SECONDS * 0.5).progress).toBeCloseTo(0.5, 6);
+    expect(chainPhase(-LOOP_SECONDS * 0.25).progress).toBeCloseTo(0.75, 6);
+  });
+
+  test("clamp the target count to the fixed slots", () => {
+    expect(enemyCount({})).toBe(4);
+    expect(enemyCount({ targets: 0 })).toBe(1);
+    expect(enemyCount({ targets: 2.4 })).toBe(2);
+    expect(enemyCount({ targets: 99 })).toBe(ENEMY_SLOTS.length);
+    // Fixed slots, not a generated arc: every body stays inside the fitted extent and the first one
+    // is the only enemy the main bolt can reach.
+    for (const slot of ENEMY_SLOTS) {
+      expect(Math.abs(slot[0])).toBeLessThan(CHAIN_VIEW.width / 2 - ENEMY_RADIUS);
+      expect(Math.abs(slot[1])).toBeLessThan(CHAIN_VIEW.height / 2 - ENEMY_RADIUS);
+    }
+    expect(ENEMY_SLOTS[0]![0]).toBeGreaterThan(CHAIN_CASTER[0]);
+    // One fork per extra enemy. Sampled just after the hit, while the tree is still lit.
+    expect(widthsOf(commandsOf(LOOP_SECONDS * 0.1, { targets: 6 })).length).toBeGreaterThan(
+      widthsOf(commandsOf(LOOP_SECONDS * 0.1, { targets: 1 })).length,
+    );
+  });
+
+  test("zig-zag the bolt with hard corners instead of waving it", () => {
+    const from: [number, number] = [0, 0];
+    const to: [number, number] = [10, 0];
+    const path = boltPath(from, to, 1, 1.8, 9);
+    // Both ends stay locked to the bodies, whatever happens in between.
+    expect(path[0]).toEqual(from);
+    expect(path[path.length - 1]).toEqual(to);
+    // Few legs, big throws: the path crosses its own straight line instead of bending to one side.
+    expect(path.length).toBe(10);
+    const deviations = path.slice(1, -1).map((point) => point[1]);
+    expect(Math.max(...deviations)).toBeGreaterThan(1);
+    expect(Math.min(...deviations)).toBeLessThan(-1);
+    // The corners are hard: at least one joint turns the path sharply, which is what a wave never does.
+    const heading = (a: readonly [number, number], b: readonly [number, number]) =>
+      Math.atan2(b[1] - a[1], b[0] - a[0]);
+    let sharpest = 0;
+    for (let index = 1; index + 1 < path.length; index++) {
+      const turn = heading(path[index]!, path[index + 1]!) - heading(path[index - 1]!, path[index]!);
+      sharpest = Math.max(sharpest, Math.abs(turn));
+    }
+    expect(sharpest).toBeGreaterThan(0.4);
+  });
+
+  test("rebuild every bolt from a deterministic hash", () => {
+    // The same loop position always yields the same shape, which is what makes a scrub or a
+    // screenshot comparison reproducible.
+    expect(boltFlicker(0.42, 3)).toBe(boltFlicker(0.42, 3));
+    // Successive frames re-crack the bolt, and neighbouring bolts do not share a phase.
+    const frame = Math.floor(0.42 * FLICKER_FPS);
+    const shapes = new Set(Array.from({ length: 8 }, (_, step) => boltFlicker((frame + step) / FLICKER_FPS, 3)));
+    expect(shapes.size).toBeGreaterThan(1);
+    expect(boltFlicker(0.42, 1)).not.toBe(boltFlicker(0.42, 2));
+    for (let step = 0; step <= 60; step++) {
+      for (let index = 0; index < ENEMY_SLOTS.length; index++) {
+        const value = boltFlicker(step / 60, index);
+        expect(value).toBeGreaterThan(0);
+        expect(value).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  test("flash every enemy on the same frame", () => {
+    const at = (targets: number) =>
+      commandsOf(LOOP_SECONDS * (STRIKE_RATIO + 0.01), { targets }).filter(
+        (command) => command.kind === "shape2d" && command.zIndex === 6,
+      );
+    // Two tiers of flash per body, all of them on the hit frame.
+    expect(at(1)).toHaveLength(2);
+    expect(at(4)).toHaveLength(8);
+  });
+
+  test("label every element row and draw one shared playhead", () => {
+    const texts = commandsOf(LOOP_SECONDS * 0.4).flatMap((command) =>
+      command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : [],
+    );
+    expect(texts).toEqual(expect.arrayContaining(["劈中 · 主弧", "电弧 · 余闪", "命中 · 闪光"]));
+    expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
+
+    // One vertical spanning every row, at the playhead's x.
+    const verticals = commandsOf(LOOP_SECONDS * 0.5)
+      .flatMap((command) => (command.kind === "line2d" ? [command] : []))
+      .filter(
+        (command) =>
+          command.widthMode !== "world" &&
+          command.start[0] === command.end[0] &&
+          Math.abs(command.end[1] - command.start[1]) > 4,
+      );
+    expect(verticals).toHaveLength(1);
+    expect(verticals[0]!.start[0]).toBeCloseTo(CHAIN_TIMELINE_LAYOUT.left + CHAIN_TIMELINE_LAYOUT.width * 0.5, 6);
+  });
+});
+
