@@ -98,7 +98,7 @@ for (const key of mergedKeys) {
 | `src/gpu-text-3d.ts` | `prepare` 记录段边界；`draw` 改为 `drawSegment`；新增 `zIndexes()` |
 | `src/gpu-debug-draw-3d.ts` | `#prepareText` 先按 `zIndex` 排序再按 `source` 分组；`draw()` 归并段 |
 | `tests/` | `zIndex` 归一化与越界；段归并纯函数；GPU 像素读回（图形盖文字 / 文字盖图形） |
-| `examples/` | 新增 `2d-order` 页面（`scene.ts` + `meta.ts` + registry + runtime 分发） |
+| `examples/` | 新增 `z-index` 页面：4 列 × 2 行的对照表。列 = 四条规则（`z1 > z0` / `z0 > z1` / `z0 = z0` / 三层），行 = 两类对象（图形之间、图形与文字）；前三列固定对象布局只改键 |
 | `docs/` | 本文件；`docs/reference-parity.md` 注明这是 vgpu 扩展，不是 Godot/bevy parity 项 |
 
 `INDIRECT_SHADER` / `dispatchIndirect` 对 2D 与文字会退化成 no-op（数量在 CPU 已知），

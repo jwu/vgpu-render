@@ -148,6 +148,6 @@ only difference from the reference encoding.
 Anything flagged `implemented: false` in `examples/registry.ts` is shown with a
 `·` marker in the gallery.
 
-`2d-order` and the `zIndex` layering key are a **vgpu extension, not a parity item**: the
+`z-index` and the `zIndex` layering key are a **vgpu extension, not a parity item**: the
 reference 2D addon has no such parameter and this port does not claim one. It orders draw calls
 only — it never touches the depth buffer. See `docs/z-index.md`.

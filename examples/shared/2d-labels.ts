@@ -293,15 +293,18 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "grid(color)", samples: ["base", "alpha", "color", "blue"] },
     ],
   },
-  "2d-order": {
-    title: "2D & Text Layering",
-    note: "zIndex · 2D primitives and text share one key space · higher draws later, so it covers lower · equal keys keep the old order",
+  "z-index": {
+    title: "Z-Index",
+    note: "zIndex orders draw calls, not depth · a higher key draws later, so it wins · top row shapes against shapes, bottom row shapes against text · equal keys fall back to recording order",
     columns: [
-      { title: "shape z1 · text z0", samples: ["shape covers text"] },
-      { title: "shape z0 · text z1", samples: ["text covers shape"] },
-      { title: "shape 0 · text 1 · shape 2", samples: ["text in between"] },
+      { title: "z1 > z0", samples: ["shapes", "shape\ntext"] },
+      { title: "z0 > z1", samples: ["shapes", "shape\ntext"] },
+      { title: "z0 = z0", samples: ["shapes", "shape\ntext"] },
+      { title: "z0 / z1 / z2", samples: ["shapes", "shape\ntext"] },
     ],
-    titleFont: 19,
+    titleFont: 22,
+    // Room for the column titles above the first row band.
+    extraHeight: 40,
   },
 };
 
