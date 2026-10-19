@@ -308,15 +308,19 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   },
   "2d-world-space-width": {
     title: "2D World Space Width",
-    note: "widthMode / sizeMode / strokeWidthMode · one number, two units · screen keeps its pixel width, world scales with the camera zoom · scroll to compare",
+    note: "one width, two units · outline / _s / _d × screen / world for all twelve shapes · _s is a fill and ignores the mode, and an arc has no _s · scroll to zoom and only the world columns grow",
     columns: [
-      { title: "line", samples: ["screen", "world"] },
-      { title: "point", samples: ["screen", "world"] },
-      { title: "shape", samples: ["screen", "world"] },
+      {
+        title: "outline\nscreen",
+        samples: ["rect", "rect_r", "circle", "ellipse", "arc", "annulus", "capsule", "polygon", "triangle", "rhombus", "sector", "segment"],
+      },
+      { title: "outline\nworld", samples: [] },
+      { title: "solid\nscreen", samples: [] },
+      { title: "solid\nworld", samples: [] },
+      { title: "dashed\nscreen", samples: [] },
+      { title: "dashed\nworld", samples: [] },
     ],
-    titleFont: 22,
-    // Room for the column titles above the first row.
-    extraHeight: 40,
+    titleFont: 16,
   },
 };
 

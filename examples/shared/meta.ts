@@ -63,7 +63,7 @@ export const jointNote = "Round, bevel and miter joins are rebuilt in the vertex
  * share a single note explaining both the layout and the SDF rendering model.
  */
 export const shape2DNote =
-  "One column per parameter, one sample per row, the same layout as the 3D matrix pages. Each shape is one instanced quad evaluated as a signed distance field, so a stroke width stays a pixel count at any zoom and nothing is triangulated on the CPU.";
+  "One column per parameter, one sample per row, the same layout as the 3D matrix pages. Each shape is one instanced quad evaluated as a signed distance field, so nothing is triangulated on the CPU; an outline is a canvas-pixel count by default and a `world2d` width instead when `strokeWidthMode` says so.";
 
 /** A gallery page's columns come from the same table the 3D scene draws its labels from. */
 export const columnsOf = (id: string): readonly ExampleColumn[] =>
