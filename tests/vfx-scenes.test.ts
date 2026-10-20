@@ -8,6 +8,26 @@ import { cellX, cellY } from "../examples/vfx/matrix.js";
 import { LOOP_SECONDS, slashPhase } from "../examples/vfx/slash-arc/scene.js";
 import { battleSwingPhase } from "../examples/vfx/battle-slash/scene.js";
 import { actionPhase } from "../examples/vfx/action-phase.js";
+import {
+  BAR_HEIGHT,
+  BAR_WIDTH,
+  EXAMPLES,
+  FLASH_PEAK,
+  FLASH_SECONDS,
+  GHOST_CHASE_SECONDS,
+  GHOST_DELAY_SECONDS,
+  LOOP_SECONDS as HEALTH_LOOP_SECONDS,
+  columnCenter,
+  loopSecondsOf,
+  windowOf,
+  windowSpan,
+  healPhase as healthHealPhase,
+  healPhaseAt,
+  hitPhase,
+  hitPhaseAt,
+  loopProgress,
+} from "../examples/vfx/health-bar/scene.js";
+import { HEALTH_BAR_PARAMS } from "../examples/vfx/health-bar/meta.js";
 import { shakeOffsetAt } from "../examples/vfx/hit-shake/scene.js";
 import { HIT_SHAKE_PARAMS } from "../examples/vfx/hit-shake/meta.js";
 import { PILLAR_LAYER_COUNT } from "../examples/vfx/pillar.js";
@@ -168,13 +188,22 @@ describe("battle pages", () => {
     }
   });
 
-  test("share one default duration and all be recolourable", () => {
+  test("publish the loop each page runs, and keep the strike pages on one duration", () => {
+    /**
+     * The hit-feedback pages are one instant each: switching between them must not change how long
+     * a hit takes. `health-bar` is the first page whose loop is a whole exchange (drop, chase,
+     * heal), so it opens on its own longer loop instead.
+     */
+    const STRIKE_IDS = ["hit-mark", "hit-flash", "hit-shake", "slash-arc", "battle-slash"];
     for (const example of VFX_EXAMPLES) {
       const durationSpec = example.params?.find((spec) => spec.key === "duration");
       expect(durationSpec, `${example.id} needs a duration parameter`).toBeDefined();
-      // One default for every page: switching pages should not change how long a hit takes.
-      expect(durationSpec!.default, `${example.id} default duration`).toBe(0.8);
-      expect(example.duration).toBe(0.8);
+      // The editable default and the declared loop are the same number, so the timeline opens on
+      // the loop the scene actually runs.
+      expect(durationSpec!.default, `${example.id} default duration`).toBe(example.duration);
+      expect(durationSpec!.min).toBeLessThan(durationSpec!.default);
+      expect(durationSpec!.max).toBeGreaterThan(durationSpec!.default);
+      if (STRIKE_IDS.includes(example.id)) expect(example.duration, `${example.id} strike loop`).toBe(0.8);
       // Every page exposes at least one hue slider; `hit-mark` has two (unit + mark).
       expect(example.params?.some((spec) => spec.key.toLowerCase().includes("hue"))).toBe(true);
       expect(example.params?.some((spec) => spec.key.toLowerCase().includes("saturation"))).toBe(true);
@@ -1434,5 +1463,234 @@ describe("ult flash", () => {
     );
     expect(texts).toEqual(expect.arrayContaining(["闪光 · 星核", "闪光 · 十字芒", "光圈 · 半径", "光圈 · 亮度"]));
     expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
+  });
+});
+
+describe("health bar", () => {
+  /** The page's defaults, so the assertions follow the sliders rather than a second copy of them. */
+  const defaults = Object.fromEntries(HEALTH_BAR_PARAMS.map((spec) => [spec.key, spec.default]));
+  const options = {
+    damage: defaults.damage!,
+    heal: defaults.heal!,
+    ghostDelay: defaults.ghostDelay!,
+    ghostChase: defaults.ghostChase!,
+    healSpan: defaults.healSpan!,
+    healFade: defaults.healFade!,
+  };
+  const duration = HEALTH_LOOP_SECONDS;
+  const span = windowSpan(options);
+  const healthAfterHit = 1 - options.damage;
+  /** Where the loop is `seconds` in — both examples start at zero, so this is their own clock. */
+  const at = (seconds: number, overrides: Partial<typeof options> = {}) => {
+    const merged = { ...options, ...overrides };
+    const loop = loopSecondsOf(duration, merged);
+    return {
+      hit: hitPhaseAt(seconds / loop, duration, merged),
+      heal: healPhaseAt(seconds / loop, duration, merged),
+    };
+  };
+
+  test("open on the simulator's ghost and flash timing", () => {
+    // `GHOST_DELAY` / `GHOST_CHASE` / `HIT_FLASH_FRAMES` from `~/gamedev/battle`.
+    expect(GHOST_DELAY_SECONDS).toBeCloseTo(0.22, 6);
+    expect(GHOST_CHASE_SECONDS).toBeCloseTo(0.38, 6);
+    expect(FLASH_SECONDS).toBeCloseTo(0.3, 6);
+    // The shared window is the longer of the two effects, so neither is cut off.
+    expect(span).toBeCloseTo(
+      Math.max(GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS, options.healSpan + options.healFade),
+      6,
+    );
+  });
+
+  test("start both examples on the first frame", () => {
+    const phase = at(0);
+    // The hit has already landed…
+    expect(phase.hit.health).toBeCloseTo(healthAfterHit, 6);
+    expect(phase.hit.ghost).toBeCloseTo(1, 6);
+    expect(phase.hit.flash).toBeCloseTo(FLASH_PEAK, 6);
+    // …and the heal is already running on the other body, from the same frame.
+    expect(phase.heal.health).toBeCloseTo(healthAfterHit, 6);
+    expect(phase.heal.healFill).toBeCloseTo(0, 6);
+    expect(phase.heal.glow).toBe(0);
+  });
+
+  test("let the shorter effect wait for the longer one", () => {
+    // The heal is 0.5 s, the chase 0.6 s: by 0.55 the heal is done and simply holds its last frame
+    // while the hit's ghost is still walking.
+    const phase = at(0.55);
+    expect(options.healSpan + options.healFade).toBeLessThan(GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS);
+    expect(phase.heal.health).toBeCloseTo(1, 6);
+    expect(phase.heal.glow).toBe(0);
+    expect(phase.hit.ghost).toBeGreaterThan(healthAfterHit);
+  });
+
+  test("hold the ghost for the whole delay, then walk it to the fill", () => {
+    expect(at(GHOST_DELAY_SECONDS * 0.99).hit.ghost).toBeCloseTo(1, 6);
+    // `outQuad`: halfway through the chase the ghost has already taken 75% of the gap, so it sits
+    // below the straight-line midpoint — the fill "catches up" instead of sliding in at one speed.
+    const halfway = at(GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS * 0.5).hit.ghost;
+    expect(halfway).toBeGreaterThan(healthAfterHit);
+    expect(halfway).toBeLessThan(healthAfterHit + (1 - healthAfterHit) * 0.5);
+    expect(at(GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS + 1e-6).hit.ghost).toBeCloseTo(healthAfterHit, 6);
+  });
+
+  test("grow the fill back instead of snapping it", () => {
+    expect(at(0).heal.healFill).toBeCloseTo(0, 6);
+    const mid = at(options.healSpan * 0.5).heal;
+    expect(mid.health).toBeGreaterThan(healthAfterHit);
+    expect(mid.health).toBeLessThan(1);
+    // `outQuad`: more than half the gap is already closed at the halfway point.
+    expect(mid.health).toBeGreaterThan(healthAfterHit + options.damage * 0.5);
+    // The mint stretch is exactly what the heal has added so far.
+    expect(mid.healFill).toBeCloseTo(mid.health - healthAfterHit, 6);
+    expect(mid.glow).toBeCloseTo(1, 6);
+  });
+
+  test("fade the mint back into the wound colour once the fill is home", () => {
+    const done = at(options.healSpan + options.healFade * 0.5).heal;
+    expect(done.health).toBeCloseTo(1, 6);
+    expect(done.healFill).toBeCloseTo(options.damage, 6);
+    expect(done.glow).toBeGreaterThan(0);
+    expect(done.glow).toBeLessThan(1);
+    // Faded out: the bar is plain red again while the loop finishes.
+    expect(at(options.healSpan + options.healFade + 1e-6).heal.glow).toBe(0);
+    expect(at(span).heal.glow).toBe(0);
+    // The flash is over long before any of this: it lives in the first 0.3 s.
+    expect(at(span).hit.flash).toBe(0);
+  });
+
+  test("keep the gap open when the heal is off", () => {
+    const phase = at(options.healSpan + options.healFade, { heal: 0 }).heal;
+    expect(phase.health).toBeCloseTo(healthAfterHit, 6);
+    expect(phase.healFill).toBeCloseTo(0, 6);
+    expect(phase.glow).toBe(0);
+  });
+
+  test("never let the duration slider cut an effect off", () => {
+    // Shorter than the effects: the loop keeps the effects' length.
+    expect(loopSecondsOf(0.3, options)).toBeCloseTo(span, 6);
+    // Longer than the effects: the pause after them grows, the effects do not.
+    expect(loopSecondsOf(2, options)).toBe(2);
+    // Missing or broken: fall back to the page's own loop length.
+    expect(loopSecondsOf(Number.NaN, options)).toBeCloseTo(Math.max(HEALTH_LOOP_SECONDS, span), 6);
+  });
+
+  test("survive a wrapped or broken clock", () => {
+    expect(loopProgress(0, duration, options)).toBe(0);
+    expect(loopProgress(loopSecondsOf(duration, options), duration, options)).toBeCloseTo(0, 9);
+    expect(loopProgress(-span * 0.25, duration, options)).toBeCloseTo(0.75, 9);
+    expect(hitPhase(0.2, Number.NaN, options).health).toBeCloseTo(healthAfterHit, 6);
+    expect(healthHealPhase(0, Number.NaN, options).health).toBeCloseTo(healthAfterHit, 6);
+  });
+
+  /** Both bars' rectangles, told apart by colour; the curve rows are taller than a bar. */
+  const barsOf = (time: number, params: Record<string, number> = {}) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("health-bar", drawList, time, undefined, undefined, params);
+    return drawList
+      .commands()
+      .flatMap((command) => (command.kind === "shape2d" ? [command] : []))
+      .filter(
+        (command) =>
+          command.shape === "rect" &&
+          command.filled &&
+          Math.abs(command.size[1] - BAR_HEIGHT / 2) < 1e-9,
+      );
+  };
+  const slotOf = (bars: ReturnType<typeof barsOf>) =>
+    bars.find((command) => command.color[0] === 0 && command.color[1] === 0);
+  const fillOf = (bars: ReturnType<typeof barsOf>) =>
+    bars.find((command) => command.color[0] > 0.5 && command.color[0] < 0.6 && command.color[1] < 0.05);
+  const ghostOf = (bars: ReturnType<typeof barsOf>) =>
+    bars.find((command) => command.color[0] === 1 && command.color[1] === 1);
+  /** The mint stretch: green dominates and is well clear of the wound colour's green. */
+  const mintOf = (bars: ReturnType<typeof barsOf>) =>
+    bars.find((command) => command.color[1] > 0.5 && command.color[1] > command.color[0] * 2);
+  const hitColumn = columnCenter(EXAMPLES.findIndex((example) => example.id === "hit"));
+  const healColumn = columnCenter(EXAMPLES.findIndex((example) => example.id === "heal"));
+
+  test("draw one slot per example", () => {
+    const slots = barsOf(0).filter((command) => command.color[0] === 0 && command.color[1] === 0);
+    expect(slots).toHaveLength(EXAMPLES.length);
+    EXAMPLES.forEach((_, index) => {
+      const center = columnCenter(index);
+      expect(slots.some((slot) => Math.abs(slot.center[0] - center) < 1e-6)).toBe(true);
+    });
+  });
+
+  test("draw the dropped fill and the ghost on the hit example", () => {
+    const bars = barsOf(0);
+    const hitFill = fillOf(bars.filter((command) => Math.abs(command.center[0] - hitColumn) < BAR_WIDTH / 2));
+    expect(hitFill?.size[0]).toBeCloseTo((BAR_WIDTH * healthAfterHit) / 2, 6);
+    expect(ghostOf(bars)?.size[0]).toBeCloseTo((BAR_WIDTH * options.damage) / 2, 6);
+    // The heal has not added anything yet: no mint anywhere.
+    expect(mintOf(bars)).toBeUndefined();
+  });
+
+  test("start the ghost at the fill's right edge", () => {
+    const bars = barsOf(0);
+    const fill = fillOf(bars)!;
+    const ghost = ghostOf(bars)!;
+    // The ghost marks what came off, so it starts where the fill ends — not at the bar's left edge.
+    expect(ghost.center[0] - ghost.size[0]).toBeCloseTo(fill.center[0] + fill.size[0], 6);
+  });
+
+  test("draw the mint stretch on the heal example, then drop it", () => {
+    const growing = mintOf(barsOf(options.healSpan * 0.5));
+    expect(growing).toBeDefined();
+    // It starts where the heal example stood on the first frame: `1 - damage` into its slot.
+    expect(growing!.center[0] - growing!.size[0]).toBeCloseTo(
+      healColumn - BAR_WIDTH / 2 + BAR_WIDTH * healthAfterHit,
+      6,
+    );
+    // Once the colour has faded both bars are plain red again.
+    expect(mintOf(barsOf(options.healSpan + options.healFade + 0.01))).toBeUndefined();
+  });
+
+  test("keep the flash on the hit example only", () => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("health-bar", drawList, 0);
+    const discs = drawList
+      .commands()
+      .flatMap((command) => (command.kind === "shape2d" ? [command] : []))
+      .filter(
+        (command) =>
+          command.shape === "circle" &&
+          command.filled &&
+          // The body-sized disc, not the curve strip's white sample dot on the ghost row.
+          command.size[0] > 1 &&
+          command.color[0] === 1 &&
+          command.color[1] === 1 &&
+          command.color[2] === 1,
+      );
+    // One white disc, over the body that was just hit.
+    expect(discs).toHaveLength(1);
+    expect(discs[0]!.center[0]).toBeCloseTo(hitColumn, 6);
+  });
+
+  test("give both strips the same window, in the loop's own seconds", () => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("health-bar", drawList, span * 0.5);
+    const texts = drawList
+      .commands()
+      .flatMap((command) => (command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : []));
+    const win = windowOf(duration, options);
+    expect(win.from).toBe(0);
+    expect(win.to).toBeCloseTo(span, 6);
+    // Same window, two titles: both strips start and end together.
+    expect(texts).toEqual(
+      expect.arrayContaining([
+        `受击 · ${win.from.toFixed(2)}–${win.to.toFixed(2)}s`,
+        `治疗 · ${win.from.toFixed(2)}–${win.to.toFixed(2)}s`,
+        // One short label per row: each strip sits under its example, so the gutter is narrow.
+        "血条",
+        "残影",
+        "闪白",
+        "补上",
+        "0.00s",
+        "0.30s",
+        "0.60s",
+      ]),
+    );
   });
 });

@@ -76,6 +76,14 @@ export type TimelineTracksOptions = {
   readonly progress: number;
   /** Loop length in seconds, for the ticks under the last row. */
   readonly duration: number;
+  /**
+   * Time the window's left edge sits at, in seconds into the loop.
+   *
+   * Ticks read `startTime + fraction * duration`, which is what a row group covering only part of
+   * the loop needs: the labels then say where in the page's own clock the window sits, instead of
+   * restarting at zero for every group.
+   */
+  readonly startTime?: number;
 };
 
 /**
@@ -86,7 +94,7 @@ export type TimelineTracksOptions = {
  * at the playhead, which is what makes "this element is at 0.4 right now" readable at a glance.
  */
 export function drawTimelineTracks(drawList: FrameDrawList, options: TimelineTracksOptions): void {
-  const { tracks, layout, progress, duration } = options;
+  const { tracks, layout, progress, duration, startTime = 0 } = options;
   const { d2 } = drawList;
   if (tracks.length === 0) return;
 
@@ -151,7 +159,7 @@ export function drawTimelineTracks(drawList: FrameDrawList, options: TimelineTra
   for (const fraction of [0, 0.5, 1]) {
     const x = layout.left + fraction * layout.width;
     d2.line([x, bottom], [x, bottom - 0.16], { width: 1, color: AXIS_COLOR });
-    drawList.text([x, bottom - 0.42, 0], `${(duration * fraction).toFixed(2)}s`, {
+    drawList.text([x, bottom - 0.42, 0], `${(startTime + duration * fraction).toFixed(2)}s`, {
       space: "world-plane",
       fontSize: 22,
       pixelSize: 0.016,

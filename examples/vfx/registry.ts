@@ -13,6 +13,7 @@ import type { SceneExample } from "../shared/meta.js";
 import { meta as hitMark } from "./hit-mark/meta.js";
 import { meta as hitFlash } from "./hit-flash/meta.js";
 import { meta as hitShake } from "./hit-shake/meta.js";
+import { meta as healthBar } from "./health-bar/meta.js";
 import { meta as slashArc } from "./slash-arc/meta.js";
 import { meta as battleSlash } from "./battle-slash/meta.js";
 import { meta as healBeam } from "./heal-beam/meta.js";
@@ -28,6 +29,7 @@ export const VFX_EXAMPLES: readonly SceneExample[] = [
   hitMark,
   hitFlash,
   hitShake,
+  healthBar,
   slashArc,
   battleSlash,
   healBeam,
