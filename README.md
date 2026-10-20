@@ -54,21 +54,18 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
     how fast the hit is spent rather than how far the body travels. The default opens well under
     the body radius on purpose — a shake that carries the unit more than its own size reads as a
     knockback. `out` rows snap home on the impact frame, `in` rows stay moving to the end.
-  - `health-bar` — two bar effects on one clock and one set of sliders, because a unit is either
-    being hit or being healed, never both at once. **受击** is the simulator's own reading: the black
-    slot and blood-red fill over a body, and the white ghost a hit leaves behind — it holds at the
-    old length for 0.22 s so *how much* came off is readable, then walks down in 0.38 s on
-    `outQuad`. **治疗** is the refill: the fill grows back on the same curve instead of jumping (a
-    jump only says "it changed"; growing says how much came back), and the stretch that just
-    returned stays mint (`#2ee6a0`, the heal beam's colour) before fading into the wound colour. Hit
-    plays in the first 0.6 s, heal in the last 0.5 s of the page's own 1.6 s loop, so the playhead
-    starts on the same frame. Each example owns the strip under it and both strips share one window
-    (0.6 s, the longer of the two effects): the hit plots its fill, ghost and flash, the heal plots
-    its fill and mint stretch, same length so their slopes can be read against each other, with one
-    playhead crossing both. The shorter effect finishes early and holds its last frame while the
-    other one runs out; the loop restarts when both are done, and the `duration` slider can only add
-    a pause after that — never cut an effect short. A third bar effect (armour) is one more entry in
-    `EXAMPLES`: the columns, strips and window re-space themselves.
+  - `health-bar` — four bar effects on one clock, because a unit is either being hit, healed,
+    shielded or having its shield broken. **受击**: the black slot and blood-red fill over a body,
+    and the white ghost a hit leaves — it holds at the old length for 0.22 s, then walks down in
+    0.38 s on `outQuad`. **治疗**: the fill grows back on the same curve instead of jumping, and the
+    stretch that just returned stays grass green before shrinking into the wound colour. **上盾**: a blue barrier plate a size larger than the bar drops onto it, shrinks until it sits
+    tight, and the shield snaps to full on that frame — no fill, no growth. The slot is
+    `1 + shieldMax` health bars wide, so the shield to the right of the fill reads as extra health. **破盾**: one heavy blow takes the shield and spills the rest onto
+    the fill, with the ghost starting on that frame — the only column where a shielded unit loses
+    health, which is why the shield and the break are separate examples. All four start on the same
+    frame; the shorter ones hold their last frame until the slowest is done and the loop restarts,
+    and `duration` can only add a pause after that. A fifth bar effect is one more entry in
+    `EXAMPLES` — the columns, strips and window re-space themselves.
   - `heal-beam` — the first page that shows **one** effect instead of a matrix, and the first with
     an element timeline: the heal from `~/gamedev/battle` (a ground pool spreading from the feet, a
     stacked column rising off the body, sparks drifting up its length) on the left, and one curve row

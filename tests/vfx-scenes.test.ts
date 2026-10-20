@@ -17,6 +17,9 @@ import {
   GHOST_CHASE_SECONDS,
   GHOST_DELAY_SECONDS,
   LOOP_SECONDS as HEALTH_LOOP_SECONDS,
+  SHIELD_BREAK_SECONDS,
+  SHIELD_FIRST_HIT_SECONDS,
+  SHIELD_GROW_SECONDS,
   columnCenter,
   loopSecondsOf,
   windowOf,
@@ -25,6 +28,8 @@ import {
   healPhaseAt,
   hitPhase,
   hitPhaseAt,
+  shieldBreakPhaseAt,
+  shieldUpPhaseAt,
   loopProgress,
 } from "../examples/vfx/health-bar/scene.js";
 import { HEALTH_BAR_PARAMS } from "../examples/vfx/health-bar/meta.js";
@@ -1476,6 +1481,7 @@ describe("health bar", () => {
     ghostChase: defaults.ghostChase!,
     healSpan: defaults.healSpan!,
     healFade: defaults.healFade!,
+    shieldMax: defaults.shieldMax!,
   };
   const duration = HEALTH_LOOP_SECONDS;
   const span = windowSpan(options);
@@ -1495,11 +1501,18 @@ describe("health bar", () => {
     expect(GHOST_DELAY_SECONDS).toBeCloseTo(0.22, 6);
     expect(GHOST_CHASE_SECONDS).toBeCloseTo(0.38, 6);
     expect(FLASH_SECONDS).toBeCloseTo(0.3, 6);
-    // The shared window is the longer of the two effects, so neither is cut off.
+    // The shared window is the longest of the three examples, so none is cut off: the shield's
+    // break lands on top of a full chase.
     expect(span).toBeCloseTo(
-      Math.max(GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS, options.healSpan + options.healFade),
+      Math.max(
+        GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS,
+        options.healSpan + options.healFade,
+        SHIELD_GROW_SECONDS,
+        SHIELD_BREAK_SECONDS + GHOST_DELAY_SECONDS + GHOST_CHASE_SECONDS,
+      ),
       6,
     );
+    expect(span).toBeCloseTo(HEALTH_LOOP_SECONDS, 6);
   });
 
   test("start both examples on the first frame", () => {
@@ -1638,16 +1651,16 @@ describe("health bar", () => {
   test("draw the mint stretch on the heal example, then drop it", () => {
     const growing = mintOf(barsOf(options.healSpan * 0.5));
     expect(growing).toBeDefined();
-    // It starts where the heal example stood on the first frame: `1 - damage` into its slot.
-    expect(growing!.center[0] - growing!.size[0]).toBeCloseTo(
-      healColumn - BAR_WIDTH / 2 + BAR_WIDTH * healthAfterHit,
-      6,
-    );
+    // It is anchored to the fill's right edge: the newest blood sits at the end of the bar.
+    const healFill = fillOf(
+      barsOf(options.healSpan * 0.5).filter((command) => Math.abs(command.center[0] - healColumn) < BAR_WIDTH / 2),
+    )!;
+    expect(growing!.center[0] + growing!.size[0]).toBeCloseTo(healFill.center[0] + healFill.size[0], 6);
     // Once the colour has faded both bars are plain red again.
     expect(mintOf(barsOf(options.healSpan + options.healFade + 0.01))).toBeUndefined();
   });
 
-  test("keep the flash on the hit example only", () => {
+  test("flash the body that was hit, and only that body", () => {
     const drawList = new FrameDrawList();
     buildVfxScene("health-bar", drawList, 0);
     const discs = drawList
@@ -1663,9 +1676,101 @@ describe("health bar", () => {
           command.color[1] === 1 &&
           command.color[2] === 1,
       );
-    // One white disc, over the body that was just hit.
+    // Only the hit lands on the first frame: the breaking column is still showing its shield.
     expect(discs).toHaveLength(1);
     expect(discs[0]!.center[0]).toBeCloseTo(hitColumn, 6);
+  });
+
+  test("drop a sleeve onto the bar, then seat the shield in one frame", () => {
+    const loop = loopSecondsOf(duration, options);
+    const at = (seconds: number) => shieldUpPhaseAt(seconds / loop, duration, options);
+    const start = at(0);
+    // Nothing is hit in this column, so nothing flashes and nothing has come off the fill.
+    expect(start.health).toBeCloseTo(1, 6);
+    expect(start.flash).toBe(0);
+    expect(start.ghost).toBeCloseTo(1, 6);
+    // The sleeve starts a size larger (settle 0) and opaque; the shield has not started filling.
+    expect(start.sleeve).toBeCloseTo(0, 6);
+    expect(start.sleeveAlpha).toBeCloseTo(1, 6);
+    expect(start.shield).toBeCloseTo(0, 6);
+    // An in-out: a third of the way in, it has barely started to close.
+    expect(at(SHIELD_GROW_SECONDS * 0.33).sleeve).toBeLessThan(0.5);
+    expect(at(SHIELD_GROW_SECONDS * 0.33).sleeve).toBeGreaterThan(0);
+    // Most of the way in by 70%, and tight — without an overshoot to read as a bounce.
+    expect(at(SHIELD_GROW_SECONDS * 0.7).sleeve).toBeGreaterThan(0.9);
+    expect(at(SHIELD_GROW_SECONDS * 0.7).sleeve).toBeLessThan(1);
+    // Settled and faded by the end of the action; the shield is full and stays full.
+    expect(at(SHIELD_GROW_SECONDS * 0.95).sleeveAlpha).toBeLessThan(0.4);
+    expect(at(SHIELD_GROW_SECONDS).shield).toBeCloseTo(options.shieldMax, 6);
+    // The sleeve is fully gone shortly after the action, and the shield holds to the end.
+    expect(at(SHIELD_GROW_SECONDS * 1.2).sleeveAlpha).toBe(0);
+    expect(at(1).shield).toBeCloseTo(options.shieldMax, 6);
+    expect(at(1).sleeveAlpha).toBe(0);
+  });
+
+  test("open the breaking column with the shield full, chip two thirds, then break it", () => {
+    const loop = loopSecondsOf(duration, options);
+    const atBreak = (seconds: number) => shieldBreakPhaseAt(seconds / loop, duration, options);
+    const damage = options.damage;
+    const chipped = options.shieldMax / 3;
+    const overflow = Math.min(1, Math.max(0, damage - chipped));
+
+    // The shield is up on the first frame — that is the state being demonstrated.
+    const opening = atBreak(0);
+    expect(opening.shield).toBeCloseTo(options.shieldMax, 6);
+    expect(opening.health).toBeCloseTo(1, 6);
+    expect(opening.shatter).toBeNull();
+    // First blow: two thirds go, the fill does not move.
+    const afterFirst = atBreak(SHIELD_FIRST_HIT_SECONDS + 1e-6);
+    expect(afterFirst.shield).toBeCloseTo(chipped, 6);
+    expect(afterFirst.health).toBeCloseTo(1, 6);
+    expect(afterFirst.ghost).toBeCloseTo(1, 6);
+    expect(afterFirst.shatter).toBeNull();
+    // Second blow: the rest of the shield goes with the shatter, and the overflow lands on health.
+    const broken = atBreak(SHIELD_BREAK_SECONDS);
+    expect(overflow).toBeGreaterThan(0);
+    expect(broken.shield).toBe(0);
+    expect(broken.health).toBeCloseTo(1 - overflow, 6);
+    expect(broken.shatter).toBeCloseTo(0, 3);
+    expect(broken.flash).toBeCloseTo(FLASH_PEAK, 6);
+    // The shatter is over well before the loop ends, and the ghost settles on the fill.
+    expect(atBreak(1).shatter).toBeCloseTo(1, 6);
+    const settled = atBreak(1);
+    expect(settled.ghost).toBeCloseTo(settled.health, 6);
+  });
+
+  test("flash on both of the breaking column's blows", () => {
+    const loop = loopSecondsOf(duration, options);
+    const atBreak = (seconds: number) => shieldBreakPhaseAt(seconds / loop, duration, options);
+    expect(atBreak(0).flash).toBe(0);
+    expect(atBreak(SHIELD_FIRST_HIT_SECONDS).flash).toBeCloseTo(FLASH_PEAK, 6);
+    expect(atBreak(SHIELD_BREAK_SECONDS).flash).toBeCloseTo(FLASH_PEAK, 6);
+    // Between the two blows it has decayed by about half.
+    expect(atBreak(SHIELD_BREAK_SECONDS - 0.1).flash).toBeLessThan(FLASH_PEAK * 0.6);
+  });
+
+  test("draw the opened shield to the right of the fill, and the break's ghost in its place", () => {
+    const upColumn = columnCenter(EXAMPLES.findIndex((example) => example.id === "shield-up"));
+    const breakColumn = columnCenter(EXAMPLES.findIndex((example) => example.id === "shield-break"));
+    // Barrier blue: the blue channel dominates both others.
+    const blueOf = (bars: ReturnType<typeof barsOf>) =>
+      bars.find((command) => command.color[2] > 0.5 && command.color[2] > command.color[1] * 1.5 && command.color[0] < 0.3);
+    // Open shield: a silver stretch as wide as `shieldMax` of the slot, starting at the fill's edge.
+    const opened = barsOf(SHIELD_GROW_SECONDS + 0.01);
+    const silver = blueOf(opened.filter((command) => Math.abs(command.center[0] - upColumn) < BAR_WIDTH / 2))!;
+    const unitWidth = BAR_WIDTH / (1 + options.shieldMax);
+    expect(silver.size[0]).toBeCloseTo((unitWidth * options.shieldMax) / 2, 6);
+    const upFill = fillOf(opened.filter((command) => Math.abs(command.center[0] - upColumn) < BAR_WIDTH / 2))!;
+    expect(silver.center[0] - silver.size[0]).toBeCloseTo(upFill.center[0] + upFill.size[0], 6);
+    // The breaking column opens with its shield up, then loses it on the second blow.
+    const opening = barsOf(0);
+    expect(blueOf(opening.filter((command) => Math.abs(command.center[0] - breakColumn) < BAR_WIDTH / 2))).toBeDefined();
+    // Well after the break: the shards are gone too, so there is no blue left on that bar.
+    const broken = barsOf(SHIELD_BREAK_SECONDS + 0.5);
+    expect(blueOf(broken.filter((command) => Math.abs(command.center[0] - breakColumn) < BAR_WIDTH / 2))).toBeUndefined();
+    expect(
+      ghostOf(broken.filter((command) => Math.abs(command.center[0] - breakColumn) < BAR_WIDTH / 2)),
+    ).toBeDefined();
   });
 
   test("give both strips the same window, in the loop's own seconds", () => {
@@ -1682,14 +1787,16 @@ describe("health bar", () => {
       expect.arrayContaining([
         `受击 · ${win.from.toFixed(2)}–${win.to.toFixed(2)}s`,
         `治疗 · ${win.from.toFixed(2)}–${win.to.toFixed(2)}s`,
+        `上盾 · ${win.from.toFixed(2)}–${win.to.toFixed(2)}s`,
+        `破盾 · ${win.from.toFixed(2)}–${win.to.toFixed(2)}s`,
         // One short label per row: each strip sits under its example, so the gutter is narrow.
         "血条",
         "残影",
         "闪白",
         "补上",
         "0.00s",
-        "0.30s",
-        "0.60s",
+        `${(win.to * 0.5).toFixed(2)}s`,
+        `${win.to.toFixed(2)}s`,
       ]),
     );
   });
