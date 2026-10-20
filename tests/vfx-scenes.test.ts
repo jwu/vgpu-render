@@ -10,6 +10,25 @@ import { battleSwingPhase } from "../examples/vfx/battle-slash/scene.js";
 import { actionPhase } from "../examples/vfx/action-phase.js";
 import { PILLAR_LAYER_COUNT } from "../examples/vfx/pillar.js";
 import {
+  BURST_RATIO as PILLAR_BURST_RATIO,
+  breath as pillarBreath,
+  FADE_RATIO as PILLAR_FADE_RATIO,
+  HOLD_RATIO as PILLAR_HOLD_RATIO,
+  LOOP_SECONDS as PILLAR_LOOP_SECONDS,
+  RING_LIFE as PILLAR_RING_LIFE,
+  RISE_RATIO as PILLAR_RISE_RATIO,
+  pillarPhaseAt,
+  poolBrightness,
+  poolSpread as pillarPoolSpread,
+  pushRingBrightness,
+  pushRingReach,
+  ringReach,
+  shaftBrightness,
+  shaftHeight,
+  shaftScatter,
+  shaftWidth,
+} from "../examples/vfx/light-pillar/scene.js";
+import {
   BEAM_BAND_COUNT,
   GROW_RATIO,
   TIMELINE_LAYOUT,
@@ -70,6 +89,19 @@ import {
   dashSlashPhaseAt,
 } from "../examples/vfx/dash-slash/scene.js";
 import { inCirc, outCirc } from "../examples/vfx/easing.js";
+import {
+  CHARGE_RATIO as ULT_CHARGE_RATIO,
+  LOOP_SECONDS as ULT_LOOP_SECONDS,
+  RING_SPAN as ULT_RING_SPAN,
+  SPIKE_CLOSE as ULT_SPIKE_CLOSE,
+  SPIKE_OPEN as ULT_SPIKE_OPEN,
+  UNIT as ULT_UNIT,
+  ringBrightness as ultRingBrightness,
+  ringRadius as ultRingRadius,
+  spikeLength as ultSpikeLength,
+  starBrightness as ultStarBrightness,
+  ultFlashPhaseAt,
+} from "../examples/vfx/ult-flash/scene.js";
 import {
   EASING_DIRECTIONS,
   EASING_FAMILIES,
@@ -545,93 +577,204 @@ describe("hit flash", () => {
   });
 });
 
-describe("pillar appear", () => {
-  const shapesOf = (time: number) => {
+describe("light pillar", () => {
+  const shapesOf = (time: number, params: Record<string, number> = {}) => {
     const drawList = new FrameDrawList();
-    buildVfxScene("pillar-appear", drawList, time);
+    buildVfxScene("light-pillar", drawList, time, undefined, undefined, params);
     return drawList.commands().flatMap((command) => (command.kind === "shape2d" ? [command] : []));
   };
-  const pillarsOf = (shapes: ReturnType<typeof shapesOf>) =>
-    shapes.filter((command) => command.shape === "rect" && command.filled);
-
-  test("grow out of nothing", () => {
-    // Height is `height x eased`, so the first frame has no column at all — only the plot.
-    expect(pillarsOf(shapesOf(0))).toHaveLength(0);
-    const shapes = shapesOf(LOOP_SECONDS * 0.25);
-    // Nested fills per cell — except the cells whose curve is off the scale at this instant.
-    // `back` and `elastic` overshoot: at half the window they are either below zero (the column has
-    // not started) or above one (it has already faded out), so drawing nothing there is correct.
-    const rects = pillarsOf(shapes);
-    expect(rects.length % PILLAR_LAYER_COUNT).toBe(0);
-    expect(rects.length).toBeGreaterThan(0);
-    expect(rects.length).toBeLessThanOrEqual(33 * PILLAR_LAYER_COUNT);
-    // The column is the whole effect: no ground pool, no tip bloom, no ring. The only circles left
-    // are the plot playheads, which are the curve's own blue-white.
-    expect(shapes.filter((command) => command.shape === "ellipse")).toHaveLength(0);
-    const circles = shapes.filter((command) => command.shape === "circle");
-    expect(circles.every((command) => command.color[0] === 0.82 && command.color[1] === 0.9)).toBe(true);
-  });
-
-  test("climb with the curve and stay inside the row", () => {
-    const tallest = (shapes: ReturnType<typeof shapesOf>): number =>
-      Math.max(...pillarsOf(shapes).map((command) => command.size[1] * 2));
-
-    // `height` is capped at 1.9 so the shaft cannot grow into the neighbouring row's plot.
-    expect(tallest(shapesOf(LOOP_SECONDS * 0.49))).toBeLessThanOrEqual(1.9 + 1e-9);
-    // Later frames are taller: `eased` only grows over the action window.
-    expect(tallest(shapesOf(LOOP_SECONDS * 0.4))).toBeGreaterThan(tallest(shapesOf(LOOP_SECONDS * 0.1)));
-  });
-
-  test("tint the column", () => {
-    const drawList = new FrameDrawList();
-    buildVfxScene("pillar-appear", drawList, LOOP_SECONDS * 0.25, undefined, undefined, {
-      duration: LOOP_SECONDS,
-      width: 0.5,
-      height: 1.5,
-      hue: 0,
-      saturation: 1,
-    });
-    const shapes = drawList.commands().flatMap((command) => (command.kind === "shape2d" ? [command] : []));
-    const reds = shapes.filter((command) => command.shape === "rect" && command.filled && command.color[0] > 0.5 && command.color[1] < 0.2);
-    expect(reds.length).toBeGreaterThan(0);
-  });
-});
-
-describe("pillar fade", () => {
-  const shapesOf = (time: number) => {
-    const drawList = new FrameDrawList();
-    buildVfxScene("pillar-fade", drawList, time);
-    return drawList.commands().flatMap((command) => (command.kind === "shape2d" ? [command] : []));
-  };
-  const pillarsOf = (shapes: ReturnType<typeof shapesOf>) =>
-    shapes.filter((command) => command.shape === "rect" && command.filled);
+  // The curve rows are filled rectangles too, so the shaft is the stage only: everything the column
+  // and its pool draw stands above the timeline.
+  const stageOf = (shapes: ReturnType<typeof shapesOf>) => shapes.filter((command) => command.center[1] > 0);
+  const layersOf = (shapes: ReturnType<typeof shapesOf>) =>
+    stageOf(shapes).filter((command) => command.shape === "rect" && command.filled);
+  const poolsOf = (shapes: ReturnType<typeof shapesOf>) =>
+    stageOf(shapes).filter((command) => command.shape === "ellipse" && command.filled);
+  const ringsOf = (shapes: ReturnType<typeof shapesOf>) =>
+    stageOf(shapes).filter((command) => command.shape === "ellipse" && !command.filled);
+  /** Loop position `share` of the way through the rise, the hold or the scatter. */
+  const at = (share: number): number => PILLAR_LOOP_SECONDS * share;
   const widest = (shapes: ReturnType<typeof shapesOf>): number =>
-    Math.max(...pillarsOf(shapes).map((command) => command.size[0] * 2));
+    Math.max(...layersOf(shapes).map((command) => command.size[0] * 2));
 
-  test("be at full height on the first frame, unlike the growing column", () => {
-    const shapes = shapesOf(0);
-    expect(pillarsOf(shapes)).toHaveLength(33 * PILLAR_LAYER_COUNT);
-    // The tallest layer is the whole column: the burst does not grow, it scatters.
-    const tallest = Math.max(...pillarsOf(shapes).map((command) => command.size[1] * 2));
-    expect(tallest).toBeCloseTo(1.6, 6);
+  test("start from nothing and rise out of the floor", () => {
+    const first = shapesOf(0);
+    // Nothing is lit on the first frame: no shaft, and no pool under where it will stand.
+    expect(layersOf(first)).toHaveLength(0);
+    expect(poolsOf(first)).toHaveLength(0);
+
+    const rising = shapesOf(at(PILLAR_RISE_RATIO * 0.12));
+    expect(layersOf(rising)).toHaveLength(PILLAR_LAYER_COUNT);
+    expect(poolsOf(rising)).toHaveLength(2);
+    // Early in the rise it is still shorter than the settled column.
+    const tallest = (shapes: ReturnType<typeof shapesOf>): number =>
+      Math.max(...layersOf(shapes).map((command) => command.size[1] * 2));
+    expect(tallest(rising)).toBeLessThan(tallest(shapesOf(at(PILLAR_HOLD_RATIO * 0.6))));
   });
 
-  test("spread wider as it scatters", () => {
-    expect(widest(shapesOf(LOOP_SECONDS * 0.3))).toBeGreaterThan(widest(shapesOf(LOOP_SECONDS * 0.05)));
+  test("plant the column: overshoot the height, then settle onto it", () => {
+    expect(shaftHeight(pillarPhaseAt(0))).toBe(0);
+    // The snap goes past the final height before the settle brings it back — that is the beat the
+    // eye reads as the column being driven into the floor instead of fading in at its own size.
+    expect(shaftHeight(pillarPhaseAt(PILLAR_RISE_RATIO * 0.3))).toBeGreaterThan(1);
+    expect(shaftHeight(pillarPhaseAt(PILLAR_RISE_RATIO))).toBeCloseTo(1, 6);
+    // Nothing moves during the hold, and the hold is long enough to see.
+    expect(shaftHeight(pillarPhaseAt(PILLAR_HOLD_RATIO))).toBeCloseTo(1, 6);
+    expect((PILLAR_HOLD_RATIO - PILLAR_RISE_RATIO) * PILLAR_LOOP_SECONDS).toBeGreaterThan(0.25);
   });
 
-  test("add nothing round on top of the shaft", () => {
-    const shapes = shapesOf(LOOP_SECONDS * 0.1);
-    expect(shapes.filter((command) => command.shape === "ellipse")).toHaveLength(0);
-    // Only the plot playheads are circles; the burst itself is rectangles.
-    const circles = shapes.filter((command) => command.shape === "circle");
-    expect(circles.every((command) => command.color[0] === 0.82 && command.color[1] === 0.9)).toBe(true);
+  test("push the floor pool open instead of popping it into place", () => {
+    // The pool is opened *by* the column: nothing there on the first frame, narrow while the column
+    // is still climbing, full by the time it has arrived.
+    expect(pillarPoolSpread(pillarPhaseAt(0))).toBe(0);
+    expect(poolBrightness(pillarPhaseAt(0))).toBe(0);
+    expect(pillarPoolSpread(pillarPhaseAt(PILLAR_RISE_RATIO * 0.3))).toBeLessThan(
+      pillarPoolSpread(pillarPhaseAt(PILLAR_RISE_RATIO * 0.8)),
+    );
+    // Sampled mid-hold, where the breath is back at zero.
+    expect(pillarPoolSpread(pillarPhaseAt((PILLAR_RISE_RATIO + PILLAR_HOLD_RATIO) / 2))).toBeCloseTo(1, 6);
+    // And the ring it drives out of the floor runs ahead of the pool, then is gone.
+    expect(pushRingReach(pillarPhaseAt(0))).toBe(0);
+    expect(pushRingReach(pillarPhaseAt(PILLAR_RISE_RATIO * 0.5))).toBeGreaterThan(0.5);
+    expect(pushRingBrightness(pillarPhaseAt(PILLAR_RISE_RATIO * 0.5))).toBeGreaterThan(0);
+    expect(pushRingBrightness(pillarPhaseAt(PILLAR_RISE_RATIO))).toBe(0);
   });
 
-  test("be gone once the action window is over", () => {
-    // The column has faded; only the plots' playheads are left among the shapes.
-    const shapes = shapesOf(LOOP_SECONDS * 0.6);
-    expect(pillarsOf(shapes)).toHaveLength(0);
+  /** The phase `share` of the way through the hold: 0 is the end of the snap, 1 the burst frame. */
+  const duringHold = (share: number) =>
+    pillarPhaseAt(PILLAR_RISE_RATIO + (PILLAR_HOLD_RATIO - PILLAR_RISE_RATIO) * share);
+  const holdTime = (share: number): number =>
+    PILLAR_LOOP_SECONDS * (PILLAR_RISE_RATIO + (PILLAR_HOLD_RATIO - PILLAR_RISE_RATIO) * share);
+
+  test("breathe while it holds: size and light swing, both ends on zero", () => {
+    // One cycle across the hold, and both ends land on zero so the snap and the burst stay clean.
+    expect(pillarBreath(duringHold(0))).toBeCloseTo(0, 6);
+    expect(pillarBreath(duringHold(0.25))).toBeCloseTo(1, 6);
+    expect(pillarBreath(duringHold(0.5))).toBeCloseTo(0, 6);
+    expect(pillarBreath(duringHold(0.75))).toBeCloseTo(-1, 6);
+    expect(pillarBreath(duringHold(1))).toBeCloseTo(0, 6);
+    // The swing shows up in the width, the height and the light, all in phase.
+    expect(shaftWidth(duringHold(0.25))).toBeGreaterThan(shaftWidth(duringHold(0.75)));
+    expect(shaftHeight(duringHold(0.25))).toBeGreaterThan(shaftHeight(duringHold(0.75)));
+    expect(shaftBrightness(duringHold(0.25))).toBeGreaterThan(shaftBrightness(duringHold(0.75)));
+    // Nothing breathes while the column is being planted or thrown open.
+    expect(pillarBreath(pillarPhaseAt(PILLAR_RISE_RATIO * 0.5))).toBe(0);
+    expect(pillarBreath(pillarPhaseAt(PILLAR_HOLD_RATIO + 0.05))).toBe(0);
+  });
+
+  test("swing the colour with the breath", () => {
+    const coloursAt = (share: number) => layersOf(shapesOf(holdTime(share)))[0]!.color;
+    const swollen = coloursAt(0.25);
+    const sunken = coloursAt(0.75);
+    expect(swollen).not.toEqual(sunken);
+    // The swell is the paler one: its blue stays and the other channels climb towards white.
+    expect(swollen[0]).toBeGreaterThan(sunken[0]);
+  });
+
+  test("hold at full height in between the two phases", () => {
+    const height = shaftHeight(pillarPhaseAt((PILLAR_RISE_RATIO + PILLAR_HOLD_RATIO) / 2));
+    expect(height).toBeCloseTo(1, 6);
+    // Brightness is already full before the height is, and stays there through the hold.
+    expect(shaftBrightness(pillarPhaseAt(PILLAR_RISE_RATIO * 0.6))).toBeCloseTo(1, 6);
+    expect(shaftBrightness(pillarPhaseAt((PILLAR_RISE_RATIO + PILLAR_HOLD_RATIO) / 2))).toBeCloseTo(1, 6);
+  });
+
+  /** The phase `share` of the way through the scatter: 0 is the burst frame, 1 its end. */
+  const atShare = (share: number) => pillarPhaseAt(PILLAR_HOLD_RATIO + (PILLAR_FADE_RATIO - PILLAR_HOLD_RATIO) * share);
+  /** The same point in the loop, for the draw-list tests. */
+  const atShareTime = (share: number): number =>
+    PILLAR_LOOP_SECONDS * (PILLAR_HOLD_RATIO + (PILLAR_FADE_RATIO - PILLAR_HOLD_RATIO) * share);
+
+  test("burst: open the shaft and drop the light in the first third of the scatter", () => {
+    // `outExpo` inside `BURST_RATIO`: most of the widening is already done a tenth in.
+    expect(shaftScatter(atShare(0))).toBe(0);
+    expect(shaftScatter(atShare(0.1))).toBeGreaterThan(0.5);
+    expect(shaftScatter(atShare(PILLAR_BURST_RATIO))).toBeCloseTo(1, 6);
+    // The light follows the burst down and leaves a haze behind, rather than easing out all the way.
+    const afterBurst = shaftBrightness(atShare(PILLAR_BURST_RATIO));
+    expect(afterBurst).toBeGreaterThan(0.1);
+    expect(afterBurst).toBeLessThan(0.35);
+    expect(shaftBrightness(atShare(0.05))).toBeLessThan(0.9);
+    // And the haze keeps fading from there instead of holding.
+    expect(shaftBrightness(atShare(0.7))).toBeLessThan(afterBurst);
+  });
+
+  test("scatter wider, and fold the layers into one haze", () => {
+    const held = shapesOf(at(PILLAR_HOLD_RATIO * 0.8));
+    const scattered = shapesOf(at(PILLAR_HOLD_RATIO + (PILLAR_FADE_RATIO - PILLAR_HOLD_RATIO) * 0.85));
+    expect(widest(scattered)).toBeGreaterThan(widest(held));
+
+    // The four fills are a shaft while it stands and a single width once it has scattered, so the
+    // narrowest/outermost ratio climbs towards 1: that fold is what makes it a haze.
+    const foldRatio = (shapes: ReturnType<typeof shapesOf>): number => {
+      const widths = layersOf(shapes).map((command) => command.size[0] * 2);
+      return Math.min(...widths) / Math.max(...widths);
+    };
+    expect(foldRatio(scattered)).toBeGreaterThan(foldRatio(held));
+    expect(shaftScatter(pillarPhaseAt(PILLAR_FADE_RATIO))).toBeCloseTo(1, 6);
+    expect(shaftScatter(pillarPhaseAt(PILLAR_HOLD_RATIO))).toBe(0);
+  });
+
+  test("open the pool with the column and take it away with it", () => {
+    const held = shapesOf(at(PILLAR_HOLD_RATIO * 0.8));
+    expect(poolBrightness(pillarPhaseAt(PILLAR_HOLD_RATIO * 0.8))).toBeGreaterThan(0.9);
+    const poolWidth = (shapes: ReturnType<typeof shapesOf>): number => Math.max(...poolsOf(shapes).map((c) => c.size[0]));
+    const bursting = shapesOf(at(PILLAR_HOLD_RATIO + (PILLAR_FADE_RATIO - PILLAR_HOLD_RATIO) * 0.25));
+    expect(poolWidth(bursting)).toBeGreaterThan(poolWidth(held));
+    // The pool hands the floor over to the ring: it is gone well before the shaft is.
+    expect(poolsOf(shapesOf(at(PILLAR_HOLD_RATIO + (PILLAR_FADE_RATIO - PILLAR_HOLD_RATIO) * 0.8)))).toHaveLength(0);
+  });
+
+  test("throw a shock ring off the pool on the burst frame", () => {
+    const ringAt = (share: number) => ringsOf(shapesOf(atShareTime(share)));
+    // Nothing on the floor before the burst: only the pool is lit during the hold.
+    expect(ringAt(-0.1)).toHaveLength(0);
+    const early = ringAt(0.1);
+    const later = ringAt(0.3);
+    expect(early).toHaveLength(1);
+    expect(later).toHaveLength(1);
+    // It outruns the pool and thins as it goes.
+    expect(later[0]!.size[0]).toBeGreaterThan(early[0]!.size[0]);
+    expect(later[0]!.thickness).toBeLessThan(early[0]!.thickness);
+    // Its reach is flat on the floor, not a circle standing around the shaft.
+    expect(later[0]!.size[1]).toBeCloseTo(later[0]!.size[0] * 0.18, 6);
+    // Gone by `RING_LIFE`, which is exactly when it is at its widest.
+    expect(ringReach(atShare(1))).toBeCloseTo(1, 6);
+    expect(ringAt(1)).toHaveLength(0);
+  });
+
+  test("drop the ring when its slider is zero", () => {
+    const shapes = shapesOf(at(PILLAR_HOLD_RATIO + (PILLAR_FADE_RATIO - PILLAR_HOLD_RATIO) * 0.2), { ring: 0 });
+    expect(ringsOf(shapes)).toHaveLength(0);
+    // The shaft still bursts; only the floor layer is missing.
+    expect(layersOf(shapes).length).toBe(PILLAR_LAYER_COUNT);
+  });
+
+  test("leave the stage empty once the scatter is over", () => {
+    const shapes = shapesOf(PILLAR_LOOP_SECONDS * 0.95);
+    expect(layersOf(shapes)).toHaveLength(0);
+    expect(poolsOf(shapes)).toHaveLength(0);
+    expect(ringsOf(shapes)).toHaveLength(0);
+  });
+
+  test("tint the column without adding a second colour", () => {
+    const shapes = shapesOf(at(PILLAR_HOLD_RATIO * 0.8), { hue: 0, saturation: 1 });
+    const reds = layersOf(shapes).filter((command) => command.color[0] > 0.9 && command.color[1] < 0.2);
+    expect(reds.length).toBeGreaterThan(0);
+    // The pool is the same colour as the shaft, not a second one.
+    for (const pool of poolsOf(shapes)) expect(pool.color[1]).toBeLessThan(0.2);
+  });
+
+  test("label every element row and draw one shared playhead", () => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("light-pillar", drawList, at(PILLAR_HOLD_RATIO));
+    const texts = drawList
+      .commands()
+      .flatMap((command) => (command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : []));
+    expect(texts).toEqual(
+      expect.arrayContaining(["光柱 · 升起", "光柱 · 扩散", "光柱 · 亮度", "地面 · 光池 / 撑开", "地面 · 冲击环"]),
+    );
+    expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
   });
 });
 
@@ -1117,5 +1260,93 @@ describe("dash slash", () => {
       );
     expect(verticals).toHaveLength(1);
     expect(verticals[0]!.start[0]).toBeCloseTo(DASH_TIMELINE_LAYOUT.left + DASH_TIMELINE_LAYOUT.width * 0.5, 6);
+  });
+});
+
+describe("ult flash", () => {
+  const commandsOf = (time: number, params: Record<string, number> = {}) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("ult-flash", drawList, time, undefined, undefined, params);
+    return drawList.commands();
+  };
+  const shapesOf = (time: number, params: Record<string, number> = {}) =>
+    commandsOf(time, params).flatMap((command) => (command.kind === "shape2d" ? [command] : []));
+  /**
+   * The flash's own shapes. The curve rows draw a dot per element below the stage, so a count over
+   * every shape would include them; everything the effect draws sits on the body at `UNIT`.
+   */
+  const stageShapesOf = (time: number, params: Record<string, number> = {}) =>
+    shapesOf(time, params).filter((command) => command.center[1] > 0);
+  /** Loop position `burst` of the way into the burst; 0 is the pop frame itself. */
+  const atBurst = (burst: number): number => ULT_CHARGE_RATIO + burst * (1 - ULT_CHARGE_RATIO);
+
+  test("gather a cross on the body, with no ring yet", () => {
+    const shapes = stageShapesOf(ULT_LOOP_SECONDS * 0.14);
+    // Two tiers per arm times four arms, plus the three discs of the core and the body itself.
+    expect(shapes.filter((command) => command.shape === "triangle")).toHaveLength(8);
+    expect(shapes.filter((command) => command.shape === "circle" && command.filled)).toHaveLength(4);
+    // The only outline is the unit's own rim: nothing has been thrown off the body yet.
+    expect(shapes.filter((command) => command.shape === "circle" && !command.filled)).toHaveLength(1);
+  });
+
+  test("peak on the pop frame, then close the arms back down", () => {
+    expect(ultStarBrightness(ultFlashPhaseAt(0))).toBe(0);
+    // The pop is a jump: the gathered light is well below the burst's first frame, which is 1.
+    expect(ultStarBrightness(ultFlashPhaseAt(ULT_CHARGE_RATIO))).toBeLessThan(0.25);
+    expect(ultStarBrightness(ultFlashPhaseAt(ULT_CHARGE_RATIO + 1e-9))).toBeCloseTo(1, 6);
+    const gathered = ultSpikeLength(ultFlashPhaseAt(ULT_CHARGE_RATIO));
+    const opening = ultSpikeLength(ultFlashPhaseAt(atBurst(ULT_SPIKE_OPEN)));
+    const closing = ultSpikeLength(ultFlashPhaseAt(atBurst(ULT_SPIKE_CLOSE)));
+    expect(opening).toBeGreaterThan(gathered);
+    // The star leaves by pulling back, not only by fading: at the end the arms are the gathered
+    // cross again, which is where the next windup starts from.
+    expect(closing).toBeLessThan(opening);
+    expect(closing).toBeCloseTo(gathered, 6);
+  });
+
+  test("throw one ring off the body, and let it die at its full reach", () => {
+    expect(ultRingRadius(ultFlashPhaseAt(ULT_CHARGE_RATIO))).toBe(0);
+    const reachAt = (burst: number): number => {
+      const shapes = shapesOf(ULT_LOOP_SECONDS * atBurst(burst));
+      const outline = shapes.filter(
+        (command) => command.shape === "circle" && !command.filled && command.size[0] > 1.5,
+      );
+      return outline[0]?.size[0] ?? 0;
+    };
+    expect(reachAt(0.1)).toBeGreaterThan(0);
+    expect(reachAt(0.4)).toBeGreaterThan(reachAt(0.1));
+    // Full reach is also the end of its life: the last frame it exists is the widest one.
+    expect(ultRingRadius(ultFlashPhaseAt(atBurst(ULT_RING_SPAN)))).toBeCloseTo(1, 6);
+    expect(ultRingBrightness(ultFlashPhaseAt(atBurst(ULT_RING_SPAN)))).toBeCloseTo(0, 6);
+    expect(reachAt(ULT_RING_SPAN)).toBe(0);
+  });
+
+  test("leave only the unit once the burst is over", () => {
+    const shapes = stageShapesOf(ULT_LOOP_SECONDS * atBurst(0.7));
+    expect(shapes.filter((command) => command.shape === "triangle")).toHaveLength(0);
+    // The body and its rim stay: the unit is not the effect.
+    expect(shapes.filter((command) => command.shape === "circle" && command.filled)).toHaveLength(1);
+    expect(shapes.filter((command) => command.shape === "circle" && !command.filled)).toHaveLength(1);
+    // The body is drawn first, so the flash can sit on top of it.
+    expect(shapes[0]!.center).toEqual([ULT_UNIT[0], ULT_UNIT[1]]);
+  });
+
+  test("recolour the flash without tinting the body", () => {
+    const shapes = shapesOf(ULT_LOOP_SECONDS * 0.14, { hue: 0, saturation: 1 });
+    // The haze tier of the arms carries the hue; the tier on top of it is a lightened copy, so even
+    // at full saturation the middle of the star stays white-hot.
+    expect(shapes.some((command) => command.shape === "triangle" && command.color[0] === 1 && command.color[1] < 0.5)).toBe(
+      true,
+    );
+    const body = shapes.find((command) => command.shape === "circle" && command.filled);
+    expect(body!.color[0]).toBeLessThan(0.5);
+  });
+
+  test("label every element row and draw one shared playhead", () => {
+    const texts = commandsOf(ULT_LOOP_SECONDS * 0.5).flatMap((command) =>
+      command.kind === "text" ? [command.spans.map((span) => span.text).join("")] : [],
+    );
+    expect(texts).toEqual(expect.arrayContaining(["闪光 · 星核", "闪光 · 十字芒", "光圈 · 半径", "光圈 · 亮度"]));
+    expect(texts).toEqual(expect.arrayContaining(["0.00s", "0.40s", "0.80s"]));
   });
 });

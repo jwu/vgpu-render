@@ -20,8 +20,8 @@ import { draw as slashArc } from "./slash-arc/scene.js";
 import { draw as battleSlash } from "./battle-slash/scene.js";
 import { draw as hitMark } from "./hit-mark/scene.js";
 import { draw as hitFlash } from "./hit-flash/scene.js";
-import { draw as pillarAppear } from "./pillar-appear/scene.js";
-import { draw as pillarFade } from "./pillar-fade/scene.js";
+import { draw as lightPillar } from "./light-pillar/scene.js";
+import { draw as ultFlash } from "./ult-flash/scene.js";
 
 const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: VfxSceneContext) => void>> = {
   "heal-beam": healBeam,
@@ -32,8 +32,8 @@ const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: VfxScene
   "battle-slash": battleSlash,
   "hit-mark": hitMark,
   "hit-flash": hitFlash,
-  "pillar-appear": pillarAppear,
-  "pillar-fade": pillarFade,
+  "light-pillar": lightPillar,
+  "ult-flash": ultFlash,
 };
 
 export const VFX_SCENE_IDS: readonly string[] = Object.keys(PAGES);

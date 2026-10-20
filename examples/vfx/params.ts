@@ -47,6 +47,21 @@ export function paramsFor(specs: readonly ParamSpec[], passed: EffectParams | un
   return passed === undefined ? defaultParams(specs) : clampParams(specs, passed);
 }
 
+/**
+ * The same colour pulled towards white by `amount` (0-1).
+ *
+ * Light layers do not get paler by losing saturation alone; they go up in value towards the white
+ * point, which is what a hot core, a spark tip and a shaft's filament all share.
+ */
+export function lighten(color: readonly [number, number, number, number], amount: number): readonly [number, number, number, number] {
+  return [
+    color[0] + (1 - color[0]) * amount,
+    color[1] + (1 - color[1]) * amount,
+    color[2] + (1 - color[2]) * amount,
+    color[3],
+  ];
+}
+
 /** The same RGB with a different alpha, for the fading layers. */
 export function withAlpha(
   color: readonly [number, number, number, number],

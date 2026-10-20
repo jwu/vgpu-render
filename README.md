@@ -25,14 +25,16 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
 - **Battle VFX** (`/?page=vfx`) — the battle-effects page in `examples/vfx/`: `world2d`
   scenes staged on a loop timeline with a scrub slider, an editable `duration` (0.8 s on every
   page), per-effect parameters, and hue/saturation sliders so each effect can be recoloured.
-  Most effects play across the same anime.js easing matrix — columns are the eleven families
-  (`linear` / `quad` / `cubic` / `quart` / `quint` / `sine` / `expo` / `circ` / `back` /
-  `elastic` / `bounce`), rows are the directions (`in` / `out` / `inOut`), 33 cells in total.
-  Every cell shares the clock, the geometry and the parameters, so the curve difference is the
-  only variable, and a square plot of each curve with a live playhead sits above its effect;
-  `linear` (the only directionless family) is the baseline and the diagonal guide inside every
-  plot. `heal-beam` was the first page to show **one** effect instead of a matrix, with its
-  elements on a timeline; `fireball` and `chain-lightning` follow the same shape.
+  The sidebar splits them in two. **Game Feel** is the hit-feedback set: one instant of contact —
+  a swing, the mark it leaves, the flash on the frame it lands — so the page is a matrix. Columns
+  are the eleven anime.js families (`linear` / `quad` / `cubic` / `quart` / `quint` / `sine` /
+  `expo` / `circ` / `back` / `elastic` / `bounce`), rows are the directions (`in` / `out` /
+  `inOut`), 33 cells in total. Every cell shares the clock, the geometry and the parameters, so
+  the curve difference is the only variable, and a square plot of each curve with a live playhead
+  sits above its effect; `linear` (the only directionless family) is the baseline and the diagonal
+  guide inside every plot. **真实案例** is the whole-clip set: one cast per page — a windup, the
+  effect and its aftermath — with one curve row per element under the stage and a single playhead
+  crossing all of them.
 
   - `slash-arc` — the swing grows: a filled sector and an arc stroke sweep out from the start
     angle, so the swept angle at any instant *is* the curve.
@@ -46,12 +48,6 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
   - `hit-flash` — the other half of the hit feedback: a full-strength disc over the whole unit,
     lifting on `1 - eased`. The `circ` / `in` cell is the simulator's own timing; the rest of the
     matrix shows what a slower or faster curve does to the same flash.
-  - `pillar-appear` — a column of light growing into view: four nested fills of one colour, narrowing and brightening
-    toward the core through the alpha ladder alone. Height climbs with the curve while opacity falls
-    with it, so one instant reads as a point on the way up.
-  - `pillar-fade` — the opposite motion: the column is at full height on its first frame, and what
-    the clock takes away is its definition — it widens and fades into a haze. Same shaft shape, one
-    colour, nothing round added on top; only the timing differs.
   - `heal-beam` — the first page that shows **one** effect instead of a matrix, and the first with
     an element timeline: the heal from `~/gamedev/battle` (a ground pool spreading from the feet, a
     stacked column rising off the body, sparks drifting up its length) on the left, and one curve row
@@ -78,6 +74,26 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
     that resolves on the frame it lands is a movement effect, not a hit. `cuts`, `length` and
     `trails` change the flurry, the cut size and the afterimages; the four rows plot the dash, each
     cut's brightness, one cut's stretch and the blink.
+  - `light-pillar` — a column of light through its whole life: it is planted, holds, and then bursts.
+    The planting is a snap, not a growth — the height overshoots on `outExpo` and settles back, and
+    the floor is pushed open rather than lit: the pool's reach lags the shaft on `outQuad` while a
+    thinner ring is driven out of the foot ahead of it, so the floor reads as giving way. It holds for rather
+    more than a third of the loop — breathing while it does: one sine cycle across the hold, both ends
+    on zero, swinging the width, the height, the brightness and the hue together, so the column looks
+    like it is doing work instead of waiting. That hold is what makes the burst land. The burst is all inside the first
+    third of the scatter — the shaft
+    is thrown open on `outExpo`, the fills fold towards one width while the bright core leaves first,
+    and the light drops to a fifth. What is left after that is a wide dim haze that fades on its own.
+    The floor answers on the same frame with a ring thrown off the pool, outrunning it and gone by
+    the time it is at its widest. Six nested fills of one colour plus two flat ellipses are the whole
+    shape; `ring` at zero gives the old, ring-free scatter. The two halves used to be two matrix
+    pages (one growing the column, one scattering it) — on one clock the rise ends exactly where the
+    burst starts. Five rows plot the rise, the width, the brightness, and the ring's reach and light.
+  - `ult-flash` — the pop an ultimate leaves on its caster: a small cross of light gathers on the
+    body, then shoots out into a four-armed star while a single ring is thrown off it and gone. The
+    flash never tints the unit — it is its own object on top of the body, so it can be a cast cue
+    without turning the character into a white disc. Four rows plot the star's brightness, the arms'
+    length, and the ring's reach and brightness.
 
 Both sets share the engine (`gallery/demo-engine.ts`): a switch swaps the registry,
 dispatcher, storage record and camera, while the WebGPU device and render loop stay up.
