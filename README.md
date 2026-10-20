@@ -26,7 +26,8 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
   scenes staged on a loop timeline with a scrub slider, an editable `duration` (0.8 s on every
   page), per-effect parameters, and hue/saturation sliders so each effect can be recoloured.
   The sidebar splits them in two. **Game Feel** is the hit-feedback set: one instant of contact —
-  a swing, the mark it leaves, the flash on the frame it lands — so the page is a matrix. Columns
+  a swing, the mark it leaves, the flash on the frame it lands, the body it nudges —
+  so the page is a matrix. Columns
   are the eleven anime.js families (`linear` / `quad` / `cubic` / `quart` / `quint` / `sine` /
   `expo` / `circ` / `back` / `elastic` / `bounce`), rows are the directions (`in` / `out` /
   `inOut`), 33 cells in total. Every cell shares the clock, the geometry and the parameters, so
@@ -48,6 +49,11 @@ The gallery serves two independent page sets from one entry (`gallery/demo.tsx`)
   - `hit-flash` — the other half of the hit feedback: a full-strength disc over the whole unit,
     lifting on `1 - eased`. The `circ` / `in` cell is the simulator's own timing; the rest of the
     matrix shows what a slower or faster curve does to the same flash.
+  - `hit-shake` — the third channel: the body itself, nudged left and right and settling back. The
+    displacement is `amplitude × (1 - eased) × cos(progress × cycles × 2π)`, so the curve decides
+    how fast the hit is spent rather than how far the body travels. The default opens well under
+    the body radius on purpose — a shake that carries the unit more than its own size reads as a
+    knockback. `out` rows snap home on the impact frame, `in` rows stay moving to the end.
   - `heal-beam` — the first page that shows **one** effect instead of a matrix, and the first with
     an element timeline: the heal from `~/gamedev/battle` (a ground pool spreading from the feet, a
     stacked column rising off the body, sparks drifting up its length) on the left, and one curve row

@@ -8,6 +8,8 @@ import { cellX, cellY } from "../examples/vfx/matrix.js";
 import { LOOP_SECONDS, slashPhase } from "../examples/vfx/slash-arc/scene.js";
 import { battleSwingPhase } from "../examples/vfx/battle-slash/scene.js";
 import { actionPhase } from "../examples/vfx/action-phase.js";
+import { shakeOffsetAt } from "../examples/vfx/hit-shake/scene.js";
+import { HIT_SHAKE_PARAMS } from "../examples/vfx/hit-shake/meta.js";
 import { PILLAR_LAYER_COUNT } from "../examples/vfx/pillar.js";
 import {
   BURST_RATIO as PILLAR_BURST_RATIO,
@@ -574,6 +576,90 @@ describe("hit flash", () => {
     const shapes = drawList.commands().flatMap((command) => (command.kind === "shape2d" ? [command] : []));
     const reds = shapes.filter((command) => command.shape === "circle" && command.filled && command.color[0] === 1 && command.color[1] < 0.1);
     expect(reds).toHaveLength(33);
+  });
+});
+
+describe("hit shake", () => {
+  /** The page's own default amplitude, so the drawing assertions follow the slider's default. */
+  const AMPLITUDE = HIT_SHAKE_PARAMS.find((spec) => spec.key === "amplitude")!.default;
+  const shapesOf = (time: number, params: Record<string, number> = {}) => {
+    const drawList = new FrameDrawList();
+    buildVfxScene("hit-shake", drawList, time, undefined, undefined, params);
+    return drawList.commands().flatMap((command) => (command.kind === "shape2d" ? [command] : []));
+  };
+  // The body is the one filled disc of `unitRadius`; the plot playhead is a much smaller one.
+  const bodiesOf = (shapes: ReturnType<typeof shapesOf>) =>
+    shapes.filter((command) => command.shape === "circle" && command.filled && command.size[0] > 0.3);
+  const rimsOf = (shapes: ReturnType<typeof shapesOf>) =>
+    shapes.filter((command) => command.shape === "circle" && !command.filled);
+
+  test("draw the unit in every cell", () => {
+    const shapes = shapesOf(0);
+    expect(bodiesOf(shapes)).toHaveLength(33);
+    expect(rimsOf(shapes)).toHaveLength(33);
+    // Nothing is drawn over the body: this page is about the body's position and nothing else.
+    expect(shapes.filter((command) => command.shape === "circle" && command.dash !== undefined)).toHaveLength(0);
+  });
+
+  /** Where cell `index` stands when it is not being shaken, read off the matrix layout. */
+  const restXOf = (index: number): number => cellX(index % EASING_FAMILIES.length);
+  const restYOf = (index: number): number => cellY(Math.floor(index / EASING_FAMILIES.length));
+
+  test("nudge the body sideways on the impact frame", () => {
+    // The cosine is at full amplitude on the first frame, so the body sits exactly `amplitude` away
+    // from where it stands — sideways only, with no second axis and no vertical drift.
+    const bodies = bodiesOf(shapesOf(0));
+    for (let index = 0; index < bodies.length; index++) {
+      const body = bodies[index]!;
+      expect(body.center[0] - restXOf(index)).toBeCloseTo(AMPLITUDE, 6);
+      expect(body.center[1]).toBeCloseTo(restYOf(index), 6);
+    }
+  });
+
+  test("come home once the action window is over", () => {
+    // The envelope is `1 - eased`, so every curve has wrung the shake out by the end of the window.
+    const bodies = bodiesOf(shapesOf(LOOP_SECONDS * 0.6));
+    expect(bodies).toHaveLength(33);
+    for (let index = 0; index < bodies.length; index++) {
+      expect(bodies[index]!.center[0]).toBeCloseTo(restXOf(index), 6);
+      expect(bodies[index]!.center[1]).toBeCloseTo(restYOf(index), 6);
+    }
+  });
+
+  test("shake within a fraction of the body radius", () => {
+    // The whole point of the page: a nudge, not a knockback. The default has to stay well inside
+    // the body's own size, or it reads as the unit being knocked across its square.
+    const radius = HIT_SHAKE_PARAMS.find((spec) => spec.key === "unitRadius")!.default;
+    expect(AMPLITUDE).toBeLessThan(radius / 2);
+  });
+
+  test("let the cell's curve decide how fast it comes home", () => {
+    // Same instant, same amplitude: `inCirc` still holds most of the offset where `outCirc` is nearly
+    // home. This is the whole comparison the matrix exists for.
+    expect(Math.abs(shakeOffsetAt(inCirc, 0.48, 1, 3))).toBeGreaterThan(Math.abs(shakeOffsetAt(outCirc, 0.48, 1, 3)) * 4);
+    // On the impact frame the envelope is untouched, whatever the curve.
+    for (const ease of [inCirc, outCirc, linear]) expect(shakeOffsetAt(ease, 0, 1, 3)).toBeCloseTo(1, 6);
+  });
+
+  test("swing `cycles` times within the window", () => {
+    // One cycle crosses zero a quarter of the way in and has turned round by the halfway point.
+    expect(shakeOffsetAt(linear, 0.25, 1, 1)).toBeCloseTo(0, 6);
+    expect(shakeOffsetAt(linear, 0.5, 1, 1)).toBeCloseTo(-0.5, 6);
+    // Three cycles change sign six times across the window, one cycle only twice.
+    const crossings = (cycles: number): number => {
+      let count = 0;
+      let previous = Math.sign(shakeOffsetAt(linear, 0, 1, cycles));
+      for (let step = 1; step <= 400; step++) {
+        const sign = Math.sign(shakeOffsetAt(linear, step / 400, 1, cycles));
+        if (sign !== 0 && sign !== previous) {
+          count++;
+          previous = sign;
+        }
+      }
+      return count;
+    };
+    expect(crossings(1)).toBe(2);
+    expect(crossings(3)).toBe(6);
   });
 });
 

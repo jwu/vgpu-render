@@ -79,7 +79,7 @@ const BASIC_FAMILIES: readonly SceneFamily[] = [
  * instant drawn across the easing matrix, so the only variable between two cells is the curve; a
  * case-study page is a whole cast — a windup, the effect and its aftermath — on one timeline.
  */
-const GAME_FEEL_IDS: readonly string[] = ["hit-mark", "hit-flash", "slash-arc", "battle-slash"];
+const GAME_FEEL_IDS: readonly string[] = ["hit-mark", "hit-flash", "hit-shake", "slash-arc", "battle-slash"];
 
 const VFX_FAMILIES: readonly SceneFamily[] = [
   { id: "game-feel", title: "Game Feel", matches: (example) => GAME_FEEL_IDS.includes(example.id) },

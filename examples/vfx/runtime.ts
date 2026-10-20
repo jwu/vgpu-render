@@ -20,6 +20,7 @@ import { draw as slashArc } from "./slash-arc/scene.js";
 import { draw as battleSlash } from "./battle-slash/scene.js";
 import { draw as hitMark } from "./hit-mark/scene.js";
 import { draw as hitFlash } from "./hit-flash/scene.js";
+import { draw as hitShake } from "./hit-shake/scene.js";
 import { draw as lightPillar } from "./light-pillar/scene.js";
 import { draw as ultFlash } from "./ult-flash/scene.js";
 
@@ -32,6 +33,7 @@ const PAGES: Readonly<Record<string, (drawList: FrameDrawList, context: VfxScene
   "battle-slash": battleSlash,
   "hit-mark": hitMark,
   "hit-flash": hitFlash,
+  "hit-shake": hitShake,
   "light-pillar": lightPillar,
   "ult-flash": ultFlash,
 };
