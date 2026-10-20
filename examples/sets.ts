@@ -72,8 +72,18 @@ const BASIC_FAMILIES: readonly SceneFamily[] = [
   { id: "text", title: "Text", matches: (example) => example.group === "text" },
 ];
 
+/**
+ * The hit-feedback pages: two strikes, the mark one leaves and the flash on the frame it lands.
+ *
+ * They are grouped apart from the full clips because they answer a different question. Each is one
+ * instant drawn across the easing matrix, so the only variable between two cells is the curve; a
+ * case-study page is a whole cast — a windup, the effect and its aftermath — on one timeline.
+ */
+const GAME_FEEL_IDS: readonly string[] = ["hit-mark", "hit-flash", "slash-arc", "battle-slash"];
+
 const VFX_FAMILIES: readonly SceneFamily[] = [
-  { id: "combat", title: "战斗特效 / Combat FX", matches: () => true },
+  { id: "game-feel", title: "Game Feel", matches: (example) => GAME_FEEL_IDS.includes(example.id) },
+  { id: "case-study", title: "真实案例", matches: (example) => !GAME_FEEL_IDS.includes(example.id) },
 ];
 
 /** The basic API / parity gallery: the page the project has always served at `/`. */
