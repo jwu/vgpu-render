@@ -1,10 +1,11 @@
 /**
- * `2d-arc`: normal sweep / startAngle / radius / stroke / color / alpha, then the dashed variant.
+ * `2d-arc`: normal sweep / startAngle / radius / stroke / color / alpha, then the dashed variant
+ * and the striped stroke — an arc has no interior, so its hatch lands on the band.
  */
 
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const SWEEPS = [Math.PI / 3, (Math.PI * 2) / 3, (Math.PI * 4) / 3, (Math.PI * 11) / 6] as const;
 const STARTS = [0, Math.PI / 2, Math.PI, (Math.PI * 3) / 2] as const;
@@ -42,6 +43,13 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
       sweep: ARC_SWEEP,
       strokeWidth: 4,
       color: COOL,
+    });
+    // Wide enough to read the stripes: on an arc the hatch masks the band, not an interior.
+    d2.arc_h([shapeX(7), y], 40, {
+      sweep: ARC_SWEEP,
+      strokeWidth: 10,
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

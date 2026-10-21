@@ -1,12 +1,12 @@
 /**
- * `2d-triangle`: normal vertices / rotation / stroke / color / alpha, then the dashed outline and
- * a combined solid sample.
+ * `2d-triangle`: normal vertices / rotation / stroke / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched fill.
  */
 
 import type { Vec2 } from "../../../src/camera-2d.js";
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 type Triangle = readonly [Vec2, Vec2, Vec2];
 
@@ -60,6 +60,13 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.triangle_s(fa, fb, fc, {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+
+    const [ha, hb, hc] = at(7, row, VERTICES[row]);
+    d2.triangle_h(ha, hb, hc, {
+      rotation: ROTATIONS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

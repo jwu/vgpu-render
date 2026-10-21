@@ -1,11 +1,11 @@
 /**
- * `2d-capsule`: normal length / radius / rotation / color / alpha, then the dashed outline and a
- * combined solid sample.
+ * `2d-capsule`: normal length / radius / rotation / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched fill.
  */
 
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const LENGTHS = [0, 16, 32, 44] as const;
 const RADII = [10, 14, 18, 22] as const;
@@ -44,6 +44,11 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.capsule_s([shapeX(6), y], 18, LENGTHS[row], {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.capsule_h([shapeX(7), y], 18, LENGTHS[row], {
+      rotation: ROTATIONS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

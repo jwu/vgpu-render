@@ -1,12 +1,12 @@
 /**
- * `2d-ellipse`: normal radii / rotation / stroke / color / alpha, then the dashed outline and a
- * combined solid sample.
+ * `2d-ellipse`: normal radii / rotation / stroke / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched fill.
  */
 
 import type { Vec2 } from "../../../src/camera-2d.js";
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const RADII: readonly Vec2[] = [[50, 26], [36, 36], [26, 36], [50, 20]];
 const ROTATIONS = [0, Math.PI / 12, Math.PI / 6, Math.PI / 4] as const;
@@ -45,6 +45,11 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.ellipse_s([shapeX(6), y], SOLID_RADII[row], {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.ellipse_h([shapeX(7), y], SOLID_RADII[row], {
+      rotation: ROTATIONS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

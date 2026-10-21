@@ -4,7 +4,7 @@
  */
 
 import type { Color, FrameDrawList } from "../../src/frame-draw-list.js";
-import type { FrameDrawList2D } from "../../src/frame-draw-list-2d.js";
+import type { FrameDrawList2D, Shape2DHatch } from "../../src/frame-draw-list-2d.js";
 import { COLUMN_SPACING, COLUMN_TITLE_FONT, LABELS_2D, ROW_SPACING, SAMPLE_LABEL_FONT, tableRows } from "./2d-labels.js";
 
 
@@ -24,6 +24,30 @@ export const AXIS_Y: Color = [0, 1, 0, 1];
 /** The same RGB with a different alpha, for the opacity columns. */
 export function withAlpha(color: Color, alpha: number): Color {
   return [color[0], color[1], color[2], alpha];
+}
+
+/**
+ * The four stripe patterns every shape page's `<shape>_h` column shows: a wide 45-degree stripe, an
+upright one, a fine one, and a moving one over a filled base. Only the last row carries
+ * `background` and `phase`, which is what separates the hatch-mask reading from a solid base with
+a second colour.
+ *
+ * One table rather than eleven copies: the point of the column is that every primitive answers the
+ * same question, so the samples have to stay identical across pages.
+ */
+const HATCH_SAMPLES: readonly Shape2DHatch[] = [
+  { spacing: 16, angle: Math.PI / 4, width: 5 },
+  { spacing: 10, angle: Math.PI / 2, width: 4 },
+  { spacing: 6, angle: -Math.PI / 6, width: 2 },
+  { spacing: 16, angle: Math.PI / 4, width: 6 },
+];
+
+/** Stripe pattern of one `<shape>_h` sample row; `phase` only moves the last, scrolling row. */
+export function hatchSample(row: number, phase: number): Shape2DHatch {
+  const sample = HATCH_SAMPLES[row % HATCH_SAMPLES.length] ?? HATCH_SAMPLES[0]!;
+  return row === HATCH_SAMPLES.length - 1
+    ? { ...sample, phase, background: withAlpha(RING, 0.35) }
+    : sample;
 }
 
 export type Table2D = {

@@ -9,7 +9,7 @@ import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { FrameDrawList2D } from "../../../src/frame-draw-list-2d.js";
 import type { SceneContext } from "../../shared/scene-context.js";
 import type { Curve2D } from "../../../src/curve.js";
-import { ACCENT, ACTION, COOL, FILL, HINT, RING, WARM } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, FILL, HINT, RING, WARM, withAlpha } from "../../shared/2d-page.js";
 
 const COLUMNS = 5;
 const CELL_WIDTH = 200;
@@ -60,12 +60,33 @@ const CELLS: readonly Cell[] = [
   { name: "rect_r", draw: (d2, x, y) => d2.rect_r([x, y], [64, 40], 14, { strokeWidth: 2, color: FILL }) },
   { name: "rect_d", draw: (d2, x, y) => d2.rect_d([x, y], [64, 40], [10, 6, 0], { strokeWidth: 2, color: FILL }) },
   { name: "rect_s", draw: (d2, x, y) => d2.rect_s([x, y], [64, 40], { color: FILL }) },
+  {
+    name: "rect_h",
+    draw: (d2, x, y) => d2.rect_h([x, y], [64, 40], { hatch: { spacing: 10, width: 4 }, color: ACCENT }),
+  },
   { name: "circle", draw: (d2, x, y) => d2.circle([x, y], 26, { strokeWidth: 2, color: FILL }) },
   { name: "circle_s", draw: (d2, x, y) => d2.circle_s([x, y], 26, { color: FILL }) },
+  {
+    name: "circle_h",
+    draw: (d2, x, y) =>
+      d2.circle_h([x, y], 26, { hatch: { spacing: 9, angle: -Math.PI / 4, width: 3.5 }, color: COOL }),
+  },
   { name: "ellipse", draw: (d2, x, y) => d2.ellipse([x, y], [34, 22], { strokeWidth: 2, color: FILL }) },
   {
     name: "arc",
     draw: (d2, x, y) => d2.arc([x, y], 26, { startAngle: -Math.PI / 2, sweep: Math.PI * 1.2, strokeWidth: 2, color: FILL }),
+  },
+  {
+    // An arc has no interior, so its hatch is a striped stroke rather than a striped fill.
+    name: "arc_h",
+    draw: (d2, x, y) =>
+      d2.arc_h([x, y], 26, {
+        startAngle: -Math.PI / 2,
+        sweep: Math.PI * 1.2,
+        strokeWidth: 10,
+        hatch: { spacing: 8, width: 4 },
+        color: ACTION,
+      }),
   },
   { name: "annulus", draw: (d2, x, y) => d2.annulus([x, y], 14, 26, { strokeWidth: 2, color: FILL }) },
   { name: "capsule", draw: (d2, x, y) => d2.capsule([x, y], 14, 36, { strokeWidth: 2, color: FILL }) },
@@ -75,6 +96,14 @@ const CELLS: readonly Cell[] = [
     draw: (d2, x, y) => d2.triangle([x, y + 22], [x - 26, y - 16], [x + 26, y - 16], { strokeWidth: 2, color: FILL }),
   },
   { name: "rhombus", draw: (d2, x, y) => d2.rhombus([x, y], [52, 44], { strokeWidth: 2, color: FILL }) },
+  {
+    name: "rhombus_h",
+    draw: (d2, x, y) =>
+      d2.rhombus_h([x, y], [52, 44], {
+        hatch: { spacing: 8, angle: Math.PI / 6, width: 3, background: withAlpha(RING, 0.35) },
+        color: WARM,
+      }),
+  },
   {
     name: "sector",
     draw: (d2, x, y) => d2.sector([x, y], 26, { startAngle: -Math.PI / 2, sweep: Math.PI * 0.8, strokeWidth: 2, color: FILL }),

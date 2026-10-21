@@ -1,11 +1,11 @@
 /**
- * `2d-polygon`: normal sides / circumradius / rotation / color / alpha, then the dashed outline
- * and a combined solid sample.
+ * `2d-polygon`: normal sides / circumradius / rotation / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched fill.
  */
 
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const SIDES = [3, 4, 6, 12] as const;
 const RADII = [20, 26, 32, 40] as const;
@@ -35,6 +35,11 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.polygon_s([shapeX(6), y], 36, SIDES[row], {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.polygon_h([shapeX(7), y], 36, SIDES[row], {
+      rotation: ROTATIONS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

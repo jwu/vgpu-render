@@ -1,12 +1,12 @@
 /**
- * `2d-rect`: normal width / size / rotation / color / alpha, then the dashed outline and a
- * combined solid sample (size, rotation, color and alpha together).
+ * `2d-rect`: normal width / size / rotation / color / alpha, then the dashed outline, a combined
+ * solid sample (size, rotation, color and alpha together) and a hatched fill per row.
  */
 
 import type { Vec2 } from "../../../src/camera-2d.js";
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, FILL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, FILL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const WIDTHS = [1, 2, 4, 8] as const;
 const SIZES: readonly Vec2[] = [[100, 48], [72, 44], [52, 60], [96, 32]];
@@ -19,6 +19,7 @@ const SOLID_ALPHAS = [0.35, 0.6, 0.8, 1] as const;
 const DASHES = [[24, 8], [12, 12], [6, 18], [2, 12]] as const;
 const DASHED: Vec2 = [100, 46];
 const DASH_SPEED = 30;
+const HATCHED: Vec2 = [96, 46];
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
   const { d2, shapeX, rows, rowY } = table2D(drawList, "2d-rect");
@@ -46,5 +47,6 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
     });
+    d2.rect_h([shapeX(7), y], HATCHED, { hatch: hatchSample(row, dashPhase), color: COLORS[row] });
   }
 }

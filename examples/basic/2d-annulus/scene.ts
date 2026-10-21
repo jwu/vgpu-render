@@ -1,11 +1,11 @@
 /**
- * `2d-annulus`: normal inner / outer / stroke / color / alpha, then the dashed outline and a
- * combined solid band sample.
+ * `2d-annulus`: normal inner / outer / stroke / color / alpha, then the dashed outline, a combined
+ * solid band sample and a hatched band.
  */
 
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const INNERS = [6, 14, 22, 30] as const;
 const OUTERS = [30, 34, 38, 40] as const;
@@ -33,6 +33,10 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.annulus_d([shapeX(5), y], 16, 34, [visible, gap, dashPhase], { strokeWidth: 2, color: COOL });
     d2.annulus_s([shapeX(6), y], INNERS[row], OUTERS[row], {
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.annulus_h([shapeX(7), y], INNERS[row], OUTERS[row], {
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

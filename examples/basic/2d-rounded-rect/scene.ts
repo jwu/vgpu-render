@@ -1,12 +1,12 @@
 /**
- * `2d-rounded-rect`: normal radius / size / rotation / color / alpha, then the dashed outline and
- * a combined solid sample.
+ * `2d-rounded-rect`: normal radius / size / rotation / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched fill.
  */
 
 import type { Vec2 } from "../../../src/camera-2d.js";
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, FILL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, FILL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const RADII = [2, 12, 24, 40] as const;
 const SIZES: readonly Vec2[] = [[100, 52], [72, 44], [52, 60], [96, 32]];
@@ -51,6 +51,11 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.rect_r_s([shapeX(6), y], SOLID_SIZES[row], SOLID_RADII[row], {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.rect_r_h([shapeX(7), y], SOLID_SIZES[row], SOLID_RADII[row], {
+      rotation: ROTATIONS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

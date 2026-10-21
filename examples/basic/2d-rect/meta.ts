@@ -5,6 +5,6 @@ import { page2D, shape2DNote } from "../../shared/meta.js";
 
 export const meta: SceneExample = page2D(
   "2d-rect",
-  "Rectangle normal outline across width, size, rotation, color and alpha, plus the dashed outline and a combined solid sample.",
+  "Rectangle normal outline across width, size, rotation, color and alpha, plus the dashed outline, a combined solid sample and a hatched fill.",
   shape2DNote,
 );

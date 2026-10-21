@@ -5,6 +5,6 @@ import { page2D, shape2DNote } from "../../shared/meta.js";
 
 export const meta: SceneExample = page2D(
   "2d-arc",
-  "Arc normal outline across sweep, start angle, radius, stroke width, color and alpha, plus the dashed variant.",
+  "Arc normal outline across sweep, start angle, radius, stroke width, color and alpha, plus the dashed variant and a striped stroke.",
   shape2DNote,
 );

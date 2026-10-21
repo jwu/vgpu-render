@@ -1,11 +1,11 @@
 /**
- * `2d-circle`: normal radius / stroke / color / alpha, then the dashed outline and a combined
- * solid sample.
+ * `2d-circle`: normal radius / stroke / color / alpha, then the dashed outline, a combined solid
+ * sample and a hatched fill.
  */
 
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const RADII = [18, 26, 34, 40] as const;
 const STROKES = [1, 2, 4, 8] as const;
@@ -30,5 +30,6 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.circle_s([shapeX(5), y], SOLID_RADII[row], {
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
     });
+    d2.circle_h([shapeX(6), y], SOLID_RADII[row], { hatch: hatchSample(row, dashPhase), color: COLORS[row] });
   }
 }

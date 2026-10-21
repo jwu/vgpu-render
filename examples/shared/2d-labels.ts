@@ -94,7 +94,7 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
   },
   "2d-rect": {
     title: "2D Rect",
-    note: "normal width / size / rotation / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal width / size / rotation / color / alpha first, then the dashed outline, one combined solid sample per row and the hatched fill",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -105,11 +105,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "rect(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "rect_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "rect_s(solid)", samples: ["92×54", "68×38", "92×34", "68×68"] },
+      { title: "rect_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-rounded-rect": {
     title: "2D Rounded Rect",
-    note: "normal radius / size / rotation / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal radius / size / rotation / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -120,11 +121,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "rect_r(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "rect_r_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "rect_r_s(solid)", samples: ["92×52", "64×44", "84×42", "68×68"] },
+      { title: "rect_r_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-circle": {
     title: "2D Circle",
-    note: "normal radius / stroke / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal radius / stroke / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -134,11 +136,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "circle(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "circle_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "circle_s(solid)", samples: ["20", "28", "36", "40"] },
+      { title: "circle_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-ellipse": {
     title: "2D Ellipse",
-    note: "normal radii / rotation / stroke / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal radii / rotation / stroke / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -149,11 +152,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "ellipse(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "ellipse_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "ellipse_s(solid)", samples: ["46×20", "32×32", "22×36", "50×18"] },
+      { title: "ellipse_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-arc": {
     title: "2D Arc",
-    note: "normal sweep / startAngle / radius / stroke / color / alpha first, then the dashed variant · an arc has no interior, so there is no _s",
+    note: "normal sweep / startAngle / radius / stroke / color / alpha first, then the dashed variant and the striped stroke · an arc has no interior, so there is no _s and its _h masks the band",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -164,11 +168,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "arc(color)", samples: ["warm", "accent", "cool", "action"] },
       { title: "arc(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "arc_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
+      { title: "arc_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-annulus": {
     title: "2D Annulus",
-    note: "normal inner / outer / stroke / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal inner / outer / stroke / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -179,11 +184,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "annulus(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "annulus_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "annulus_s(solid)", samples: ["6/30", "14/34", "22/38", "30/40"] },
+      { title: "annulus_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-capsule": {
     title: "2D Capsule",
-    note: "normal length / radius / rotation / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal length / radius / rotation / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -194,11 +200,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "capsule(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "capsule_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "capsule_s(solid)", samples: ["0", "16", "32", "44"] },
+      { title: "capsule_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-polygon": {
     title: "2D Polygon",
-    note: "normal sides / circumradius / rotation / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal sides / circumradius / rotation / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -209,11 +216,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "polygon(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "polygon_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "polygon_s(solid)", samples: ["3", "4", "6", "12"] },
+      { title: "polygon_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-triangle": {
     title: "2D Triangle",
-    note: "normal vertices / rotation / stroke / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal vertices / rotation / stroke / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -224,11 +232,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "triangle(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "triangle_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "triangle_s(solid)", samples: ["acute", "right", "obtuse", "isosceles"] },
+      { title: "triangle_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-rhombus": {
     title: "2D Rhombus",
-    note: "normal diagonals / rotation / stroke / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal diagonals / rotation / stroke / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -239,11 +248,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "rhombus(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "rhombus_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "rhombus_s(solid)", samples: ["60×80", "84×56", "72×72", "90×76"] },
+      { title: "rhombus_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-sector": {
     title: "2D Sector",
-    note: "normal sweep / startAngle / radius / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal sweep / startAngle / radius / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -254,11 +264,12 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "sector(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "sector_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "sector_s(solid)", samples: ["60°", "120°", "240°", "330°"] },
+      { title: "sector_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-segment": {
     title: "2D Segment",
-    note: "normal sweep / startAngle / radius / color / alpha first, then the dashed outline and one combined solid sample per row",
+    note: "normal sweep / startAngle / radius / color / alpha first, then the dashed outline, one combined solid sample and the hatched variant per row",
     spacing: 250,
     titleFont: 20,
     columns: [
@@ -269,6 +280,7 @@ export const LABELS_2D: Readonly<Record<string, Page2DLabels>> = {
       { title: "segment(alpha)", samples: [".25", ".50", ".75", "1.0"] },
       { title: "segment_d(dash)", samples: ["24/8", "12/12", "6/18", "2/12"] },
       { title: "segment_s(solid)", samples: ["60°", "120°", "240°", "330°"] },
+      { title: "segment_h(hatch)", samples: ["16 45°", "10 90°", "6 -30°", "bg 16 45°"] },
     ],
   },
   "2d-spaces": {

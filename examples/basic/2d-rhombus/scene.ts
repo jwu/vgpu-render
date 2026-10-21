@@ -1,12 +1,12 @@
 /**
- * `2d-rhombus`: normal diagonals / rotation / stroke / color / alpha, then the dashed outline and
- * a combined solid sample.
+ * `2d-rhombus`: normal diagonals / rotation / stroke / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched fill.
  */
 
 import type { Vec2 } from "../../../src/camera-2d.js";
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const DIAGONALS: readonly Vec2[] = [[60, 80], [84, 56], [72, 72], [90, 76]];
 const ROTATIONS = [0, Math.PI / 12, Math.PI / 6, Math.PI / 4] as const;
@@ -44,6 +44,11 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
     d2.rhombus_s([shapeX(6), y], DIAGONALS[row], {
       rotation: ROTATIONS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.rhombus_h([shapeX(7), y], DIAGONALS[row], {
+      rotation: ROTATIONS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }

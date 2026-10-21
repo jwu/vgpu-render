@@ -1,11 +1,11 @@
 /**
- * `2d-segment`: normal sweep / startAngle / radius / color / alpha, then the dashed outline and a
- * combined solid sample.
+ * `2d-segment`: normal sweep / startAngle / radius / color / alpha, then the dashed outline, a
+ * combined solid sample and a hatched cap.
  */
 
 import type { FrameDrawList } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { ACCENT, ACTION, COOL, RING, WARM, table2D, withAlpha } from "../../shared/2d-page.js";
+import { ACCENT, ACTION, COOL, RING, WARM, hatchSample, table2D, withAlpha } from "../../shared/2d-page.js";
 
 const SWEEPS = [Math.PI / 3, (Math.PI * 2) / 3, (Math.PI * 4) / 3, (Math.PI * 11) / 6] as const;
 const STARTS = [0, Math.PI / 2, Math.PI, (Math.PI * 3) / 2] as const;
@@ -63,6 +63,12 @@ export function draw(drawList: FrameDrawList, context: SceneContext): void {
       startAngle: STARTS[row],
       sweep: SWEEPS[row],
       color: withAlpha(COLORS[row], SOLID_ALPHAS[row]),
+    });
+    d2.segment_h([shapeX(7), y], 36, {
+      startAngle: STARTS[row],
+      sweep: SWEEPS[row],
+      hatch: hatchSample(row, dashPhase),
+      color: COLORS[row],
     });
   }
 }
