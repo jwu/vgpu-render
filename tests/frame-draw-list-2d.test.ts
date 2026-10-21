@@ -172,6 +172,54 @@ describe("FrameDrawList2D shapes", () => {
     expect(() => frame.d2.rect_d([0, 0], [10, 10], [6, 0, 0])).toThrow("dash gap");
   });
 
+  test("maps the hatch variant onto a filled command with a stripe pattern", () => {
+    const frame = new FrameDrawList();
+    frame.d2.rect_h([0, 0], [10, 4], { hatch: { spacing: 6 }, color: [1, 0, 0, 1] });
+    const [hatched] = frame.d2.shapes;
+    expect(hatched).toMatchObject({ shape: "rect", filled: true, color: [1, 0, 0, 1] });
+    // Defaults: 45 degrees, a third of the spacing, no phase.
+    expect(hatched?.hatch?.[0]).toBe(6);
+    expect(hatched?.hatch?.[1]).toBeCloseTo(Math.PI / 4);
+    expect(hatched?.hatch?.[2]).toBe(2);
+    expect(hatched?.hatch?.[3]).toBe(0);
+    expect(hatched?.dash).toBeUndefined();
+  });
+
+  test("keeps the requested hatch angle, width and phase", () => {
+    const frame = new FrameDrawList();
+    frame.d2.polygon_h([0, 0], 10, 6, { hatch: { spacing: 8, angle: Math.PI / 2, width: 1.5, phase: 3 } });
+    expect(frame.d2.shapes[0]?.hatch).toEqual([8, Math.PI / 2, 1.5, 3]);
+  });
+
+  test("strokes an arc with stripes instead of a flat band", () => {
+    const frame = new FrameDrawList();
+    frame.d2.arc_h([0, 0], 10, { strokeWidth: 6, hatch: { spacing: 4, width: 2 } });
+    const [arc] = frame.d2.shapes;
+    expect(arc).toMatchObject({ shape: "arc", filled: false, thickness: 6 });
+    expect(arc?.hatch).toEqual([4, Math.PI / 4, 2, 0]);
+    expect(arc?.dash).toBeUndefined();
+  });
+
+  test("draws the hatch background as a solid command underneath the stripes", () => {
+    const frame = new FrameDrawList();
+    frame.d2.circle_h([0, 0], 5, { hatch: { spacing: 4, background: [0, 0, 1, 1] }, color: [1, 1, 1, 1] });
+    const [base, stripes] = frame.d2.shapes;
+    expect(base).toMatchObject({ shape: "circle", filled: true, color: [0, 0, 1, 1] });
+    expect(base?.hatch).toBeUndefined();
+    expect(stripes).toMatchObject({ shape: "circle", filled: true, color: [1, 1, 1, 1] });
+    expect(stripes?.hatch?.[0]).toBe(4);
+  });
+
+  test("rejects a degenerate hatch", () => {
+    const frame = new FrameDrawList();
+    expect(() => frame.d2.rect_h([0, 0], [10, 10], { hatch: { spacing: 0 } })).toThrow("hatch.spacing");
+    expect(() => frame.d2.rect_h([0, 0], [10, 10], { hatch: { spacing: 4, width: -1 } })).toThrow("hatch.width");
+    expect(() => frame.d2.rect_h([0, 0], [10, 10], { hatch: { spacing: 4, angle: Number.NaN } })).toThrow("hatch.angle");
+    expect(() => frame.d2.rect_h([0, 0], [10, 10], { hatch: { spacing: 4, background: [1, 1, 1] as never } })).toThrow(
+      "hatch.background",
+    );
+  });
+
   test("filters shapes by layer mask and seals with the frame", () => {
     const frame = new FrameDrawList();
     frame.d2.circle([0, 0], 5, { layer: 1 });

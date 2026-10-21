@@ -60,10 +60,19 @@ struct In {
   /** (rotation, bounding radius of the instanced quad). */
   @location(11) rotationRadius: vec2f,
   @location(12) color: vec4f,
-  /** bit0: filled; bits 8..15: polygon vertex count. */
+  /** bit0: filled; bit1: world-space stroke width; bit2: hatched fill; bits 8..15: polygon vertex count. */
   @location(13) flags: u32,
-  /** (visible, gap, phase) of a dashed outline in shape-space units; gap 0 disables it. */
-  @location(14) dash: vec3f,
+  /**
+   * One packed float4 for both patterns, because compatibility mode spends two of the sixteen
+   * vertex attributes on the builtins and the shape already fills the rest:
+   *
+   * - dashed outline, the _d variant: (visible, gap, phase, 0)
+   * - hatched fill, the _h variant: (spacing, angle, width, phase)
+   *
+   * They are mutually exclusive — a command is either filled or outlined — so one slot carries
+   * both without ambiguity.
+   */
+  @location(14) pattern: vec4f,
 }
 
 struct Out {
@@ -80,7 +89,7 @@ struct Out {
   @location(7) rotation: f32,
   @location(8) @interpolate(flat, either) sides: u32,
   @location(9) @interpolate(flat, either) flags: u32,
-  @location(10) dash: vec3f,
+  @location(10) pattern: vec4f,
 }
 
 fn rotate2(p: vec2f, angle: f32) -> vec2f {
@@ -557,7 +566,7 @@ fn stroke_pixels(thickness: f32, flags: u32, pixelsPerUnit: f32) -> f32 {
   out.rotation = rotation;
   out.sides = (input.flags >> 8u) & 0xffu;
   out.flags = input.flags;
-  out.dash = input.dash;
+  out.pattern = input.pattern;
   return out;
 }
 
@@ -567,6 +576,13 @@ fn stroke_pixels(thickness: f32, flags: u32, pixelsPerUnit: f32) -> f32 {
   // Undo the space's y direction so the shape sees the coordinates it was authored in.
   let offset = vec2f(pixelOffset.x, pixelOffset.y * camera.yFlip) / scale;
   let local = rotate2(offset, -input.rotation);
+  // Derivatives have to be taken in uniform control flow, so the stripe axis and its pixel
+  // footprint are computed for every fragment even though only hatched fills read them. The
+  // projection onto the stripe normal is linear in the fragment position, so one derivative is
+  // exactly one pixel of pattern.
+  let hatchNormal = vec2f(-sin(input.pattern.y), cos(input.pattern.y));
+  let hatchAlong = dot(local, hatchNormal) + input.pattern.w;
+  let hatchPerPixel = max(fwidth(hatchAlong), EPSILON);
 
   let distanceLocal = shape_distance(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
   let distancePixel = distanceLocal * scale;
@@ -579,22 +595,23 @@ fn stroke_pixels(thickness: f32, flags: u32, pixelsPerUnit: f32) -> f32 {
   if (coverage <= 0.0) { discard; }
 
   // Dashed outlines: walk the perimeter parameter and cut the stroke in the gaps. The transition
-  // is spread over one canvas pixel so a dash edge is as soft as the shape's own edge.
-  if ((input.flags & 1u) == 0u && input.dash.y > 0.0) {
+  // is spread over one canvas pixel so a dash edge is as soft as the shape's own edge. The hatch
+  // reuses the same pattern slot, so bit2 has to rule it out here.
+  if ((input.flags & 5u) == 0u && input.pattern.y > 0.0) {
     let path = perimeter_length(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
     if (path >= 0.0) {
-      let requested = input.dash.x + input.dash.y;
+      let requested = input.pattern.x + input.pattern.y;
       let total = perimeter_total(input.shape, local, input.size, input.vertexB, input.vertexC, input.params, input.sides);
       var period = requested;
-      var visible = input.dash.x;
+      var visible = input.pattern.x;
       if (total > 0.0) {
         // Snap the period to a whole number of turns, keeping the requested duty cycle: the
         // closed outline then ends exactly where its dash pattern started.
         let count = max(round(total / requested), 1.0);
         period = total / count;
-        visible = period * (input.dash.x / requested);
+        visible = period * (input.pattern.x / requested);
       }
-      let along = fract((path + input.dash.z) / period) * period;
+      let along = fract((path + input.pattern.z) / period) * period;
       let pixel = 1.0 / scale;
       // Distance to the nearest pattern boundary: the dash start, the dash end, and the next
       // dash start that fract() wraps around to.
@@ -603,6 +620,20 @@ fn stroke_pixels(thickness: f32, flags: u32, pixelsPerUnit: f32) -> f32 {
       if (along > visible) { dashCoverage = 1.0 - dashCoverage; }
       coverage = coverage * dashCoverage;
     }
+  }
+  if (coverage <= 0.0) { discard; }
+  // Hatched shapes: stripes in the shape's own space, so they turn with its rotation instead of
+  // staying fixed to the canvas. A filled command masks its interior with them; an outlined one
+  // (the arc_h variant, where there is no interior to fill) masks the stroke band instead, because
+  // coverage already means "inside the band" in that case.
+  if ((input.flags & 4u) != 0u) {
+    let spacing = max(input.pattern.x, EPSILON);
+    let stripeWidth = clamp(input.pattern.z, 0.0, spacing);
+    let band = fract(hatchAlong / spacing);
+    // Wrapped distance to the nearest stripe centre, then inward by half a stripe: negative inside
+    // a stripe, exactly the sign convention the shape's own distance field uses.
+    let stripe = min(band, 1.0 - band) * spacing - stripeWidth * 0.5;
+    coverage = coverage * clamp(0.5 - stripe / hatchPerPixel, 0.0, 1.0);
   }
   if (coverage <= 0.0) { discard; }
   return vec4f(input.color.rgb, input.color.a * coverage);

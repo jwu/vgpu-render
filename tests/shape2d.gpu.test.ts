@@ -513,3 +513,108 @@ test("real GPU cuts an arc's ends along a radius, not a hyperbolic hook", async 
     gpu.dispose();
   }
 });
+
+test("real GPU fills a shape with stripes and clips them to its interior", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    // Angle 0 puts the stripe normal on +y, so a 16-unit spacing with an 8-unit stripe covers
+    // y in [-4, 4], [12, 20], ... and leaves the gaps between them empty.
+    renderer.prepare(
+      [shape({ ...base, shape: "rect", center: [0, 0], size: [30, 30], hatch: [16, 0, 8, 0] })],
+      { viewProjection: identity, view: identity },
+      DEFAULT_CAMERA,
+    );
+    frame(gpu, (f) => {
+      renderer.updateIndirect(f);
+      f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+    });
+    const pixels = await output.color.read({ mipLevel: 0, region: "all" });
+    renderer.destroy();
+
+    // Stripe centres stay lit, the middle of a gap does not, and one more period brings the stripe
+    // back. The last pair is past the 30-unit half size: the shape's own distance field clips it.
+    expect(lit(pixels, pixel(0, 0))).toBe(true);
+    expect(lit(pixels, pixel(0, 8))).toBe(false);
+    expect(lit(pixels, pixel(0, 16))).toBe(true);
+    expect(lit(pixels, pixel(0, 40))).toBe(false);
+  } finally {
+    gpu.dispose();
+  }
+});
+
+test("real GPU turns the stripes with the shape's rotation", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    const shot = async (rotation: number): Promise<Uint8Array> => {
+      renderer.prepare(
+        [shape({ ...base, shape: "rect", center: [0, 0], size: [30, 30], rotation, hatch: [16, 0, 8, 0] })],
+        { viewProjection: identity, view: identity },
+        DEFAULT_CAMERA,
+      );
+      frame(gpu, (f) => {
+        renderer.updateIndirect(f);
+        f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+      });
+      return output.color.read({ mipLevel: 0, region: "all" });
+    };
+    const upright = await shot(0);
+    const quarterTurn = await shot(Math.PI / 2);
+    renderer.destroy();
+
+    // The pattern is authored in shape space, so a quarter turn swaps which axis it runs along:
+    // the point 8 units up is a gap upright and a stripe after the turn, and the point 8 units
+    // right is the other way round.
+    expect(lit(upright, pixel(0, 8))).toBe(false);
+    expect(lit(upright, pixel(8, 0))).toBe(true);
+    expect(lit(quarterTurn, pixel(0, 8))).toBe(true);
+    expect(lit(quarterTurn, pixel(8, 0))).toBe(false);
+  } finally {
+    gpu.dispose();
+  }
+});
+
+test("real GPU strokes an arc with stripes inside its band", async () => {
+  const gpu = await init();
+  try {
+    const output = target(gpu, { size: [WIDTH, HEIGHT], depth: true });
+    const renderer = new GpuDebugDraw3D(gpu, { points: 4, lines: 4, joints: 4 });
+    // An 8-pixel band on radius 40 covers r in [36, 44]. The stripes run across x (angle 90°
+    // puts the normal on -x), so the exact top of the arc samples the pattern cleanly.
+    renderer.prepare(
+      [
+        shape({
+          ...base,
+          shape: "arc",
+          center: [0, 0],
+          size: [40, 40],
+          thickness: 8,
+          filled: false,
+          startAngle: 0,
+          sweep: Math.PI,
+          hatch: [16, Math.PI / 2, 8, 0],
+        }),
+      ],
+      { viewProjection: identity, view: identity },
+      DEFAULT_CAMERA,
+    );
+    frame(gpu, (f) => {
+      renderer.updateIndirect(f);
+      f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => renderer.draw(p));
+    });
+    const pixels = await output.color.read({ mipLevel: 0, region: "all" });
+    renderer.destroy();
+
+    // Stripe, gap, stripe along the band, and nothing outside it: the hatch masks the stroke, it
+    // does not fill an interior (an arc has none) and it does not get mistaken for a dash.
+    expect(lit(pixels, pixel(0, 40))).toBe(true);
+    expect(lit(pixels, pixel(8, 40))).toBe(false);
+    expect(lit(pixels, pixel(16, 40))).toBe(true);
+    expect(lit(pixels, pixel(0, 60))).toBe(false);
+  } finally {
+    gpu.dispose();
+  }
+});

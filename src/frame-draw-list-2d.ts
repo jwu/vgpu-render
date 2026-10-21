@@ -114,6 +114,33 @@ export type Shape2DOptions = {
   layer?: LayerMask;
 };
 
+/**
+ * Stripe pattern of a hatched fill (the `<shape>_h` variants).
+ *
+ * The stripes live in the shape's own space, so they turn with `rotation` instead of staying
+ * fixed to the canvas. `spacing`, `width` and `phase` are shape-space units and therefore scale
+ * with the camera zoom, exactly like a dash pattern; the edge stays one pixel wide at any zoom.
+ */
+export type Shape2DHatch = {
+  /** Distance between two stripe centres, in shape-space units. */
+  readonly spacing: number;
+  /** Stripe direction in radians, anticlockwise from +x; defaults to 45 degrees. */
+  readonly angle?: number;
+  /** Stripe thickness in shape-space units; defaults to a third of `spacing`. */
+  readonly width?: number;
+  /** Shifts the whole pattern along its normal, in shape-space units; defaults to `0`. */
+  readonly phase?: number;
+  /**
+   * Fill behind the stripes. Without it the interior is transparent apart from the stripes
+   * themselves, which is the hatch-as-a-mask reading; with it the shape reads as a solid base
+   * carrying a second colour on top.
+   */
+  readonly background?: Color;
+};
+
+/** Options of the `<shape>_h` variants: the usual shape options plus the stripe pattern. */
+export type HatchedShape2DOptions = Shape2DOptions & { readonly hatch: Shape2DHatch };
+
 export type Shape2DCommand = {
   readonly kind: "shape2d";
   readonly shape: Shape2DKind;
@@ -137,6 +164,12 @@ export type Shape2DCommand = {
    * absent for solid shapes and solid outlines.
    */
   readonly dash?: readonly [number, number, number];
+  /**
+   * Stripe pattern `[spacing, angle, width, phase]` of a hatched fill; absent for every other
+   * variant. The dashes and the hatch are mutually exclusive: a command is either outlined (dash)
+   * or filled (hatch), never both.
+   */
+  readonly hatch?: readonly [number, number, number, number];
   readonly rotation: number;
   readonly startAngle: number;
   readonly sweep: number;
@@ -202,9 +235,19 @@ export type FrameCommand2D = Point2DCommand | Line2DCommand | Joint2DCommand | S
  * Which of the `<shape>` / `<shape>_s` / `<shape>_d` trio a command came from. The method name
  * decides fill versus stroke, so a filled command never carries a dash pattern.
  */
+/** A hatch pattern with its defaults resolved, so the shader only ever sees four numbers. */
+type ResolvedHatch = {
+  readonly spacing: number;
+  readonly angle: number;
+  readonly width: number;
+  readonly phase: number;
+  readonly background?: Color;
+};
+
 type Shape2DVariant = {
   readonly filled: boolean;
   readonly dash?: readonly [number, number, number];
+  readonly hatch?: ResolvedHatch;
 };
 
 const WIRE: Shape2DVariant = { filled: false };
@@ -281,6 +324,36 @@ function dashValue(value: readonly [number, number, number]): readonly [number, 
 /** A dashed outline: the pattern is validated once, here. */
 function dashed(dash: readonly [number, number, number]): Shape2DVariant {
   return { filled: false, dash: dashValue(dash) };
+}
+
+/**
+ * A hatched fill. The stripe width defaults to a third of the spacing so an authored pattern only
+ * has to name one number to read as stripes rather than as a solid or as a sliver.
+ */
+function resolveHatch(hatch: Shape2DHatch): ResolvedHatch {
+  const spacing = positive(hatch.spacing, "hatch.spacing");
+  const width = positive(hatch.width ?? spacing / 3, "hatch.width");
+  const background = hatch.background === undefined ? undefined : colorValue(hatch.background, "hatch.background");
+  return {
+    spacing,
+    angle: finite(hatch.angle ?? Math.PI / 4, "hatch.angle"),
+    width,
+    phase: finite(hatch.phase ?? 0, "hatch.phase"),
+    ...(background === undefined ? {} : { background }),
+  };
+}
+
+/** A hatched fill: the pattern masks the interior. */
+function hatched(hatch: Shape2DHatch): Shape2DVariant {
+  return { filled: true, hatch: resolveHatch(hatch) };
+}
+
+/**
+ * A hatched outline: stripes inside the stroke band instead of inside an interior. `arc` is the
+ * only shape without one, so this is where a hatch turns into a stroke pattern rather than a fill.
+ */
+function hatchedStroke(hatch: Shape2DHatch): Shape2DVariant {
+  return { filled: false, hatch: resolveHatch(hatch) };
 }
 
 function vec2(value: Vec2, name: string): Vec2 {
@@ -702,6 +775,12 @@ export class FrameDrawList2D {
     return this;
   }
 
+  /** Rectangle filled with stripes instead of a flat colour; the pattern turns with `rotation`. */
+  rect_h(center: Vec2, size: Vec2, options: HatchedShape2DOptions): this {
+    this.#rectVariant(center, size, options, hatched(options.hatch));
+    return this;
+  }
+
   /**
    * Rectangle outline dashed along its perimeter (the 3D `draw_rect_d`). `dash` is
    * `[visible, gap, phase]` in shape-space units, the same triple the line layer takes.
@@ -735,6 +814,12 @@ export class FrameDrawList2D {
   /** Solid rounded rectangle (bevy `RoundedRectangle`, the 3D `_s` counterpart). */
   rect_r_s(center: Vec2, size: Vec2, cornerRadius: number, options: Shape2DOptions = {}): this {
     this.#rectRVariant(center, size, cornerRadius, options, SOLID);
+    return this;
+  }
+
+  /** Rounded rectangle filled with stripes; the rounding clips the stripes, it does not bend them. */
+  rect_r_h(center: Vec2, size: Vec2, cornerRadius: number, options: HatchedShape2DOptions): this {
+    this.#rectRVariant(center, size, cornerRadius, options, hatched(options.hatch));
     return this;
   }
 
@@ -779,6 +864,12 @@ export class FrameDrawList2D {
     return this;
   }
 
+  /** Disc filled with stripes (a hatch mask over the circle's interior). */
+  circle_h(center: Vec2, radius: number, options: HatchedShape2DOptions): this {
+    this.#circleVariant(center, radius, options, hatched(options.hatch));
+    return this;
+  }
+
   /** Dashed circle outline. */
   circle_d(
     center: Vec2,
@@ -804,6 +895,12 @@ export class FrameDrawList2D {
   /** Solid ellipse (bevy `Ellipse::new`, the 3D `_s` counterpart). */
   ellipse_s(center: Vec2, radii: Vec2, options: Shape2DOptions = {}): this {
     this.#ellipseVariant(center, radii, options, SOLID);
+    return this;
+  }
+
+  /** Ellipse filled with stripes. */
+  ellipse_h(center: Vec2, radii: Vec2, options: HatchedShape2DOptions): this {
+    this.#ellipseVariant(center, radii, options, hatched(options.hatch));
     return this;
   }
 
@@ -843,6 +940,16 @@ export class FrameDrawList2D {
     return this;
   }
 
+  /**
+   * Arc stroked with stripes instead of a flat colour. `arc` has no interior, so this is the one
+   * hatch that lands on the outline: `strokeWidth` sets the band and `hatch.spacing` the stripes
+   * riding inside it. It replaces the dash, since the two share the same pattern slot.
+   */
+  arc_h(center: Vec2, radius: number, options: HatchedShape2DOptions): this {
+    this.#arcVariant(center, radius, options, hatchedStroke(options.hatch));
+    return this;
+  }
+
   #arcVariant(center: Vec2, radius: number, options: Shape2DOptions, variant: Shape2DVariant): void {
     const r = positive(radius, "radius");
     const angles = angleRange(options);
@@ -858,6 +965,12 @@ export class FrameDrawList2D {
   /** Filled ring band (bevy `Annulus::new`, the 3D `_s` counterpart). */
   annulus_s(center: Vec2, innerRadius: number, outerRadius: number, options: Shape2DOptions = {}): this {
     this.#annulusVariant(center, innerRadius, outerRadius, options, SOLID);
+    return this;
+  }
+
+  /** Ring band filled with stripes; the hole stays empty, the stripes are clipped to the band. */
+  annulus_h(center: Vec2, innerRadius: number, outerRadius: number, options: HatchedShape2DOptions): this {
+    this.#annulusVariant(center, innerRadius, outerRadius, options, hatched(options.hatch));
     return this;
   }
 
@@ -898,6 +1011,12 @@ export class FrameDrawList2D {
     return this;
   }
 
+  /** Capsule filled with stripes. */
+  capsule_h(center: Vec2, radius: number, length: number, options: HatchedShape2DOptions): this {
+    this.#capsuleVariant(center, radius, length, options, hatched(options.hatch));
+    return this;
+  }
+
   /** Dashed capsule outline. */
   capsule_d(
     center: Vec2,
@@ -934,6 +1053,12 @@ export class FrameDrawList2D {
     return this;
   }
 
+  /** Regular polygon filled with stripes. */
+  polygon_h(center: Vec2, circumradius: number, sides: number, options: HatchedShape2DOptions): this {
+    this.#polygonVariant(center, circumradius, sides, options, hatched(options.hatch));
+    return this;
+  }
+
   /** Dashed regular polygon outline. */
   polygon_d(
     center: Vec2,
@@ -967,6 +1092,12 @@ export class FrameDrawList2D {
   /** Solid triangle (bevy `Triangle2d::new`, the 3D `_s` counterpart). */
   triangle_s(a: Vec2, b: Vec2, c: Vec2, options: Shape2DOptions = {}): this {
     this.#triangleVariant(a, b, c, options, SOLID);
+    return this;
+  }
+
+  /** Triangle filled with stripes. */
+  triangle_h(a: Vec2, b: Vec2, c: Vec2, options: HatchedShape2DOptions): this {
+    this.#triangleVariant(a, b, c, options, hatched(options.hatch));
     return this;
   }
 
@@ -1018,6 +1149,12 @@ export class FrameDrawList2D {
     return this;
   }
 
+  /** Diamond filled with stripes. */
+  rhombus_h(center: Vec2, diagonals: Vec2, options: HatchedShape2DOptions): this {
+    this.#rhombusVariant(center, diagonals, options, hatched(options.hatch));
+    return this;
+  }
+
   /** Dashed diamond outline. */
   rhombus_d(
     center: Vec2,
@@ -1043,6 +1180,12 @@ export class FrameDrawList2D {
   /** Solid disc sector (bevy `CircularSector`, the 3D `_s` counterpart). */
   sector_s(center: Vec2, radius: number, options: Shape2DOptions = {}): this {
     this.#sectorVariant(center, radius, options, SOLID);
+    return this;
+  }
+
+  /** Disc sector filled with stripes; the wedge edges clip the pattern. */
+  sector_h(center: Vec2, radius: number, options: HatchedShape2DOptions): this {
+    this.#sectorVariant(center, radius, options, hatched(options.hatch));
     return this;
   }
 
@@ -1072,6 +1215,12 @@ export class FrameDrawList2D {
   /** Solid disc segment (bevy `CircularSegment`, the 3D `_s` counterpart). */
   segment_s(center: Vec2, radius: number, options: Shape2DOptions = {}): this {
     this.#segmentVariant(center, radius, options, SOLID);
+    return this;
+  }
+
+  /** Disc segment filled with stripes. */
+  segment_h(center: Vec2, radius: number, options: HatchedShape2DOptions): this {
+    this.#segmentVariant(center, radius, options, hatched(options.hatch));
     return this;
   }
 
@@ -1129,8 +1278,9 @@ export class FrameDrawList2D {
     });
   }
 
-  /** One instanced quad per shape is enough because the shader resolves the outline, and the
-   * dash variant only needs one extra per-instance pattern. */
+  /** One instanced quad per shape is enough because the shader resolves the outline, the dash
+   * variant only needs one extra per-instance pattern, and the hatch is evaluated in the fragment
+   * stage from the same distance field. */
   #pushShape(
     shape: Shape2DKind,
     center: Vec2,
@@ -1145,6 +1295,15 @@ export class FrameDrawList2D {
     const cornerRadius = fields.cornerRadius ?? 0;
     if (cornerRadius < 0) throw new RangeError("cornerRadius must not be negative");
     const dash = variant?.dash;
+    const hatch = variant.hatch;
+    // A hatch with a background is the same shape drawn twice: a flat one first, then the stripes
+    // over it. Two commands rather than a second colour in the instance keeps the shader's fill
+    // path single-purpose; they share the `zIndex` and `layer`, so the base is drawn first and the
+    // stripes land on top of it. The base keeps the variant's fill state, so an outlined hatch
+    // (`arc_h`) gets a flat band under its striped band instead of a phantom interior.
+    if (hatch?.background !== undefined) {
+      this.#pushShape(shape, center, fields, { ...options, color: hatch.background }, { filled: variant.filled });
+    }
     this.#shapes.push({
       kind: "shape2d",
       shape,
@@ -1165,6 +1324,9 @@ export class FrameDrawList2D {
       zIndex: resolveZIndex(options.zIndex),
       layer: layer(options.layer),
       ...(dash === undefined ? {} : { dash }),
+      ...(hatch === undefined
+        ? {}
+        : { hatch: [hatch.spacing, hatch.angle, hatch.width, hatch.phase] as const }),
     });
   }
 
