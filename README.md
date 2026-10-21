@@ -302,11 +302,18 @@ distance field in the fragment stage, so nothing is triangulated on the CPU. An 
 canvas-pixel count by default; `strokeWidthMode: "world"` reads `strokeWidth` in `world2d` units
 instead, so the outline thickens with the camera zoom exactly like a stroke's `widthMode: "world"`.
 Every primitive follows the 3D naming: `<shape>` strokes
-the outline, `<shape>_s` fills it and `<shape>_d` dashes the outline along its perimeter,
-taking the same `[visible, gap, phase]` triple as the line layer. `arc` has no interior, so it
-has no `_s` variant, and `Shape2DOptions` no longer carries `fill` — the method name decides.
+the outline, `<shape>_s` fills it, `<shape>_d` dashes the outline along its perimeter with the
+same `[visible, gap, phase]` triple as the line layer, and `<shape>_h` fills it with stripes.
+`arc` has no interior, so it has no `_s` variant; its `_h` is a striped stroke instead, masking
+the band `strokeWidth` defines. `Shape2DOptions` no longer carries `fill` — the method name
+decides.
 Dashes are cut from the shape's perimeter parameter, a closed form for every primitive except
 the ellipse (Simpson-integrated arc length), so they stay continuous across corners.
+Hatches are evaluated in the shape's own space, so the stripes turn with `rotation` instead of
+staying fixed to the canvas; `spacing`, `width` and `phase` are shape-space units that scale with
+the zoom, and the stripe edge stays one pixel wide. Without `hatch.background` the interior is
+transparent apart from the stripes (a hatch mask); with it, the shape reads as a solid base
+carrying a second colour.
 - The layer is an overlay: it draws after every 3D primitive and pins itself to the near plane
 without writing depth.
 - **Layering:** `zIndex` — an integer in `-8..8`, default `0` — is shared by the 2D primitives and

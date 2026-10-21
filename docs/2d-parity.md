@@ -30,8 +30,10 @@
 
 ## 图元对照
 
-所有形状都提供三变体：`<shape>`（描边）、`<shape>_s`（填充）、`<shape>_d`（虚线描边）；
-`arc` 没有内部，所以只有 `arc` / `arc_d`。方法名决定填充还是描边，`Shape2DOptions` 不再有 `fill`。
+所有形状都提供四个变体：`<shape>`（描边）、`<shape>_s`（填充）、`<shape>_d`（虚线描边）、
+`<shape>_h`（斜线填充）；`arc` 没有内部，所以它只有 `arc` / `arc_d`，而 `arc_h` 是斜线**描边**
+（条纹落在 `strokeWidth` 定义的带里）。方法名决定填充还是描边，
+`Shape2DOptions` 不再有 `fill`。
 线条同样按方法名区分虚实：`line` / `line_d`、`ray` / `ray_d`、`lineStrip` / `lineStrip_d`、
 `polyline` / `polyline_d`、`lineLoop` / `lineLoop_d`、`grid` / `grid_d`；`Line2DOptions` 不再有 `dash`。
 
@@ -77,12 +79,41 @@
   内环顺时针）。两条环不能共用一个周长参数：内环在接缝处会差出非整数个周期，留下孤立小截。
 
 段长单位是 `world2d` 单位，随 zoom 等比缩放；边界用一个画布像素的宽度做软化，
-虚线边缘与形状自身的边一样有抗锯齿。`arc` 没有内部，因此不存在 `arc_s`。
+虚线边缘与形状自身的边一样有抗锯齿。`arc` 没有内部，因此不存在 `arc_s`，条纹只能落在描边带上。
+
+## 斜线填充与斜线描边（`<shape>_h`）
+
+斜线是 bevy 没有的能力，是本项目在填充上的扩展：`_h` 在形状内部画剖面线，而不是铺满实色；
+`arc` 没有内部，所以它的 `_h` 把条纹画在描边带里。
+
+```ts
+d2.rect_h([0, 0], [96, 46], {
+  hatch: { spacing: 16, angle: Math.PI / 4, width: 5 },
+  color: WARM,
+});
+```
+
+- `hatch.spacing` 必填，斜线中心间距；`width` 缺省为 `spacing / 3`；`angle` 缺省 45°；
+  `phase` 缺省 0，三者都是形状空间单位（`spacing` / `width` / `phase`），随 zoom 缩放。
+- 斜线在**形状自身空间**求值，所以跟着 `rotation` 转，而不是像屏幕纹理一样固定在画布上。
+  这是它和虚线共用的语义：两者都描述轮廓/填充在物体上的样子。
+- 默认是「斜线遮罩」：面积里除了斜线之外透明，能看见下层。给 `hatch.background` 就变成
+  「实心底 + 第二色斜线」，`color` 始终是斜线色。
+- 不画描边：与 `_s` 一样，形状内部一旦是填充，`strokeWidth` 就不参与。想要描边就在同位置
+  再发一条 `<shape>`，两层靠 `zIndex` 叠。
+- `arc_h` 是唯一的描边版：它没有内部，条纹遮罩的是 `strokeWidth` 定义的带宽而不是面积。
+  它和 `arc_d` 互斥 —— 两者共用同一个 `pattern` 槽，一条命令要么描虚线要么描条纹。
+  `hatch.background` 对描边同样成立：先画一条平色带，再把条纹带叠上去。
+- 实现上不新增管线：fragment 把坐标投影到斜线法线，取 `fract` 后折算到最近斜线中心的距离，
+  再与形状覆盖率相乘。投影对像素坐标是线性的，`fwidth` 就是一个像素的纹理步长，所以斜线
+  边缘是一像素抗锯齿。线细于一个像素时自然退化成平均灰度，不会出现摩尔纹。
 
 每个 shape 页都按 3D 页的列序组织：先用 **normal** 列展示这个图元能做的参数变化
-（含 `color` 与 `alpha`），然后是同一轮廓的 `_d` 形态，最后是一列 `_s` 综合样例 ——
-每行同时改变尺寸、旋转、颜色和透明度，用来展示填充形态能组合出什么。normal 能做的
-变化对 `_d` 与 `_s` 同样成立，所以变体列不重复参数矩阵。
+（含 `color` 与 `alpha`），然后是同一轮廓的 `_d` 形态，接着是一列 `_s` 综合样例 ——
+每行同时改变尺寸、旋转、颜色和透明度，用来展示填充形态能组合出什么 —— 最后一列
+`<shape>_h(hatch)` 把同一个填充换成斜线：四行分别是 45° 宽斜线、90° 竖线、-30° 细线与
+带底色的滚动斜线。normal 能做的变化对 `_d` / `_s` / `_h` 同样成立，所以变体列不重复
+参数矩阵；`2d-index` 另给 `rect_h` / `circle_h` / `rhombus_h` 各一个示例格子。
 
 ## 页面分类
 
@@ -90,19 +121,19 @@
 
 | 页面 | 形态 | 内容 |
 | --- | --- | --- |
-| `2d-index` | 索引网格 | 每个 2D API 一个格子（line / line_d / ray / lineStrip / lineLoop / grid / point / arrow / arrow_s / curve / 12 种 shape 与 `_d` / `_s` 变体），对齐 3D `index` 页 |
-| `2d-rect` | 矩阵 | `rect(width)` / `rect(size)` / `rect(rotation)` / `rect(color)` / `rect(alpha)`，然后 `rect_d(dash)` 与综合的 `rect_s(solid)` |
-| `2d-rounded-rect` | 矩阵 | `rect_r(radius)` / `(size)` / `(rotation)` / `(color)` / `(alpha)`，然后 `rect_r_d(dash)` 与综合的 `rect_r_s(solid)` |
-| `2d-circle` | 矩阵 | `circle(radius)` / `(stroke)` / `(color)` / `(alpha)`，然后 `circle_d(dash)` 与综合的 `circle_s(solid)` |
-| `2d-ellipse` | 矩阵 | `ellipse(radii)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `ellipse_d(dash)` 与综合的 `ellipse_s(solid)` |
-| `2d-arc` | 矩阵 | `arc(sweep)` / `(startAngle)` / `(radius)` / `(stroke)` / `(color)` / `(alpha)`，然后 `arc_d(dash)` |
-| `2d-annulus` | 矩阵 | `annulus(inner)` / `(outer)` / `(stroke)` / `(color)` / `(alpha)`，然后 `annulus_d(dash)` 与综合的 `annulus_s(solid)` |
-| `2d-capsule` | 矩阵 | `capsule(length)` / `(radius)` / `(rotation)` / `(color)` / `(alpha)`，然后 `capsule_d(dash)` 与综合的 `capsule_s(solid)` |
-| `2d-polygon` | 矩阵 | `polygon(sides)` / `(circumradius)` / `(rotation)` / `(color)` / `(alpha)`，然后 `polygon_d(dash)` 与综合的 `polygon_s(solid)` |
-| `2d-triangle` | 矩阵 | `triangle(vertices)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `triangle_d(dash)` 与综合的 `triangle_s(solid)` |
-| `2d-rhombus` | 矩阵 | `rhombus(diagonals)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `rhombus_d(dash)` 与综合的 `rhombus_s(solid)` |
-| `2d-sector` | 矩阵 | `sector(sweep)` / `(startAngle)` / `(radius)` / `(color)` / `(alpha)`，然后 `sector_d(dash)` 与综合的 `sector_s(solid)` |
-| `2d-segment` | 矩阵 | `segment(sweep)` / `(startAngle)` / `(radius)` / `(color)` / `(alpha)`，然后 `segment_d(dash)` 与综合的 `segment_s(solid)` |
+| `2d-index` | 索引网格 | 每个 2D API 一个格子（line / line_d / ray / lineStrip / lineLoop / grid / point / arrow / arrow_s / curve / 12 种 shape 与 `_d` / `_s` / `_h` 变体），对齐 3D `index` 页 |
+| `2d-rect` | 矩阵 | `rect(width)` / `rect(size)` / `rect(rotation)` / `rect(color)` / `rect(alpha)`，然后 `rect_d(dash)`、综合的 `rect_s(solid)` 与 `rect_h(hatch)` |
+| `2d-rounded-rect` | 矩阵 | `rect_r(radius)` / `(size)` / `(rotation)` / `(color)` / `(alpha)`，然后 `rect_r_d(dash)`、综合的 `rect_r_s(solid)` 与 `rect_r_h(hatch)` |
+| `2d-circle` | 矩阵 | `circle(radius)` / `(stroke)` / `(color)` / `(alpha)`，然后 `circle_d(dash)`、综合的 `circle_s(solid)` 与 `circle_h(hatch)` |
+| `2d-ellipse` | 矩阵 | `ellipse(radii)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `ellipse_d(dash)`、综合的 `ellipse_s(solid)` 与 `ellipse_h(hatch)` |
+| `2d-arc` | 矩阵 | `arc(sweep)` / `(startAngle)` / `(radius)` / `(stroke)` / `(color)` / `(alpha)`，然后 `arc_d(dash)` 与斜线描边 `arc_h(hatch)` |
+| `2d-annulus` | 矩阵 | `annulus(inner)` / `(outer)` / `(stroke)` / `(color)` / `(alpha)`，然后 `annulus_d(dash)`、综合的 `annulus_s(solid)` 与 `annulus_h(hatch)` |
+| `2d-capsule` | 矩阵 | `capsule(length)` / `(radius)` / `(rotation)` / `(color)` / `(alpha)`，然后 `capsule_d(dash)`、综合的 `capsule_s(solid)` 与 `capsule_h(hatch)` |
+| `2d-polygon` | 矩阵 | `polygon(sides)` / `(circumradius)` / `(rotation)` / `(color)` / `(alpha)`，然后 `polygon_d(dash)`、综合的 `polygon_s(solid)` 与 `polygon_h(hatch)` |
+| `2d-triangle` | 矩阵 | `triangle(vertices)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `triangle_d(dash)`、综合的 `triangle_s(solid)` 与 `triangle_h(hatch)` |
+| `2d-rhombus` | 矩阵 | `rhombus(diagonals)` / `(rotation)` / `(stroke)` / `(color)` / `(alpha)`，然后 `rhombus_d(dash)`、综合的 `rhombus_s(solid)` 与 `rhombus_h(hatch)` |
+| `2d-sector` | 矩阵 | `sector(sweep)` / `(startAngle)` / `(radius)` / `(color)` / `(alpha)`，然后 `sector_d(dash)`、综合的 `sector_s(solid)` 与 `sector_h(hatch)` |
+| `2d-segment` | 矩阵 | `segment(sweep)` / `(startAngle)` / `(radius)` / `(color)` / `(alpha)`，然后 `segment_d(dash)`、综合的 `segment_s(solid)` 与 `segment_h(hatch)` |
 | `2d-lines` | 矩阵 | `line(width)`/`(alpha)`/`(grad)`、`line_d(dash)`、`strip`/`strip_d`、`loop`/`loop_d` 的接头与虚线 |
 | `2d-curves` | 矩阵 | construction 带（7 种构造 + 控制点：直、平滑、平手柄、断裂、单侧、y 曲线、闭合）与 `curve(width)` / `(shape)` / `(transform)` / `(tolerance)` / `(closed)` / `curve_d(dash)` 列，布局与 3D curve 页对齐 |
 | `2d-markers` | 矩阵 | cross、方点 / 圆点、axes 长度 |
@@ -135,8 +166,15 @@
   `strokeWidthMode: "world"` 时按 `pixelsPerUnit` 换算成像素，所以随 zoom 变粗，与线宽
   `widthMode: "world"` 同一语义。`arc` 的距离是环带与 `startAngle`/`sweep` 扇形
   求 `max`，所以描边只覆盖扫过的弧段，不再整圆。
-- 虚线不新增管线：同一份 SDF fragment 多读一个 `dash` 实例属性，按 `perimeter_length()`
+- 虚线不新增管线：同一份 SDF fragment 多读一个 `pattern` 实例属性，按 `perimeter_length()`
   返回的弧长参数 `fract` 切段；`perimeter_length()` 对每种形状各写一条周长参数化函数。
+- 斜线填充（`_h`）也不新增管线：fragment 在形状自身空间把坐标投影到斜线法线上，用
+  `fract` 取周期内位置再折算成「到最近斜线中心的距离」，符号与 SDF 一致（负值在斜线内），
+  最后与形状覆盖率相乘。因为投影对像素坐标是线性的，它的 `fwidth` 正好是一个像素的纹理
+  步长，斜线边缘因此同样是一像素抗锯齿，不需要邻域采样。斜线在形状空间里求值，所以随
+  `rotation` 一起转；`spacing` / `width` / `phase` 是形状空间单位，随 zoom 缩放。
+  可选 `hatch.background` 由命令层展开成「先一条 `_s` 实心底、再一条斜线」两条同 `zIndex`
+  命令，而不是给 shader 加第二个颜色属性。
 - 混绘：2D 在全部 3D 图元之后绘制；不写深度并 pin 到近平面，因此是无条件覆盖
   3D 的 overlay。2D 图元与文字共享 `zIndex` 键空间，按 key 升序逐段发射，同 key 时先 2D
   后文字（见 `docs/z-index.md`）。2D 页的 `world-plane` 标签也走 2D 相机矩阵
@@ -144,17 +182,19 @@
 - 兼容性约束（真实 GPU 测试暴露过）：
   - 设备运行在 WebGPU **compatibility mode**，整型 varying 必须写
     `@interpolate(flat, either)`，默认的 `first` 采样会被拒绝。
-  - 顶点属性只有 16 个槽位，因此形状实例把 `rotation + boundingRadius` 合并为 `vec2`，
-    `sides` 编码进 `flags` 高 8 位；`dash` 占第 15 个槽位（`@location(14)`）。
+  - 顶点属性只有 16 个槽位（compatibility mode 还给 `@builtin(vertex_index)` /
+    `@builtin(instance_index)` 各留一个），因此形状实例把 `rotation + boundingRadius` 合并为
+    `vec2`，`sides` 编码进 `flags` 高位；虚线 `dash` 与斜线 `hatch` 互斥，共用第 15 个槽位
+    `@location(14) pattern`，否则会超限：`Attribute count (17) exceeds the maximum (16)`。
 
 ## 已验证
 
 | 测试 | 覆盖 |
 | --- | --- |
 | `tests/camera-2d.test.ts` | 两种空间的矩阵、`world2dToScreen` ↔ `screenToWorld2d` 互逆、零尺寸视口、非法 zoom |
-| `tests/frame-draw-list-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal |
+| `tests/frame-draw-list-2d.test.ts` | 命令校验与默认值、dash 累计、接头生成、形状参数映射、三角形质心、layer、seal、hatch 默认值与背景展开 |
 | `tests/line2d.gpu.test.ts` | 像素宽度、点定位、zoom、dash、round joint、2D 覆盖 3D |
-| `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/弧裁剪/screen 空间/AA |
+| `tests/shape2d.gpu.test.ts` | 填充/描边/环/扇区/多边形/三角形/菱形/旋转/椭圆/胶囊/弧裁剪/screen 空间/AA/斜线填充与随旋转转向/弧的斜线描边 |
 | `tests/scenes-2d.test.ts` | 十个页面只产生 2D 命令与标签、矩阵页列/行标签与侧栏一致、标签落在 fit 范围内、`2d-spaces` 两个空间都出现、形状集合覆盖、时间动画、3D 场景不受影响 |
 | `tests/scenes.test.ts` | 所有示例（含 2D 页）在真实 GPU 上渲染无错误 |
 
@@ -188,7 +228,7 @@
 - `ellipse` 使用 iq 的近似 SDF，长轴端点附近误差在 1 像素以内，不是精确距离场。
 - `polygon` 用"最近边中点方向上的边线距离"，顶点外侧会略微内缩（视觉上顶点略钝），与 bevy
   的三角化 mesh 轮廓有亚像素差异。
-- `arc` 的描边按 `startAngle` / `sweep` 裁剪；它没有内部，所以只有 `arc` / `arc_d`，没有 `arc_s`。
+- `arc` 的描边按 `startAngle` / `sweep` 裁剪；它没有内部，所以没有 `arc_s`，`arc_h` 则是描边带内的条纹。
 - `ellipse` 的虚线用 Simpson 积分近似弧长，虚线间距与真实弧长有约 1% 的偏差。
 - `triangle` 的 `rotation` 围绕质心旋转；bevy 的 `Triangle2d` 是绝对顶点，旋转中心由
   `Transform` 决定。
