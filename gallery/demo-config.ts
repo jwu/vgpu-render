@@ -255,10 +255,14 @@ export const REFERENCE_DEMO_CONFIG: DemoConfig = {
 };
 
 /**
- * Deterministic preset for paired screenshots. It disables time-varying state.
- * The capture harness centers the Godot scene with translation (-10, 0, 1.5),
- * uses camera eye (8, 16, 21.5) looking at the origin, 75 degree vertical FOV,
- * and the reference project clear color. No geometry is rescaled.
+ * Deterministic preset for paired screenshots: no time-varying state, the reference capture
+ * camera (eye 8/16/21.5 looking at the origin, 75 degree vertical FOV) and the reference project
+ * clear color. No geometry is rescaled.
+ *
+ * Note: the Godot baseline these pairs were measured against was captured with the scene root
+ * translated by `(-10, 0, 1.5)`. The gallery renders the scene's own local layout instead (see
+ * `examples/shared/layout-3d.ts`), so the two sides no longer line up pixel-for-pixel; restore that
+ * translation there if a baseline-identical capture is needed.
  */
 export const SCREENSHOT_DEMO_CONFIG: DemoConfig = {
   camera: {

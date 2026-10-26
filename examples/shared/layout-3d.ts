@@ -10,9 +10,11 @@
  * ```
  *
  * Each scene has its own `SAMPLE_SPACING`, and some columns override it (radius, size,
- * angle, height). Coordinates are local to the scene root; the reference capture harness
- * translates the whole root by `REFERENCE_OFFSET` without rescaling any geometry, so the
- * same translation is applied here.
+ * angle, height). Coordinates are local to the scene root, and the reference examples lay that
+ * root out from its own origin: the first column sits at `x = 0` and the first row at
+ * `z = -0.45`. `REFERENCE_OFFSET` is the single place where a whole-scene translation could be
+ * applied; the gallery keeps it at zero so the rendered layout matches the reference scenes
+ * themselves (see `docs/reference-parity.md`).
  */
 
 import type { Color, Vec3 } from "../../src/frame-draw-list.js";
@@ -20,8 +22,15 @@ import type { CircleBasis } from "../../src/vector-math.js";
 
 export { circleBasis, crossVector, normalizeVector, rotateAroundAxis, type CircleBasis } from "../../src/vector-math.js";
 
-/** `scene.position = Vector3(-10, 0, 1.5)` from `scripts/capture-godot.gd`. */
-export const REFERENCE_OFFSET: Vec3 = [-10, 0, 1.5];
+/**
+ * Whole-scene translation, kept at zero on purpose.
+ *
+ * `scripts/capture-godot.gd` sets `scene.position = Vector3(-10, 0, 1.5)` purely to frame its
+ * screenshots; the reference examples themselves start their matrices at the scene origin. The
+ * gallery renders that local layout as-is, which also keeps the origin axes on the grid's own
+ * `x = 0` / `z = 0` lines. Restoring the capture framing means changing this one value.
+ */
+export const REFERENCE_OFFSET: Vec3 = [0, 0, 0];
 
 export function referenceOffset(p: Vec3): Vec3 {
   return [p[0] + REFERENCE_OFFSET[0], p[1] + REFERENCE_OFFSET[1], p[2] + REFERENCE_OFFSET[2]];

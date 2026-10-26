@@ -12,7 +12,6 @@ import { textScene } from "./text-runtime.js";
 import { AXES_LENGTH, SCENE_LABEL_SPECS } from "../shared/draw-3d.js";
 import { DEFAULT_VIEWPORT, type SceneContext, type Viewport2D } from "../shared/scene-context.js";
 import { SCENE_LABELS, drawSceneLabels } from "../shared/labels-3d.js";
-import { referenceOffset } from "../shared/layout-3d.js";
 import { draw as indexScene } from "./index/scene.js";
 import { draw as lineScene } from "./line/scene.js";
 import { draw as arrowScene } from "./arrow/scene.js";
@@ -49,10 +48,12 @@ export function buildScene(
   // Reference: every example's first `_process()` line is
   // `draw_axes(Vector3.ZERO, IDENTITY, 0.75, 2.0)`. `DebugDraw3D` is a child of the scene
   // root, so the local `ZERO` picks up the capture harness's scene translation and the axes
-  // land on the shifted origin. `_validate_global_basis()` only rejects rotation/scale, which
-  // is what allows that translation. The axes are unconditional scene content, not a
-  // toggle: `EndlessGrid3D` and `DebugDraw3D` are sibling nodes that never know about each
-  // other, so the grid has no bearing on whether the axes show.
+  // land on the shifted origin. This port keeps the gizmo on the world origin instead: it is
+  // what marks where the infinite grid's `x = 0` / `z = 0` lines meet, while the scene content
+  // around it still carries the reference translation. `_validate_global_basis()` only rejects
+  // rotation/scale, which is what allows that translation at all. The axes are unconditional
+  // scene content, not a toggle: `EndlessGrid3D` and `DebugDraw3D` are sibling nodes that never
+  // know about each other, so the grid has no bearing on whether the axes show.
   // The screen-space text pages are their own content in pixel space, so the world axes would only be
   // clutter in front of them; `text-compare` keeps its axes, being a world-space matrix.
   const screenTextPage =
@@ -64,9 +65,9 @@ export function buildScene(
     id === "text-cjk" ||
     id === "text-font-query";
   const selfAxes = screenTextPage || id === "index" || id === "grid" || id === "world_space_width";
-  // index/grid/world_space_width draw their own translated origin axes (and
-  // world_space_width needs world-space widths), so they opt out of the generic one.
-  if (!selfAxes) drawList.axes(referenceOffset([0, 0, 0]), AXES_LENGTH, 2);
+  // index/grid/world_space_width draw their own origin axes (and world_space_width needs
+  // world-space widths), so they opt out of the generic one.
+  if (!selfAxes) drawList.axes([0, 0, 0], AXES_LENGTH, 2);
   switch (id) {
     case "index": indexScene(drawList, context); break;
     case "line": lineScene(drawList, context); break;

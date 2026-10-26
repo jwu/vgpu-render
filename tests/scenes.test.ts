@@ -34,6 +34,32 @@ test("animated scenes react to time", () => {
   expect(second).toBeGreaterThan(0);
 });
 
+/** Start points of the red axis line, which is what `draw_axes` emits first. */
+function redAxisStarts(id: string): number[][] {
+  const debug = new DebugDraw3D();
+  const drawList = debug.beginFrame();
+  buildScene(id, drawList, 0);
+  const starts: number[][] = [];
+  for (const command of debug.finishFrame(drawList)) {
+    if (command.kind !== "line") continue;
+    const [r, g, b] = command.color;
+    if (r === 1 && g === 0 && b === 0) starts.push([...command.start]);
+  }
+  return starts;
+}
+
+test("origin axes sit on the world origin, where the grid's lines cross", () => {
+  // The infinite grid computes its lines from world XZ and never moves, so the gizmo has to stay on
+  // the world origin instead of following the scene layout. See `docs/reference-parity.md`.
+  //
+  // The three ways the gizmo reaches a frame: the `index`/`world_space_width` matrix, `grid`'s own
+  // call, and the shared one in `runtime.ts` for every other 3D page.
+  for (const id of ["index", "world_space_width", "grid", "line"]) {
+    const atOrigin = redAxisStarts(id).some((start) => start[0] === 0 && start[1] === 0 && start[2] === 0);
+    expect(atOrigin, `${id} is missing the origin gizmo`).toBe(true);
+  }
+});
+
 test("real GPU renders every Godot example without errors", async () => {
   const gpu = await init();
   try {

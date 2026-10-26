@@ -6,13 +6,14 @@ import { ARROW_BASE_HEAD_ANGLE, IDENTITY_BASIS, INDEX_BRIGHT_CYAN, INDEX_CURVE, 
 import type { FrameDrawList, LineOptions, Vec3 } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
 import { box, capsuleWire, circlePoints, coneWire, cylinderWire, sphereWire, type ShapeWire } from "../../../src/geometry-generators.js";
-import { referenceOffset } from "../../shared/layout-3d.js";
 
 export function apiMatrix(drawList: FrameDrawList, config: ApiMatrixConfig): void {
   const { width: w, widthMode, solids } = config;
   const dash: readonly [number, number, number] = [INDEX_DASH_WIDTH, INDEX_DASH_SPACE, INDEX_DASH_OFFSET];
 
-  drawAxes(drawList, referenceOffset([0, 0, 0]), IDENTITY_BASIS, 0.75, w(2), widthMode);
+  // The origin gizmo stays on the world origin: it marks where the infinite grid's `x = 0` /
+  // `z = 0` lines cross, so it must not inherit the reference scene translation.
+  drawAxes(drawList, [0, 0, 0], IDENTITY_BASIS, 0.75, w(2), widthMode);
 
   // line
   drawList.line(indexPath(0, 0), indexPath(0, 0, 1, 0, 0.9), { color: WHITE, width: w(2), widthMode });

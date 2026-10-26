@@ -5,7 +5,7 @@
 import { GRID_SCENE_CELL_VALUES, GRID_SCENE_COLOR_COUNT, GRID_SCENE_NORMAL_COUNT, GRID_SCENE_OUTER_VALUES, GRID_SCENE_ROTATION_COUNT, GRID_SCENE_SKEW_VALUES, GRID_SCENE_SPACING_VALUES, GRID_SCENE_WIDTH_VALUES, IDENTITY_BASIS, WHITE, drawAxes, gridSceneCellCount, gridSceneCenter, gridSceneRotation, gridSceneSkew, gridSceneSpacing } from "../../shared/draw-3d.js";
 import type { Color, FrameDrawList, Vec3 } from "../../../src/frame-draw-list.js";
 import type { SceneContext } from "../../shared/scene-context.js";
-import { normalSampleColor, normalSampleWidth, referenceOffset } from "../../shared/layout-3d.js";
+import { normalSampleColor, normalSampleWidth } from "../../shared/layout-3d.js";
 
 const GRID_SCENE_BASE_LINE_WIDTH = 2;
 
@@ -34,7 +34,9 @@ function gridSceneDraw(drawList: FrameDrawList, column: number, row: number, col
 }
 
 export function draw(drawList: FrameDrawList, context: SceneContext): void {
-  drawAxes(drawList, referenceOffset([0, 0, 0]), IDENTITY_BASIS, 0.75, 2);
+  // The origin gizmo stays on the world origin: it is the anchor that shows where the infinite
+  // grid's `x = 0` / `z = 0` lines cross.
+  drawAxes(drawList, [0, 0, 0], IDENTITY_BASIS, 0.75, 2);
 
   // grid(width)
   GRID_SCENE_WIDTH_VALUES.forEach((width, row) => gridSceneDraw(drawList, 0, row, WHITE, width));

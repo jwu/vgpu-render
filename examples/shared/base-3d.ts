@@ -101,8 +101,8 @@ export function curve(points: readonly { position: Vec3; in?: Vec3; out?: Vec3 }
 //
 // These three scenes mirror `examples/rect.gd`, `examples/box.gd` and
 // `examples/axes.gd`: real column/row coordinates, `Basis` rotations, widths,
-// dash offsets and normal-aware axes. `createLayout` applies the same
-// `(-10, 0, 1.5)` root translation the capture harness uses.
+// dash offsets and normal-aware axes. `createLayout` applies `REFERENCE_OFFSET`, which the
+// gallery keeps at zero so the layout starts at the scene origin, like the reference examples.
 // ---------------------------------------------------------------------------
 
 export const DASH_OFFSET_SPEED = 0.6;

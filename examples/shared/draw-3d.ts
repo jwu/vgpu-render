@@ -19,9 +19,8 @@ import { INDEX_LABEL_PLACEMENT, LABEL_PLACEMENT, SCENE_LABELS, type SceneLabelSp
 //
 // These two scenes mirror `examples/circle.gd` and `examples/line.gd` exactly:
 // real column/row coordinates, colors, widths, dash offsets and the rotation
-// tunnel basis. The capture harness translates the Godot scene root by
-// (-10, 0, 1.5) without rescaling geometry, so the same world offset is applied
-// here.
+// tunnel basis. Coordinates stay scene-local (`REFERENCE_OFFSET` is zero), matching
+// the reference examples, which lay everything out from their own origin.
 // ---------------------------------------------------------------------------
 
 export const LINE_Y = 0.1;
@@ -822,14 +821,14 @@ export function labelHeight(baseY: number): number {
 
 
 
-/** A local X before the capture harness translates the scene root. */
+/** A scene-local X, shifted by `REFERENCE_OFFSET` (zero in the gallery). */
 export function sceneX(localX: number): number {
   return localX + REFERENCE_OFFSET[0];
 }
 
 
 
-/** A local Z before the capture harness translates the scene root. */
+/** A scene-local Z, shifted by `REFERENCE_OFFSET` (zero in the gallery). */
 export function sceneZ(localZ: number): number {
   return localZ + REFERENCE_OFFSET[2];
 }

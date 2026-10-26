@@ -32,9 +32,9 @@ describe("Circle reference scene", () => {
     expect(CIRCLE_REFERENCE.columnX(0)).toBe(0.5);
     expect(CIRCLE_REFERENCE.columnX(10)).toBe(20.5);
     // Row spacing differs for the radius column (1.15) versus the others (0.82).
-    expect(near(CIRCLE_REFERENCE.center(0, 0), [-9.5, 0.1, 1.05])).toBe(true);
-    expect(near(CIRCLE_REFERENCE.center(0, 1), [-9.5, 0.1, 0.23])).toBe(true);
-    expect(near(CIRCLE_REFERENCE.center(1, 1), [-7.5, 0.1, -0.1])).toBe(true);
+    expect(near(CIRCLE_REFERENCE.center(0, 0), [0.5, 0.1, -0.45])).toBe(true);
+    expect(near(CIRCLE_REFERENCE.center(0, 1), [0.5, 0.1, -1.27])).toBe(true);
+    expect(near(CIRCLE_REFERENCE.center(1, 1), [2.5, 0.1, -1.6])).toBe(true);
   });
 
   test("emits solid discs with the reference blue alpha", () => {
@@ -88,9 +88,8 @@ describe("Curve reference scene", () => {
     // `_get_curve_marker_rotation` swaps the basis columns, so every ring is a horizontal
     // (XZ-plane) circle around its anchor instead of standing up in the curve's own plane.
     for (const line of [...anchors, ...controlRings]) expect(line.start[1]).toBeCloseTo(line.end[1], 9);
-    // The straight curve has three handle-less anchors; the first sits at local (-0.5, 0, 0.18),
-    // which the scene translation (-10, 0, 1.5) moves to (-10, 0.1, 1.23).
-    const anchorCenter: Vec3 = [-10, 0.1, 1.23];
+    // The straight curve has three handle-less anchors; the first sits at scene (0, 0.1, -0.27).
+    const anchorCenter: Vec3 = [0, 0.1, -0.27];
     const onFirstRing = anchors.filter((line) => Math.abs(Math.hypot(line.start[0] - anchorCenter[0], line.start[2] - anchorCenter[2]) - 0.045) < 1e-4);
     expect(onFirstRing.length).toBeGreaterThan(0);
     // Handle edges keep the reference handle lengths (`smoothSymmetricCurve` uses |(0.28, 0, -0.35)|).
@@ -174,21 +173,21 @@ describe("Line reference scene", () => {
     expect(LINE_REFERENCE.columns).toBe(7);
     expect(LINE_REFERENCE.columnX(0)).toBe(0);
     expect(LINE_REFERENCE.columnX(6)).toBe(12);
-    expect(near(LINE_REFERENCE.start(0, 0), [-10, 0.1, 1.05])).toBe(true);
-    expect(near(LINE_REFERENCE.end(0, 0), [-8.9, 0.1, 1.05])).toBe(true);
+    expect(near(LINE_REFERENCE.start(0, 0), [0, 0.1, -0.45])).toBe(true);
+    expect(near(LINE_REFERENCE.end(0, 0), [1.1, 0.1, -0.45])).toBe(true);
   });
 
   test("emits the exact strip and loop point sets", () => {
     const strip = LINE_REFERENCE.strip(0, 0);
-    expect(near(strip[0]!, [-10, 0.1, 1.23])).toBe(true);
-    expect(near(strip[1]!, [-9.637, 0.1, 0.87])).toBe(true);
-    expect(near(strip[2]!, [-9.274, 0.1, 1.23])).toBe(true);
-    expect(near(strip[3]!, [-8.9, 0.1, 0.87])).toBe(true);
+    expect(near(strip[0]!, [0, 0.1, -0.27])).toBe(true);
+    expect(near(strip[1]!, [0.363, 0.1, -0.63])).toBe(true);
+    expect(near(strip[2]!, [0.726, 0.1, -0.27])).toBe(true);
+    expect(near(strip[3]!, [1.1, 0.1, -0.63])).toBe(true);
     const loop = LINE_REFERENCE.loop(4, 0);
-    expect(near(loop[0]!, [-2, 0.1, 1.3])).toBe(true);
-    expect(near(loop[1]!, [-0.9, 0.1, 1.3])).toBe(true);
-    expect(near(loop[2]!, [-0.9, 0.1, 0.8])).toBe(true);
-    expect(near(loop[3]!, [-2, 0.1, 0.8])).toBe(true);
+    expect(near(loop[0]!, [8, 0.1, -0.2])).toBe(true);
+    expect(near(loop[1]!, [9.1, 0.1, -0.2])).toBe(true);
+    expect(near(loop[2]!, [9.1, 0.1, -0.7])).toBe(true);
+    expect(near(loop[3]!, [8, 0.1, -0.7])).toBe(true);
     // Loop column draws a closed 4-segment path per row.
     const loops = linesOf("line").filter((line) => near(line.color, [1, 0.45, 0.2, 0.95]) && line.width === 8);
     expect(loops).toHaveLength(16);
@@ -247,13 +246,13 @@ describe("Scene labels", () => {
     const titles = texts.filter((text) => text.fontSize === 28);
     const rows = texts.filter((text) => text.fontSize === 20);
     // line.gd: title at `_get_column_x(column) + SAMPLE_LENGTH * 0.5`, label at `column_x - 0.12`,
-    // both at `LABEL_Y = LINE_Y + 0.01` and shifted by the capture translation (-10, 0, 1.5).
+    // both at `LABEL_Y = LINE_Y + 0.01`, in scene-local coordinates.
     expect(titles).toHaveLength(7);
-    expect(titles[0]!.position[0]).toBeCloseTo(-10 + 1.1 * 0.5, 6);
+    expect(titles[0]!.position[0]).toBeCloseTo(1.1 * 0.5, 6);
     expect(titles[0]!.position[1]).toBeCloseTo(0.11, 6);
-    expect(titles[0]!.position[2]).toBeCloseTo(1.5 + 0.35, 6);
-    expect(rows[0]!.position[0]).toBeCloseTo(-10 - 0.12, 6);
-    expect(rows[0]!.position[2]).toBeCloseTo(1.5 - 0.45, 6);
+    expect(titles[0]!.position[2]).toBeCloseTo(0.35, 6);
+    expect(rows[0]!.position[0]).toBeCloseTo(-0.12, 6);
+    expect(rows[0]!.position[2]).toBeCloseTo(-0.45, 6);
     expect(titles[0]!.anchor).toBe("center");
     expect(rows[0]!.anchor).toBe("center-right");
   });
