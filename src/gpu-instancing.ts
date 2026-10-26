@@ -18,9 +18,12 @@ const NEAR_CLIP_EPSILON = 0.000488;
 /**
  * Shared WGSL for depth handling, ported from `debug_line_3d_common.gdshaderinc`.
  *
- * `apply_depth_bias` keeps the reference's exponential form so a `-0.001` bias behaves
- * like Godot's and Bevy's (`depth * exp2(-bias * log2(clip.w / depth))`). `depth_bias`
- * is baked into the source instead of a uniform: the reference sets it once per scene
+ * The reference's `apply_depth_bias` assumes Godot 4.3+'s **reversed** depth buffer, where a
+ * larger `clip.z / clip.w` is *closer*. Every reference scene sets `depth_bias = -0.001` to pull
+ * its lines towards the camera and stop them z-fighting with coplanar geometry. This port renders
+ * into WebGPU's forward 0..1 depth, where a **smaller** value is closer, so the same intent needs
+ * the opposite arithmetic: a negative bias pulls the primitive in, a positive one pushes it out.
+ * `depth_bias` is baked into the source instead of a uniform: the reference sets it once per scene
  * and it keeps the camera uniform layout identical across all pipelines.
  */
 export function depthBiasHelpers(depthBias: number): string {
@@ -32,11 +35,16 @@ const NEAR_CLIP_EPSILON: f32 = ${NEAR_CLIP_EPSILON};
 fn apply_depth_bias(clip: vec4f) -> f32 {
   let bias = clamp(DEPTH_BIAS, -1.0, 1.0);
   if (bias >= 0.0) {
-    return clip.z * (1.0 - bias);
+    // Positive bias: push the primitive away from the camera.
+    return clip.z * (1.0 + bias);
   }
+  // Negative bias: pull it towards the camera, using the reference's exponential ratio so the
+  // offset scales with the perspective divide instead of the raw clip depth.
   let safe_depth = max(clip.z, DEPTH_BIAS_EPSILON);
   let depth_ratio = max(clip.w / safe_depth - DEPTH_BIAS_EPSILON, DEPTH_BIAS_EPSILON);
-  return clip.z * exp2(-bias * log2(depth_ratio));
+  // Forward depth loses all precision near the far plane, which is exactly where the reference's
+  // exponential form decays to a no-op, so keep the linear floor as a fallback.
+  return clip.z * min(exp2(bias * log2(depth_ratio)), 1.0 + bias);
 }
 
 fn clip_near_plane_t(a: vec4f, b: vec4f) -> f32 {

@@ -32,9 +32,11 @@ export type GpuTextOptions = {
 };
 
 /**
- * Reference scenes set `depth_bias = -0.001` on the addon before drawing. Keeping it as an
- * option (and baking it into the WGSL) means the shader can match the reference exactly
- * without adding a fourth uniform field that would break the shared camera layout.
+ * Reference scenes set `depth_bias = -0.001` on the addon before drawing, which under Godot's
+ * reversed depth buffer pulls lines towards the camera. `apply_depth_bias` re-expresses the same
+ * intent for WebGPU's forward depth (see `gpu-instancing.ts`), so the reference value carries over
+ * unchanged. Baked into the WGSL so the shader can match the reference exactly without adding a
+ * fourth uniform field that would break the shared camera layout.
  */
 export const DEFAULT_DEPTH_BIAS = -0.001;
 

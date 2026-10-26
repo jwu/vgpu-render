@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
 import { init, target, frame } from "vgpu/node";
 import { InfiniteGrid3D } from "../src/infinite-grid-3d.js";
+import { DebugDraw3D } from "../src/debug-draw-3d.js";
+import { GpuDebugDraw3D } from "../src/gpu-debug-draw-3d.js";
 
 const WIDTH = 256;
 const HEIGHT = 256;
@@ -185,4 +187,50 @@ test("a zero dot alpha hides the lattice and leaves the line grid intact", async
   const lit = (pixels: Uint8Array) => countLit(pixels, (r, g, b) => Math.max(r, g, b) > 6);
   expect(lit(dots)).toBe(0);
   expect(lit(lines)).toBeGreaterThan(0);
+});
+
+const IDENTITY_VIEW = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+/**
+ * The reference scenes set `depth_bias = -0.001` so their lines win against coplanar scene geometry.
+ * Here the geometry is the grid itself: the line runs along `z = 0` on the `y = 0` plane, directly on
+ * top of one of the grid's own lines, which is where a wrong-signed bias shows up as lost pixels.
+ */
+async function renderCoplanarLine(withGrid: boolean): Promise<Uint8Array> {
+  const device = await gpu();
+  const output = target(device, { size: [WIDTH, HEIGHT], depth: true });
+  const grid = new InfiniteGrid3D(device, { enableGrazingOpacity: false });
+  const renderer = new GpuDebugDraw3D(device, { points: 64, lines: 4096, triangles: 64, joints: 64 });
+  const debug = new DebugDraw3D();
+  try {
+    const drawList = debug.beginFrame();
+    drawList.line([0, 0, 0], [6, 0, 0], { color: [1, 0, 0, 1], width: 4 });
+    const camera = cameraState();
+    grid.prepare(camera);
+    renderer.prepare(debug.finishFrame(drawList), { viewProjection: camera.viewProjection, view: IDENTITY_VIEW });
+    frame(device, (f) => {
+      renderer.updateIndirect(f);
+      f.pass({ target: output, clear: [0, 0, 0, 1], clearDepth: 1 }, (p) => {
+        if (withGrid) grid.draw(p);
+        renderer.draw(p);
+      });
+    });
+    const pixels = await output.color.read({ mipLevel: 0, region: "all" });
+    return Uint8Array.from(pixels);
+  } finally {
+    renderer.destroy();
+    grid.destroy();
+  }
+}
+
+function countRed(pixels: Uint8Array): number {
+  return countLit(pixels, (r, g, b) => r > 40 && r > g + 30 && r > b + 30);
+}
+
+test("a coplanar debug line stays visible in front of the grid", async () => {
+  const unoccluded = countRed(await renderCoplanarLine(false));
+  const coplanar = countRed(await renderCoplanarLine(true));
+  expect(unoccluded).toBeGreaterThan(100);
+  // The grid writes depth on its own lines; the bias has to keep the whole axis in front of them.
+  expect(coplanar).toBeGreaterThan(unoccluded * 0.95);
 });

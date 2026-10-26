@@ -11,14 +11,19 @@ struct Camera { viewProjection: mat4x4f }
 const DEPTH_BIAS: f32 = ${DEFAULT_DEPTH_BIAS};
 const DEPTH_BIAS_EPSILON: f32 = 0.000488;
 
+// Same intent as the helpers in gpu-instancing.ts: the reference's negative bias pulls the
+// primitive towards the camera under Godot's reversed depth, so WebGPU's forward depth needs the
+// opposite arithmetic to land in the same place.
 fn apply_depth_bias(clip: vec4f) -> f32 {
   let bias = clamp(DEPTH_BIAS, -1.0, 1.0);
   if (bias >= 0.0) {
-    return clip.z * (1.0 - bias);
+    return clip.z * (1.0 + bias);
   }
   let safe_depth = max(clip.z, DEPTH_BIAS_EPSILON);
   let depth_ratio = max(clip.w / safe_depth - DEPTH_BIAS_EPSILON, DEPTH_BIAS_EPSILON);
-  return clip.z * exp2(-bias * log2(depth_ratio));
+  // Forward depth loses all precision near the far plane, which is exactly where the reference's
+  // exponential form decays to a no-op, so keep the linear floor as a fallback.
+  return clip.z * min(exp2(bias * log2(depth_ratio)), 1.0 + bias);
 }
 
 struct In { @location(0) position: vec3f, @location(1) color: vec4f }
