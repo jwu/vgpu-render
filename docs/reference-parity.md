@@ -111,6 +111,23 @@ These are deliberately not claimed as exact parity:
   endless dot field (ported from the tldraw-style canvas dots in
   `~/dev/tools/ai-workflow`) is documented in the README and is never counted as a
   reference behaviour.
+- **Depth bias direction and draw order**: the reference draws `EndlessGrid3D` with
+  `render_priority = RENDER_PRIORITY_MIN + 1` and `DebugDraw3D` with `RENDER_PRIORITY_MIN`, so the
+  grid is rasterised first and every debug primitive blends on top of it; the port keeps that order
+  (`grid.draw(pass)` before `renderer.draw(pass)`). The bias itself needs different arithmetic: the
+  reference's `apply_depth_bias` assumes Godot 4.3+'s reversed depth buffer, where `-0.001` pulls a
+  line *towards* the camera, while WebGPU uses forward 0..1 depth, where the same formula would push
+  it *away*. The bias is re-expressed for forward depth (negative = closer, with a linear floor
+  because forward depth loses precision near the far plane exactly where the reference's
+  exponential term decays to nothing). `depth_bias` values stay identical to the reference scenes,
+  and `tests/grid.gpu.test.ts` locks a line lying on the grid's own `z = 0` line in front of it.
+- **Scene layout and origin axes**: the reference examples lay their matrices out from the scene
+  root's own origin (first column at `x = 0`, first row at `z = -0.45`). `scripts/capture-godot.gd`
+  moves that root by `scene.position = (-10, 0, 1.5)` purely to frame its screenshots, and the
+  port used to bake that translation into every primitive. It no longer does: `REFERENCE_OFFSET` is
+  zero, so the gallery matches what Godot shows when the examples run unshifted, and the origin
+  gizmo stays on the infinite grid's `x = 0` / `z = 0` lines. Screenshots taken before this change
+  used the translated layout, so their pixel metrics are not directly comparable.
 - **Joints**: round, bevel and miter use the reference wedge geometry instead of
 the earlier disc-cap patch. Out-of-range fan vertices are parked behind the far
 plane, which is how one 24-vertex pipeline draws all three kinds. Normal-aware

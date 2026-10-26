@@ -66,7 +66,7 @@ vgpu 侧未记录 adapter，且该机器已不可复现。换机器重跑得到�
 | 视口 | 1920×1080，浏览器 DPR=1 |
 | 投影 | perspective，vertical FOV=75°，near=0.05，far=100 |
 | 相机 | eye=(8,16,21.5)，target=(0,0,0)，up=(0,1,0) |
-| 场景 | Godot 根节点平移 (-10,0,1.5)，不缩放任何图元；vgpu 在 Circle/Line 中烘焙同一偏移 |
+| 场景 | Godot 基线把根节点平移 (-10,0,1.5)，不缩放任何图元（当时的 vgpu 侧烘焙同一偏移）；**现 gallery 不再应用该平移，按示例自身布局从原点开始**，见 `docs/reference-parity.md` |
 | 时间 | Godot 每次 `_process(0)`，第 10 帧捕获；vgpu `animate=false`，`time=0` |
 | 网格 | 两边保留各自实现，以观察 grid 差异 |
 | UI | vgpu 隐藏侧栏/详情；Godot 保留场景原有 Label3D |
@@ -457,7 +457,7 @@ bun scripts/capture-vgpu.ts circle line
 | Circle 旋转列 | 真实移植 `_get_rotation_tunnel_rotation` / `_get_circle_rotation` 的 basis，圆会倾斜并竖起 |
 | normal 样例含义 | Circle 的 `_n` 列改为 `base/alpha/color/wide` 的颜色/宽度变化，法向固定为 UP |
 | solid 颜色 | solid 圆改为参考的蓝色半透明 `(0.25,0.65,1,0.45)` |
-| 原点坐标轴 | circle/line 的轴跟随参考根节点平移，位置与 Godot 一致 |
+| 原点坐标轴 | 第四轮曾让轴跟随参考根节点平移；后改为固定在世界原点，并进一步把**整个图元布局**也归位到原点（不再应用 capture 的 `(-10,0,1.5)`），见 `docs/reference-parity.md` 的 `Scene layout and origin axes` |
 | 回归测试 | 新增 `tests/reference-scenes.test.ts` 锁定坐标、dash 累计、法向与 solid 颜色 |
 
 ## 仍未达到 parity
@@ -560,7 +560,7 @@ GPU 侧 `tests/text.gpu.test.ts` 用俯视相机验证平躺与未旋转的投�
 | GPU 形状测试 | `tests/line-joint.gpu.test.ts`：90° 外角上 round 独有的弧内点、bevel 独有区域、miter 独有尖点区域，以及 dash 空档内顶点区域的零覆盖 |
 | 基线截图对比 | 1920×1080、`SCREENSHOT_DEMO_CONFIG` 相机，对比 `artifacts/visual-baseline/godot-line.png`：MAE 0.03 → **0.026**，≤3 像素 99.97%，>40 像素 0.016%，饱和掩码 bbox 逐像素一致 |
 | 饱和像素覆盖 | Line 场景饱和像素 **3786 → 4251**，为 Godot 的 **100.1%**（第五轮为 89.2%）；此前缺失的覆盖主要来自 bevel/miter 没有几何 |
-| 原版实机视角对比 | `eye=(3,3,3)`、FOV 75°、两边同一 `scene.position = (-10, 0, 1.5)` 平移（Godot 侧用 `/tmp/vgpu-parity-godot/capture-near.gd`，不改上游）：图元内部像素（两侧都饱和、距边缘 ≥ 2px，6479 px）**MAE 0.04、>40 的像素 0**；橙色 `loop(joint)` 与紫色 `strip_d(joint)` 的饱和 bbox 完全重叠。剩余差异全在边缘 AA（Godot MSAA vs vgpu 无 AA）、grid 与 3D 标签 |
+| 原版实机视角对比（历史口径：当时两侧都应用 `(-10, 0, 1.5)` 平移；gallery 现已不应用） | `eye=(3,3,3)`、FOV 75°、两边同一 `scene.position = (-10, 0, 1.5)` 平移（Godot 侧用 `/tmp/vgpu-parity-godot/capture-near.gd`，不改上游）：图元内部像素（两侧都饱和、距边缘 ≥ 2px，6479 px）**MAE 0.04、>40 的像素 0**；橙色 `loop(joint)` 与紫色 `strip_d(joint)` 的饱和 bbox 完全重叠。剩余差异全在边缘 AA（Godot MSAA vs vgpu 无 AA）、grid 与 3D 标签 |
 | 回归 | `bun run typecheck`、`bun run build`、`bun test`（16 个文件、111 个测试）全部通过 |
 
 以上截图都输出到 `/tmp/vgpu-joint-check` 与 `/tmp/vgpu-near`，未修改 `artifacts/visual-baseline/`。
